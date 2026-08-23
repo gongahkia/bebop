@@ -7,21 +7,21 @@ import "fmt"
 type Code string
 
 const (
-	ConfigInvalid Code = "config_invalid"
-	TargetInvalid Code = "target_invalid"
-	TargetUnreachable Code = "target_unreachable"
-	UnsupportedOS Code = "unsupported_os"
+	ConfigInvalid        Code = "config_invalid"
+	TargetInvalid        Code = "target_invalid"
+	TargetUnreachable    Code = "target_unreachable"
+	UnsupportedOS        Code = "unsupported_os"
 	PrivilegeUnavailable Code = "privilege_unavailable"
-	PlanBlocked Code = "plan_blocked"
-	ApplyFailed Code = "apply_failed"
-	VerificationFailed Code = "verification_failed"
+	PlanBlocked          Code = "plan_blocked"
+	ApplyFailed          Code = "apply_failed"
+	VerificationFailed   Code = "verification_failed"
 )
 
 // Error carries an actionable category and the underlying error where present.
 type Error struct {
-	Code Code
+	Code    Code
 	Message string
-	Err error
+	Err     error
 }
 
 func (e *Error) Error() string {

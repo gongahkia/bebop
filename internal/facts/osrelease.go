@@ -12,16 +12,22 @@ func ParseOSRelease(contents string) (OS, error) {
 	scanner := bufio.NewScanner(strings.NewReader(contents))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") { continue }
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
 		key, value, found := strings.Cut(line, "=")
-		if !found || key == "" { continue }
+		if !found || key == "" {
+			continue
+		}
 		value = strings.TrimSpace(value)
 		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-			value = value[1:len(value)-1]
+			value = value[1 : len(value)-1]
 		}
 		values[key] = value
 	}
-	if err := scanner.Err(); err != nil { return OS{}, err }
+	if err := scanner.Err(); err != nil {
+		return OS{}, err
+	}
 	id := strings.ToLower(values["ID"])
 	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], VersionCodename: strings.ToLower(values["VERSION_CODENAME"])}
 	switch id {

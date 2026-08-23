@@ -9,14 +9,14 @@ import (
 // Request executes a Bebop-controlled POSIX shell script. Callers must use
 // ShellQuote for every dynamic value; no caller passes user input as shell code.
 type Request struct {
-	Script string
-	Stdin []byte
+	Script     string
+	Stdin      []byte
 	Privileged bool
 }
 
 type Result struct {
-	Stdout string
-	Stderr string
+	Stdout   string
+	Stderr   string
 	ExitCode int
 }
 
@@ -31,7 +31,7 @@ type Transport interface {
 
 // ExitError means the remote command ran but returned a non-zero status.
 type ExitError struct {
-	Code int
+	Code   int
 	Stderr string
 }
 

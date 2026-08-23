@@ -13,7 +13,7 @@ import (
 // SSH uses the system OpenSSH client so existing SSH configuration, identities,
 // host keys, and known_hosts behaviour remain in force. BatchMode deliberately
 // rejects password prompts; Bebop never handles SSH or sudo passwords.
-type SSH struct { target target.Target }
+type SSH struct{ target target.Target }
 
 func NewSSH(t target.Target) *SSH { return &SSH{target: t} }
 
@@ -27,7 +27,7 @@ func (s *SSH) Run(ctx context.Context, request Request) (Result, error) {
 	args = append(args, s.target.User+"@"+s.target.Host)
 	remote := "sh -ceu " + ShellQuote(request.Script)
 	if request.Privileged {
-		remote = "sudo -n sh -ceu " + ShellQuote(request.Script)
+		remote = "if test \"$(id -u)\" -eq 0; then sh -ceu " + ShellQuote(request.Script) + "; else exec sudo -n sh -ceu " + ShellQuote(request.Script) + "; fi"
 	}
 	args = append(args, remote)
 	command := exec.CommandContext(ctx, "ssh", args...)
@@ -37,7 +37,9 @@ func (s *SSH) Run(ctx context.Context, request Request) (Result, error) {
 	command.Stderr = &stderr
 	err := command.Run()
 	result := Result{Stdout: stdout.String(), Stderr: strings.TrimSpace(stderr.String())}
-	if err == nil { return result, nil }
+	if err == nil {
+		return result, nil
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
@@ -53,12 +55,18 @@ func (s *SSH) ReadFile(ctx context.Context, path string) (string, error) {
 
 func (s *SSH) FileExists(ctx context.Context, path string) (bool, error) {
 	_, err := s.Run(ctx, Request{Script: "test -e -- " + ShellQuote(path)})
-	if err == nil { return true, nil }
-	if _, ok := err.(*ExitError); ok { return false, nil }
+	if err == nil {
+		return true, nil
+	}
+	if _, ok := err.(*ExitError); ok {
+		return false, nil
+	}
 	return false, err
 }
 
 func stringPort(port int) string {
-	if port == 0 { return "" }
+	if port == 0 {
+		return ""
+	}
 	return strconv.Itoa(port)
 }

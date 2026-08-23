@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,7 +17,7 @@ func (l *Local) Description() string { return "local" }
 func (l *Local) Run(ctx context.Context, request Request) (Result, error) {
 	args := []string{"-ceu", request.Script}
 	program := "sh"
-	if request.Privileged {
+	if request.Privileged && os.Geteuid() != 0 {
 		program = "sudo"
 		args = append([]string{"-n", "sh"}, args...)
 	}

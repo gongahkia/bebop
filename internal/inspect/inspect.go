@@ -20,19 +20,29 @@ type Inspector struct{}
 func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target target.Target, dataRoot string) (facts.HostFacts, error) {
 	contents, err := tr.ReadFile(ctx, "/etc/os-release")
 	if err != nil {
+		kernelName := firstLine(mustProbe(ctx, tr, "uname -s"))
+		if kernelName != "" {
+			return facts.HostFacts{}, errs.New(errs.UnsupportedOS, "target does not expose /etc/os-release; "+kernelName+" targets are not supported in Bebop M0", nil)
+		}
 		return facts.HostFacts{}, errs.New(errs.TargetUnreachable, "cannot read /etc/os-release from target", err)
 	}
 	osFacts, err := facts.ParseOSRelease(contents)
-	if err != nil { return facts.HostFacts{}, fmt.Errorf("parse target os-release: %w", err) }
+	if err != nil {
+		return facts.HostFacts{}, fmt.Errorf("parse target os-release: %w", err)
+	}
 	f := facts.HostFacts{Target: target.String(), OS: osFacts, PackageManager: "apt", DataRoot: facts.Directory{Path: dataRoot}}
 	f.Hostname = firstLine(mustProbe(ctx, tr, "hostname"))
 	rawArchitecture := firstLine(mustProbe(ctx, tr, "uname -m"))
 	f.Architecture, f.ArchitectureKnown = facts.NormalizeArchitecture(rawArchitecture)
 	f.Kernel = firstLine(mustProbe(ctx, tr, "uname -r"))
 	f.EffectiveUser = firstLine(mustProbe(ctx, tr, "id -un"))
-	f.SudoAvailable = firstLine(mustProbe(ctx, tr, "if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then printf yes; else printf no; fi")) == "yes"
+	f.SudoAvailable = firstLine(mustProbe(ctx, tr, "if test \"$(id -u)\" -eq 0 || (command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then printf yes; else printf no; fi")) == "yes"
 	f.Systemd = firstLine(mustProbe(ctx, tr, "if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then printf yes; else printf no; fi")) == "yes"
-	if f.Systemd { f.InitSystem = "systemd" } else { f.InitSystem = "unknown" }
+	if f.Systemd {
+		f.InitSystem = "systemd"
+	} else {
+		f.InitSystem = "unknown"
+	}
 	f.SSH = inspectSSH(ctx, tr)
 	f.Docker = inspectDocker(ctx, tr, f.Systemd)
 	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd)
@@ -48,7 +58,9 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 // mandatory discovery is handled above; optional capability absence is state.
 func mustProbe(ctx context.Context, tr transport.Transport, script string) string {
 	result, err := tr.Run(ctx, transport.Request{Script: script})
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return strings.TrimSpace(result.Stdout)
 }
 
@@ -71,7 +83,7 @@ func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool) fa
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
-if docker info >/dev/null 2>&1; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && docker info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
 `)
 	return facts.Docker{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes"}
 }
@@ -82,7 +94,12 @@ if dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx insta
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 `)
-	status := struct { BackendState string `json:"BackendState"`; Self *struct { Online bool `json:"Online"` } `json:"Self"` }{}
+	status := struct {
+		BackendState string `json:"BackendState"`
+		Self         *struct {
+			Online bool `json:"Online"`
+		} `json:"Self"`
+	}{}
 	_ = json.Unmarshal([]byte(mustProbe(ctx, tr, "if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null || true; fi")), &status)
 	connected := status.BackendState == "Running" && status.Self != nil && status.Self.Online
 	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState}
@@ -107,7 +124,9 @@ if systemctl is-active nftables.service >/dev/null 2>&1 || systemctl is-active f
 
 func inspectRootFilesystem(ctx context.Context, tr transport.Transport) facts.Filesystem {
 	fields := strings.Fields(mustProbe(ctx, tr, "findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL --target / 2>/dev/null || true"))
-	if len(fields) != 4 { return facts.Filesystem{} }
+	if len(fields) != 4 {
+		return facts.Filesystem{}
+	}
 	return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3])}
 }
 
@@ -115,7 +134,9 @@ func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) f
 	directory := facts.Directory{Path: root}
 	output := mustProbe(ctx, tr, "if test -d -- "+transport.ShellQuote(root)+"; then stat -c '%a %u %g' -- "+transport.ShellQuote(root)+"; fi")
 	fields := strings.Fields(output)
-	if len(fields) != 3 { return directory }
+	if len(fields) != 3 {
+		return directory
+	}
 	directory.Exists = true
 	directory.Mode = fields[0]
 	directory.UID, _ = strconv.Atoi(fields[1])
@@ -128,13 +149,17 @@ func probeLines(ctx context.Context, tr transport.Transport, script string) map[
 	values := make(map[string]string)
 	for _, line := range strings.Split(mustProbe(ctx, tr, script), "\n") {
 		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if found { values[key] = value }
+		if found {
+			values[key] = value
+		}
 	}
 	return values
 }
 
 func firstLine(value string) string {
-	if line, _, found := strings.Cut(value, "\n"); found { return strings.TrimSpace(line) }
+	if line, _, found := strings.Cut(value, "\n"); found {
+		return strings.TrimSpace(line)
+	}
 	return strings.TrimSpace(value)
 }
 
@@ -145,13 +170,19 @@ func parseMemory(value string) int64 {
 
 func parseSizeKiB(value string) int64 {
 	value = strings.TrimSpace(value)
-	if value == "" { return 0 }
+	if value == "" {
+		return 0
+	}
 	multiplier := int64(1)
 	switch value[len(value)-1] {
-	case 'K', 'k': value = value[:len(value)-1]
-	case 'M', 'm': multiplier, value = 1024, value[:len(value)-1]
-	case 'G', 'g': multiplier, value = 1024*1024, value[:len(value)-1]
-	case 'T', 't': multiplier, value = 1024*1024*1024, value[:len(value)-1]
+	case 'K', 'k':
+		value = value[:len(value)-1]
+	case 'M', 'm':
+		multiplier, value = 1024, value[:len(value)-1]
+	case 'G', 'g':
+		multiplier, value = 1024*1024, value[:len(value)-1]
+	case 'T', 't':
+		multiplier, value = 1024*1024*1024, value[:len(value)-1]
 	}
 	parsed, _ := strconv.ParseFloat(value, 64)
 	return int64(parsed * float64(multiplier))

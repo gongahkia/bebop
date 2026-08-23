@@ -16,7 +16,7 @@ type Kind string
 
 const (
 	Local Kind = "local"
-	SSH Kind = "ssh"
+	SSH   Kind = "ssh"
 )
 
 // Target contains only fields that are safe to pass as process arguments.
