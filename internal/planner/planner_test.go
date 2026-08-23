@@ -92,6 +92,7 @@ func transition(host *facts.HostFacts, result plan.Plan) {
 			host.Tailscale.ServiceEnabled, host.Tailscale.ServiceActive = true, true
 		case "ssh.hardening":
 			host.SSH.BebopDropIn = modules.SSHDropIn
+			host.SSH.HardeningEffective = true
 		}
 	}
 }

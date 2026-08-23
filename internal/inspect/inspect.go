@@ -75,10 +75,13 @@ if test -n "$service" && systemctl is-enabled "$service" >/dev/null 2>&1; then p
 if test -n "$service" && systemctl is-active "$service" >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if command -v sshd >/dev/null 2>&1 && sshd -t >/dev/null 2>&1; then printf 'valid=yes\n'; else printf 'valid=no\n'; fi
 if grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf([[:space:]]|$)' /etc/ssh/sshd_config 2>/dev/null; then printf 'dropin=yes\n'; else printf 'dropin=no\n'; fi
+first=$(find /etc/ssh/sshd_config.d -maxdepth 1 -type f -name '*.conf' -printf '%f\n' 2>/dev/null | LC_ALL=C sort | head -n 1)
+printf 'first=%s\n' "$first"
+if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null | grep -Fqx 'passwordauthentication no'; then printf 'effective=yes\n'; else printf 'effective=no\n'; fi
 home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
 if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi
 `)
-	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/99-bebop.conf; then cat /etc/ssh/sshd_config.d/99-bebop.conf; fi")}
+	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
 func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool) facts.Docker {

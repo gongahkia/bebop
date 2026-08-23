@@ -18,7 +18,7 @@ process arguments. No configuration field is an arbitrary command.
 An approved plan may create or non-recursively correct the configured data
 root; install Debian packages; manage `docker.service` and `tailscaled.service`;
 create `52-bebop-auto-upgrades`; create Tailscale's documented keyring/list;
-and create `/etc/ssh/sshd_config.d/99-bebop.conf`.
+and create `/etc/ssh/sshd_config.d/00-bebop.conf`.
 
 Managed configuration uses temporary candidates and atomic `mv` where
 practical, and carries a `Managed by Bebop` header. Bebop does not claim

@@ -13,7 +13,7 @@ inspect -> HostFacts + bebop.toml -> deterministic plan -> explicit apply
 | Updates | package database and effective apt periodic settings | `unattended-upgrades` plus Bebop config; apt query/config verification |
 | Docker | `docker.io`, service enable/activity, privileged `docker info` | package and responsive enabled service |
 | Tailscale | package, service, status JSON | official mapped repository package and enabled daemon; auth stays manual |
-| SSH | server, service, `sshd -t`, include, key presence | validated Bebop drop-in; unsafe state is blocked |
+| SSH | server, service, include order, `sshd -t`/`sshd -T`, key presence | effective validated Bebop drop-in; unsafe state is blocked |
 
 Unmounted whole disks are observed with structured `lsblk` output and surfaced
 as warnings only; no storage module or storage action exists in M0/M1.

@@ -114,8 +114,8 @@ func (f *cliFakeTransport) Run(_ context.Context, request transport.Request) (tr
 	case strings.Contains(script, "command -v systemctl"):
 		return transport.Result{Stdout: "yes"}, nil
 	case strings.Contains(script, "command -v sshd"):
-		return transport.Result{Stdout: "installed=yes\nservice=ssh.service\nenabled=yes\nactive=yes\nvalid=yes\ndropin=yes\nkeys=yes\n"}, nil
-	case strings.Contains(script, "test -r /etc/ssh/sshd_config.d/99-bebop.conf"):
+		return transport.Result{Stdout: "installed=yes\nservice=ssh.service\nenabled=yes\nactive=yes\nvalid=yes\ndropin=yes\nfirst=00-bebop.conf\neffective=yes\nkeys=yes\n"}, nil
+	case strings.Contains(script, "test -r /etc/ssh/sshd_config.d/00-bebop.conf"):
 		return transport.Result{Stdout: modules.SSHDropIn}, nil
 	case strings.Contains(script, "tailscale status --json"):
 		return transport.Result{Stdout: `{"BackendState":"Running","Self":{"Online":true}}`}, nil

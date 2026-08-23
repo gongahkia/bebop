@@ -82,7 +82,7 @@ func statusReport(host facts.HostFacts) StatusReport {
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled {
 		report.Updates = "enabled"
 	}
-	if host.SSH.BebopDropIn == modules.SSHDropIn {
+	if host.SSH.BebopDropIn == modules.SSHDropIn && host.SSH.HardeningEffective {
 		report.SSH = "hardened"
 	}
 	if host.DataRoot.Exists {

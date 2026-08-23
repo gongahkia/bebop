@@ -50,6 +50,8 @@ type SSH struct {
 	ServiceActive         bool   `json:"service_active"`
 	ConfigValid           bool   `json:"config_valid"`
 	DropInSupported       bool   `json:"drop_in_supported"`
+	FirstDropIn           string `json:"first_drop_in,omitempty"`
+	HardeningEffective    bool   `json:"hardening_effective"`
 	AuthorizedKeysPresent bool   `json:"authorized_keys_present"`
 	BebopDropIn           string `json:"bebop_drop_in,omitempty"`
 }

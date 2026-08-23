@@ -34,6 +34,11 @@ exact script, and verification description. Apply accepts only the reviewed
 change and refuses unknown action kinds; it has no separate configuration-to-
 shell path.
 
+SSH hardening additionally distinguishes the managed file from effective
+configuration. It uses an early `00-bebop.conf`, blocks if an earlier unknown
+drop-in could win OpenSSH's first-value precedence, and tests `sshd -T` before
+and after replacement.
+
 The planner sorts module registration by module name and uses lexical Kahn
 topological sorting for dependencies. Canonical plan JSON has no timestamps,
 maps, filesystem traversal results, or network-derived ordering. Its SHA-256
