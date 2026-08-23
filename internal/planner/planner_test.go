@@ -15,7 +15,7 @@ import (
 )
 
 func initialFacts() facts.HostFacts {
-	return facts.HostFacts{Target: "ssh://pi@home", OS: facts.OS{ID: "raspbian", Name: "Raspberry Pi OS", VersionID: "12", VersionCodename: "bookworm", Family: "raspberry-pi-os", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", InitSystem: "systemd", Systemd: true, EffectiveUser: "pi", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, AuthorizedKeysPresent: true}, DataRoot: facts.Directory{Path: config.DefaultDataRoot}}
+	return facts.HostFacts{Target: "ssh://pi@home", OS: facts.OS{ID: "raspbian", Name: "Raspberry Pi OS", VersionID: "12", VersionCodename: "bookworm", Family: "raspberry-pi-os", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", InitSystem: "systemd", Systemd: true, EffectiveUser: "pi", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}, DataRoot: facts.Directory{Path: config.DefaultDataRoot}}
 }
 
 func TestPlanIsCanonicalAndIdempotentAfterTransitions(t *testing.T) {

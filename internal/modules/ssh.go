@@ -9,7 +9,9 @@ import (
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
-const SSHDropIn = "# Managed by Bebop. Manual edits may be replaced.\nPermitRootLogin no\nPasswordAuthentication no\n"
+// SSHDropIn is normalized without a trailing newline because command-substitution
+// based read-only probes trim line endings. The managed file is written with one.
+const SSHDropIn = "# Managed by Bebop. Manual edits may be replaced.\nPermitRootLogin no\nPasswordAuthentication no"
 
 type SSH struct{}
 
@@ -31,6 +33,8 @@ func (SSH) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.
 		change.Blocked = "the connected target user has no non-empty ~/.ssh/authorized_keys; refusing to disable password authentication"
 	case !host.SSH.ConfigValid:
 		change.Blocked = "the current SSH configuration does not validate with sshd -t; refusing to install a hardening drop-in"
+	case !host.SSH.DropInSupported:
+		change.Blocked = "the current SSH configuration does not include /etc/ssh/sshd_config.d/*.conf; refusing to write an ineffective drop-in"
 	default:
 		rootBlocked(&change, host.SudoAvailable)
 	}

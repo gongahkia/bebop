@@ -9,7 +9,7 @@ import (
 )
 
 func TestSSHHardeningFailsClosedAndCandidateValidatesBeforeInstall(t *testing.T) {
-	base := facts.HostFacts{SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true}}
+	base := facts.HostFacts{SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true}}
 	changes, _, err := (SSH{}).Plan(base, config.Defaults())
 	if err != nil {
 		t.Fatal(err)

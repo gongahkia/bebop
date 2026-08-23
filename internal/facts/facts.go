@@ -48,6 +48,7 @@ type SSH struct {
 	ServiceEnabled        bool   `json:"service_enabled"`
 	ServiceActive         bool   `json:"service_active"`
 	ConfigValid           bool   `json:"config_valid"`
+	DropInSupported       bool   `json:"drop_in_supported"`
 	AuthorizedKeysPresent bool   `json:"authorized_keys_present"`
 	BebopDropIn           string `json:"bebop_drop_in,omitempty"`
 }

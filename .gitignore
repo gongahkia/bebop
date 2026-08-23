@@ -1,1 +1,4 @@
 AGENTS.md
+bin/
+.bebop/
+coverage.out
