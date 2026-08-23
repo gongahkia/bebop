@@ -58,23 +58,27 @@ func doctorReport(host facts.HostFacts) DoctorReport {
 	if host.Firewall.UFWActive || host.Firewall.OtherActive {
 		checks = append(checks, Check{"warning", "an existing firewall is active; Bebop M0 will not modify it"})
 	}
+	for _, device := range host.UnconfiguredStorage {
+		checks = append(checks, Check{"warning", "unconfigured storage detected: " + device.Name + "; Bebop M0 will not modify disk layouts"})
+	}
 	return DoctorReport{Target: host.Target, Checks: checks}
 }
 
 type StatusReport struct {
-	Host         string `json:"host"`
-	OS           string `json:"os"`
-	Architecture string `json:"architecture"`
-	Docker       string `json:"docker"`
-	Tailscale    string `json:"tailscale"`
-	Updates      string `json:"updates"`
-	SSH          string `json:"ssh"`
-	DataRoot     string `json:"data_root"`
-	Overall      string `json:"overall"`
+	Host                string                `json:"host"`
+	OS                  string                `json:"os"`
+	Architecture        string                `json:"architecture"`
+	Docker              string                `json:"docker"`
+	Tailscale           string                `json:"tailscale"`
+	Updates             string                `json:"updates"`
+	SSH                 string                `json:"ssh"`
+	DataRoot            string                `json:"data_root"`
+	UnconfiguredStorage []facts.StorageDevice `json:"unconfigured_storage,omitempty"`
+	Overall             string                `json:"overall"`
 }
 
 func statusReport(host facts.HostFacts) StatusReport {
-	report := StatusReport{Host: host.Hostname, OS: host.OS.Display(), Architecture: host.Architecture, Docker: dockerState(host), Tailscale: tailscaleState(host), Updates: "disabled", SSH: "not hardened", DataRoot: "missing", Overall: "needs attention"}
+	report := StatusReport{Host: host.Hostname, OS: host.OS.Display(), Architecture: host.Architecture, Docker: dockerState(host), Tailscale: tailscaleState(host), Updates: "disabled", SSH: "not hardened", DataRoot: "missing", UnconfiguredStorage: host.UnconfiguredStorage, Overall: "needs attention"}
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled {
 		report.Updates = "enabled"
 	}

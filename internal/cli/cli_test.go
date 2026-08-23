@@ -49,6 +49,18 @@ func TestJSONCommandShapesAgainstReadOnlyFakeTarget(t *testing.T) {
 	if len(planned.Changes) != 0 || planned.Fingerprint == "" {
 		t.Fatalf("unexpected converged plan: %s", stdout.String())
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"apply", "--config", configPath, "--json", "--yes"}); code != 0 {
+		t.Fatalf("converged JSON apply failed: %d %s", code, stderr.String())
+	}
+	var applied struct {
+		Plan   map[string]any `json:"plan"`
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &applied); err != nil || applied.Plan == nil || applied.Result == nil {
+		t.Fatalf("converged JSON apply shape: %v\n%s", err, stdout.String())
+	}
 	if fake.privileged {
 		t.Fatal("read-only commands unexpectedly requested privilege")
 	}

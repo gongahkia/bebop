@@ -13,7 +13,11 @@ test-race:
 	go test -race ./...
 
 test-integration:
-	BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration ./internal/integration
+	@if docker info >/dev/null 2>&1; then \
+		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration ./internal/integration; \
+	else \
+		echo "Docker daemon unavailable; skipping integration tests."; \
+	fi
 
 format:
 	gofmt -w cmd internal

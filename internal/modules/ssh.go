@@ -29,6 +29,8 @@ func (SSH) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.
 	}
 	change := plan.Change{ID: "ssh.hardening", Module: "ssh", Summary: "install conservative Bebop SSH hardening drop-in", Reason: "Bebop SSH drop-in is absent or differs", Risk: plan.NetworkSensitive, RequiresRoot: true, Current: "Bebop drop-in absent or different", Desired: "PermitRootLogin no and PasswordAuthentication no in a validated Bebop-owned drop-in", Action: plan.Action{Kind: "ssh.write-hardening", Resource: "/etc/ssh/sshd_config.d/99-bebop.conf", Script: sshHardeningScript(host.SSH.Service)}, Verification: "sshd validates the resulting configuration and the managed drop-in matches desired content"}
 	switch {
+	case host.EffectiveUser == "root":
+		change.Blocked = "the connected account is root; refusing PermitRootLogin no because Bebop cannot establish a separate non-root recovery path"
 	case !host.SSH.AuthorizedKeysPresent:
 		change.Blocked = "the connected target user has no non-empty ~/.ssh/authorized_keys; refusing to disable password authentication"
 	case !host.SSH.ConfigValid:

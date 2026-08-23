@@ -228,10 +228,20 @@ func (r *Runner) apply(arguments []string) error {
 		renderPlan(r.Out, reviewed, false)
 	}
 	if blocked(reviewed) {
+		if common.json {
+			_ = writeJSON(r.Out, struct {
+				Plan plan.Plan `json:"plan"`
+			}{reviewed})
+		}
 		return errs.New(errs.PlanBlocked, "plan contains blocked changes; no mutation attempted", nil)
 	}
 	if len(reviewed.Changes) == 0 {
-		if !common.json {
+		if common.json {
+			return writeJSON(r.Out, struct {
+				Plan   plan.Plan    `json:"plan"`
+				Result apply.Result `json:"result"`
+			}{reviewed, apply.Result{Final: reviewed}})
+		} else {
 			fmt.Fprintln(r.Out, "No changes. Target already matches the desired state.")
 		}
 		return nil
@@ -343,7 +353,11 @@ func (r *Runner) status(arguments []string) error {
 	if common.json {
 		return writeJSON(r.Out, report)
 	}
-	fmt.Fprintf(r.Out, "Host        %s\nOS          %s (%s)\nDocker      %s\nTailscale   %s\nUpdates     %s\nSSH         %s\nData root   %s\nOverall     %s\n", report.Host, report.OS, report.Architecture, report.Docker, report.Tailscale, report.Updates, report.SSH, report.DataRoot, report.Overall)
+	storage := "no unconfigured disks detected"
+	if len(report.UnconfiguredStorage) > 0 {
+		storage = "unconfigured disks detected; Bebop M0 will not modify them"
+	}
+	fmt.Fprintf(r.Out, "Host        %s\nOS          %s (%s)\nDocker      %s\nTailscale   %s\nUpdates     %s\nSSH         %s\nData root   %s\nStorage     %s\nOverall     %s\n", report.Host, report.OS, report.Architecture, report.Docker, report.Tailscale, report.Updates, report.SSH, report.DataRoot, storage, report.Overall)
 	return nil
 }
 

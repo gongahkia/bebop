@@ -2,25 +2,26 @@
 package facts
 
 type HostFacts struct {
-	Target            string           `json:"target"`
-	Hostname          string           `json:"hostname"`
-	OS                OS               `json:"os"`
-	Architecture      string           `json:"architecture"`
-	ArchitectureKnown bool             `json:"architecture_known"`
-	Kernel            string           `json:"kernel"`
-	PackageManager    string           `json:"package_manager"`
-	InitSystem        string           `json:"init_system"`
-	Systemd           bool             `json:"systemd"`
-	EffectiveUser     string           `json:"effective_user"`
-	SudoAvailable     bool             `json:"sudo_available"`
-	SSH               SSH              `json:"ssh"`
-	Docker            Docker           `json:"docker"`
-	Tailscale         Tailscale        `json:"tailscale"`
-	AutomaticUpdates  AutomaticUpdates `json:"automatic_updates"`
-	Firewall          Firewall         `json:"firewall"`
-	MemoryKiB         int64            `json:"memory_kib"`
-	RootFilesystem    Filesystem       `json:"root_filesystem"`
-	DataRoot          Directory        `json:"data_root"`
+	Target              string           `json:"target"`
+	Hostname            string           `json:"hostname"`
+	OS                  OS               `json:"os"`
+	Architecture        string           `json:"architecture"`
+	ArchitectureKnown   bool             `json:"architecture_known"`
+	Kernel              string           `json:"kernel"`
+	PackageManager      string           `json:"package_manager"`
+	InitSystem          string           `json:"init_system"`
+	Systemd             bool             `json:"systemd"`
+	EffectiveUser       string           `json:"effective_user"`
+	SudoAvailable       bool             `json:"sudo_available"`
+	SSH                 SSH              `json:"ssh"`
+	Docker              Docker           `json:"docker"`
+	Tailscale           Tailscale        `json:"tailscale"`
+	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
+	Firewall            Firewall         `json:"firewall"`
+	MemoryKiB           int64            `json:"memory_kib"`
+	RootFilesystem      Filesystem       `json:"root_filesystem"`
+	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
+	DataRoot            Directory        `json:"data_root"`
 }
 
 type OS struct {
@@ -84,6 +85,13 @@ type Filesystem struct {
 	Type         string `json:"type,omitempty"`
 	SizeKiB      int64  `json:"size_kib,omitempty"`
 	AvailableKiB int64  `json:"available_kib,omitempty"`
+}
+
+// StorageDevice is inspection-only. M0/M1 never creates a plan action from it.
+type StorageDevice struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"size_bytes"`
+	Transport string `json:"transport,omitempty"`
 }
 
 type Directory struct {

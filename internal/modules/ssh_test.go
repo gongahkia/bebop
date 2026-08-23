@@ -32,3 +32,14 @@ func TestSSHHardeningFailsClosedAndCandidateValidatesBeforeInstall(t *testing.T)
 		t.Fatalf("candidate must validate before install: %s", script)
 	}
 }
+
+func TestSSHHardeningRefusesRootOnlyRemoteAccess(t *testing.T) {
+	host := facts.HostFacts{EffectiveUser: "root", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}}
+	changes, _, err := (SSH{}).Plan(host, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || !strings.Contains(changes[0].Blocked, "account is root") {
+		t.Fatalf("root SSH safety was not blocked: %#v", changes)
+	}
+}

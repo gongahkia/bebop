@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,7 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
+	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
 }
@@ -129,6 +131,46 @@ func inspectRootFilesystem(ctx context.Context, tr transport.Transport) facts.Fi
 		return facts.Filesystem{}
 	}
 	return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3])}
+}
+
+func inspectUnconfiguredStorage(ctx context.Context, tr transport.Transport) []facts.StorageDevice {
+	type blockDevice struct {
+		Name        string        `json:"name"`
+		Type        string        `json:"type"`
+		Size        int64         `json:"size"`
+		Mountpoints []*string     `json:"mountpoints"`
+		Transport   string        `json:"tran"`
+		Children    []blockDevice `json:"children"`
+	}
+	var response struct {
+		Devices []blockDevice `json:"blockdevices"`
+	}
+	output := mustProbe(ctx, tr, "lsblk --json --bytes --output NAME,TYPE,SIZE,MOUNTPOINTS,TRAN 2>/dev/null || true")
+	if json.Unmarshal([]byte(output), &response) != nil {
+		return nil
+	}
+	result := make([]facts.StorageDevice, 0)
+	var mounted func(blockDevice) bool
+	mounted = func(device blockDevice) bool {
+		for _, mountpoint := range device.Mountpoints {
+			if mountpoint != nil && *mountpoint != "" {
+				return true
+			}
+		}
+		for _, child := range device.Children {
+			if mounted(child) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, device := range response.Devices {
+		if device.Type == "disk" && !mounted(device) {
+			result = append(result, facts.StorageDevice{Name: device.Name, SizeBytes: device.Size, Transport: device.Transport})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
 }
 
 func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) facts.Directory {

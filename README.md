@@ -80,12 +80,17 @@ planned actions, verifies each, then re-inspects and re-plans.
 
 SSH hardening is fail-closed: the connected user must have an authorized key,
 the existing config must validate, and the Debian drop-in include must exist.
-Bebop validates a temporary candidate before replacing only its own drop-in.
+Bebop validates a temporary candidate before replacing only its own drop-in;
+it blocks root-only SSH sessions rather than disable their recovery path.
 
 M0/M1 does not partition, format, resize, mount, or erase disks; expose public
 services; alter routers, DNS, or firewall rules; rewrite Docker projects;
 install an OS; collect telemetry; or use AI/LLM APIs. See
 [docs/SAFETY.md](docs/SAFETY.md) for the exact boundary.
+
+`doctor` and `status` report unmounted whole disks discovered through structured
+`lsblk` data. Their only advice is to configure and mount storage separately;
+they never generate a storage mutation.
 
 ## Development
 

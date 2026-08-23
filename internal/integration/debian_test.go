@@ -23,11 +23,24 @@ func TestDebianInspect(t *testing.T) {
 	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
 	build.Dir = root
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
-	if output, err := build.CombinedOutput(); err != nil { t.Fatalf("build Linux controller: %v\n%s", err, output) }
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
 	command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", "debian:12", "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
 	output, err := command.CombinedOutput()
-	if err != nil { t.Fatalf("run disposable Debian inspect: %v\n%s", err, output) }
-	var result struct { OS struct { ID string `json:"id"`; Supported bool `json:"supported"` } `json:"os"` }
-	if err := json.Unmarshal(output, &result); err != nil { t.Fatalf("decode inspect JSON: %v\n%s", err, output) }
-	if result.OS.ID != "debian" || !result.OS.Supported { t.Fatalf("unexpected Debian inspection: %#v", result.OS) }
+	if err != nil {
+		t.Fatalf("run disposable Debian inspect: %v\n%s", err, output)
+	}
+	var result struct {
+		OS struct {
+			ID        string `json:"id"`
+			Supported bool   `json:"supported"`
+		} `json:"os"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+	}
+	if result.OS.ID != "debian" || !result.OS.Supported {
+		t.Fatalf("unexpected Debian inspection: %#v", result.OS)
+	}
 }
