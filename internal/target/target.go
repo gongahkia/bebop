@@ -41,7 +41,8 @@ func Parse(raw string) (Target, error) {
 	if u.Scheme != "ssh" || u.Host == "" || u.User == nil || u.User.Username() == "" {
 		return Target{}, errs.New(errs.TargetInvalid, "target must be local or ssh://user@host[:port]", nil)
 	}
-	if u.User.Password() != ("", false) || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+	_, hasPassword := u.User.Password()
+	if hasPassword || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return Target{}, errs.New(errs.TargetInvalid, "SSH targets cannot include passwords, paths, queries, or fragments", nil)
 	}
 	user := u.User.Username()
