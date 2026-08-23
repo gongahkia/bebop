@@ -20,16 +20,7 @@ func NewSSH(t target.Target) *SSH { return &SSH{target: t} }
 func (s *SSH) Description() string { return s.target.String() }
 
 func (s *SSH) Run(ctx context.Context, request Request) (Result, error) {
-	args := []string{"-o", "BatchMode=yes"}
-	if s.target.Port != 0 {
-		args = append(args, "-p", stringPort(s.target.Port))
-	}
-	args = append(args, s.target.User+"@"+s.target.Host)
-	remote := "sh -ceu " + ShellQuote(request.Script)
-	if request.Privileged {
-		remote = "if test \"$(id -u)\" -eq 0; then sh -ceu " + ShellQuote(request.Script) + "; else exec sudo -n sh -ceu " + ShellQuote(request.Script) + "; fi"
-	}
-	args = append(args, remote)
+	args := s.commandArgs(request)
 	command := exec.CommandContext(ctx, "ssh", args...)
 	command.Stdin = strings.NewReader(string(request.Stdin))
 	var stdout, stderr strings.Builder
@@ -46,6 +37,19 @@ func (s *SSH) Run(ctx context.Context, request Request) (Result, error) {
 		return result, &ExitError{Code: result.ExitCode, Stderr: result.Stderr}
 	}
 	return result, err
+}
+
+func (s *SSH) commandArgs(request Request) []string {
+	args := []string{"-o", "BatchMode=yes"}
+	if s.target.Port != 0 {
+		args = append(args, "-p", stringPort(s.target.Port))
+	}
+	args = append(args, s.target.User+"@"+s.target.Host)
+	remote := "sh -ceu " + ShellQuote(request.Script)
+	if request.Privileged {
+		remote = "if test \"$(id -u)\" -eq 0; then sh -ceu " + ShellQuote(request.Script) + "; else exec sudo -n sh -ceu " + ShellQuote(request.Script) + "; fi"
+	}
+	return append(args, remote)
 }
 
 func (s *SSH) ReadFile(ctx context.Context, path string) (string, error) {

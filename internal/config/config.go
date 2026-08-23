@@ -2,7 +2,6 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -142,8 +141,22 @@ func ValidateDataRoot(root string) error {
 
 func Starter() string {
 	config := Defaults()
-	var output bytes.Buffer
 	// The fixed template is intentionally timestamp-free and reproducible.
-	fmt.Fprintf(&output, "version = %d\\n\\n[server]\\nname = %q\\n\\n[features]\\nautomatic_updates = %t\\nssh_hardening = %t\\ndocker = %t\\ntailscale = %t\\n\\n[network]\\nfirewall = %q\\n\\n[storage]\\ndata_root = %q\\n", config.Version, config.Server.Name, config.Features.AutomaticUpdates, config.Features.SSHHardening, config.Features.Docker, config.Features.Tailscale, config.Network.Firewall, config.Storage.DataRoot)
-	return output.String()
+	return fmt.Sprintf(`version = %d
+
+[server]
+name = %q
+
+[features]
+automatic_updates = %t
+ssh_hardening = %t
+docker = %t
+tailscale = %t
+
+[network]
+firewall = %q
+
+[storage]
+data_root = %q
+`, config.Version, config.Server.Name, config.Features.AutomaticUpdates, config.Features.SSHHardening, config.Features.Docker, config.Features.Tailscale, config.Network.Firewall, config.Storage.DataRoot)
 }
