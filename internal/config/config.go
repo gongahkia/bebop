@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -145,6 +147,8 @@ type rawStorageResource struct {
 	FilesystemType       *string `toml:"filesystem_type"`
 	MinimumCapacityBytes *int64  `toml:"minimum_capacity_bytes"`
 	MinimumFreeBytes     *int64  `toml:"minimum_free_bytes"`
+	MinimumCapacity      *string `toml:"minimum_capacity"`
+	MinimumFree          *string `toml:"minimum_free"`
 	ManagedMount         *bool   `toml:"managed_mount"`
 }
 
@@ -222,6 +226,26 @@ func Decode(reader io.Reader) (Config, error) {
 		}
 		if rawResource.MinimumFreeBytes != nil {
 			resource.MinimumFreeBytes = *rawResource.MinimumFreeBytes
+		}
+		if rawResource.MinimumCapacity != nil {
+			if rawResource.MinimumCapacityBytes != nil {
+				return Config{}, errs.New(errs.ConfigInvalid, "storage.resources."+name+" may use either minimum_capacity or minimum_capacity_bytes, not both", nil)
+			}
+			bytes, parseErr := ParseByteSize(*rawResource.MinimumCapacity)
+			if parseErr != nil {
+				return Config{}, errs.New(errs.ConfigInvalid, "storage.resources."+name+".minimum_capacity "+parseErr.Error(), nil)
+			}
+			resource.MinimumCapacityBytes = bytes
+		}
+		if rawResource.MinimumFree != nil {
+			if rawResource.MinimumFreeBytes != nil {
+				return Config{}, errs.New(errs.ConfigInvalid, "storage.resources."+name+" may use either minimum_free or minimum_free_bytes, not both", nil)
+			}
+			bytes, parseErr := ParseByteSize(*rawResource.MinimumFree)
+			if parseErr != nil {
+				return Config{}, errs.New(errs.ConfigInvalid, "storage.resources."+name+".minimum_free "+parseErr.Error(), nil)
+			}
+			resource.MinimumFreeBytes = bytes
 		}
 		if rawResource.ManagedMount != nil {
 			resource.ManagedMount = *rawResource.ManagedMount
@@ -356,6 +380,44 @@ func Validate(config Config) error {
 
 var filesystemUUIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
 var filesystemTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._+-]{0,31}$`)
+var byteSizePattern = regexp.MustCompile(`^([0-9]+)(KiB|MiB|GiB|TiB|KB|MB|GB|TB)$`)
+
+// ParseByteSize accepts explicit binary (KiB..TiB) and decimal (KB..TB)
+// quantities. Bare numbers are deliberately rejected in the user-facing
+// schema; *_bytes remains available for generated/controller tooling.
+func ParseByteSize(value string) (int64, error) {
+	matches := byteSizePattern.FindStringSubmatch(value)
+	if matches == nil {
+		return 0, fmt.Errorf("must be an integer quantity such as 20GiB")
+	}
+	amount, err := strconv.ParseInt(matches[1], 10, 64)
+	if err != nil || amount <= 0 {
+		return 0, fmt.Errorf("must be a positive byte quantity")
+	}
+	multiplier := int64(1)
+	switch matches[2] {
+	case "KiB":
+		multiplier = 1 << 10
+	case "MiB":
+		multiplier = 1 << 20
+	case "GiB":
+		multiplier = 1 << 30
+	case "TiB":
+		multiplier = 1 << 40
+	case "KB":
+		multiplier = 1000
+	case "MB":
+		multiplier = 1000 * 1000
+	case "GB":
+		multiplier = 1000 * 1000 * 1000
+	case "TB":
+		multiplier = 1000 * 1000 * 1000 * 1000
+	}
+	if amount > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("overflows supported byte capacity")
+	}
+	return amount * multiplier, nil
+}
 
 func validateStorageResources(storage Storage) error {
 	previousName := ""

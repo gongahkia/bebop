@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	SecretEnvName         = ".bebop-secret.env"
-	SecretFingerprintName = ".bebop-secret-fingerprint"
+	SecretEnvName            = ".bebop-secret.env"
+	SecretFingerprintName    = ".bebop-secret-fingerprint"
 	PlacementFingerprintName = ".bebop-placement-fingerprint"
-	maxFiles              = 10_000
-	maxBytes              = 256 << 20
+	maxFiles                 = 10_000
+	maxBytes                 = 256 << 20
 )
 
 var composeNames = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
@@ -53,22 +53,22 @@ type Port struct {
 // Deployment is resolved controller-only input. Payload and Secret are never
 // serialized into a plan, artifact, report, or history record.
 type Deployment struct {
-	Name               string
-	Project            string
-	State              string
-	ComposeFile        string
-	SourceDirectory    string
-	Files              []File
-	SourceDigest       string
-	SecretFingerprint  string
+	Name                 string
+	Project              string
+	State                string
+	ComposeFile          string
+	SourceDirectory      string
+	Files                []File
+	SourceDigest         string
+	SecretFingerprint    string
 	PlacementFingerprint string
-	InputFingerprint   string
-	SecretConfigured   bool
-	Ports              []Port
-	Data               []PersistentResource
-	BackupConsistency  string
-	StorageEnvironment []Environment
-	Payload            []byte
+	InputFingerprint     string
+	SecretConfigured     bool
+	Ports                []Port
+	Data                 []PersistentResource
+	BackupConsistency    string
+	StorageEnvironment   []Environment
+	Payload              []byte
 }
 
 // Environment is a fixed, non-secret Compose interpolation value generated
@@ -106,13 +106,13 @@ type composeValidation struct {
 // Input is the persistent, non-secret portion of a resolved deployment. A
 // keyed HMAC detects secret rotation without exposing a low-entropy digest.
 type Input struct {
-	Name              string `json:"name"`
-	Project           string `json:"project"`
-	State             string `json:"state"`
-	SourceDigest      string `json:"source_digest,omitempty"`
-	InputFingerprint  string `json:"input_fingerprint,omitempty"`
-	SecretConfigured  bool   `json:"secret_configured,omitempty"`
-	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
+	Name                 string `json:"name"`
+	Project              string `json:"project"`
+	State                string `json:"state"`
+	SourceDigest         string `json:"source_digest,omitempty"`
+	InputFingerprint     string `json:"input_fingerprint,omitempty"`
+	SecretConfigured     bool   `json:"secret_configured,omitempty"`
+	SecretFingerprint    string `json:"secret_fingerprint,omitempty"`
 	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 

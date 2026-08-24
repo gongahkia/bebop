@@ -79,16 +79,16 @@ type Docker struct {
 // facts concern only Bebop's replaceable source tree; runtime facts come from
 // Docker labels and container state rather than controller-side metadata.
 type Service struct {
-	Name              string `json:"name"`
-	Project           string `json:"project"`
-	DesiredState      string `json:"desired_state"`
-	DeploymentPresent bool   `json:"deployment_present"`
-	DeploymentUnsafe  bool   `json:"deployment_unsafe,omitempty"`
-	DeploymentDigest  string `json:"deployment_digest,omitempty"`
-	Runtime           string `json:"runtime"`
-	Health            string `json:"health"`
-	ContainerCount    int    `json:"container_count"`
-	SecretFingerprint string `json:"-"`
+	Name                 string `json:"name"`
+	Project              string `json:"project"`
+	DesiredState         string `json:"desired_state"`
+	DeploymentPresent    bool   `json:"deployment_present"`
+	DeploymentUnsafe     bool   `json:"deployment_unsafe,omitempty"`
+	DeploymentDigest     string `json:"deployment_digest,omitempty"`
+	Runtime              string `json:"runtime"`
+	Health               string `json:"health"`
+	ContainerCount       int    `json:"container_count"`
+	SecretFingerprint    string `json:"-"`
 	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 
@@ -239,16 +239,16 @@ type StorageMountStable struct {
 // convergence hash. Status, doctor, inspect JSON, and artifacts never render
 // it, while a changed managed secret marker still invalidates a reviewed plan.
 type ServiceSnapshot struct {
-	Name              string `json:"name"`
-	Project           string `json:"project"`
-	DesiredState      string `json:"desired_state"`
-	DeploymentPresent bool   `json:"deployment_present"`
-	DeploymentUnsafe  bool   `json:"deployment_unsafe,omitempty"`
-	DeploymentDigest  string `json:"deployment_digest,omitempty"`
-	Runtime           string `json:"runtime"`
-	Health            string `json:"health"`
-	ContainerCount    int    `json:"container_count"`
-	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
+	Name                 string `json:"name"`
+	Project              string `json:"project"`
+	DesiredState         string `json:"desired_state"`
+	DeploymentPresent    bool   `json:"deployment_present"`
+	DeploymentUnsafe     bool   `json:"deployment_unsafe,omitempty"`
+	DeploymentDigest     string `json:"deployment_digest,omitempty"`
+	Runtime              string `json:"runtime"`
+	Health               string `json:"health"`
+	ContainerCount       int    `json:"container_count"`
+	SecretFingerprint    string `json:"secret_fingerprint,omitempty"`
 	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 

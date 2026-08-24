@@ -45,6 +45,14 @@ func TestAssessRejectsSemanticPlacementFailures(t *testing.T) {
 	}
 }
 
+func TestAssessRequiresCapacityFactsWhenThresholdConfigured(t *testing.T) {
+	resource := config.StorageResource{Name: "bulk", Mount: "/mnt/bulk", FilesystemUUID: "11111111-2222-3333-4444-555555555555", MinimumFreeBytes: 1}
+	topology := facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: resource.Mount, UUID: resource.FilesystemUUID}}}
+	if got := Assess(resource, topology).State; got != FreeSpaceLow {
+		t.Fatalf("state = %s, want %s", got, FreeSpaceLow)
+	}
+}
+
 func TestValidateResolvedPlacementStaysWithinMount(t *testing.T) {
 	resource := config.StorageResource{Name: "bulk", Mount: "/mnt/bulk", FilesystemUUID: "11111111-2222-3333-4444-555555555555"}
 	storage := config.Storage{Resources: []config.StorageResource{resource}}

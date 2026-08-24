@@ -389,7 +389,17 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 	}
 	mountOutput := mustProbe(ctx, tr, "findmnt --json --bytes --output TARGET,SOURCE,FSTYPE,OPTIONS,SIZE,AVAIL 2>/dev/null || true")
 	if json.Unmarshal([]byte(mountOutput), &found) != nil {
-		return facts.Storage{Devices: devices}
+		// lsblk still supplies UUID, filesystem type, and mounted target paths.
+		// Capacity/options are unavailable, so policies that require a threshold
+		// remain conservatively blocked by storage.Assess.
+		fallback := make([]facts.StorageMount, 0)
+		for _, device := range devices {
+			for _, target := range device.Mounts {
+				fallback = append(fallback, facts.StorageMount{Target: target, Source: device.Path, Filesystem: device.Filesystem, UUID: device.UUID, ReadOnly: device.ReadOnly})
+			}
+		}
+		sort.Slice(fallback, func(i, j int) bool { return fallback[i].Target < fallback[j].Target })
+		return facts.Storage{Available: true, Devices: devices, Mounts: fallback}
 	}
 	mounts := make([]facts.StorageMount, 0)
 	var collect func(rawMount)

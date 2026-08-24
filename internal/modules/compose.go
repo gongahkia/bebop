@@ -55,7 +55,7 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 			continue
 		}
 
-		placementChanged := current.DeploymentPresent && current.PlacementFingerprint != deployment.PlacementFingerprint
+		placementChanged := current.DeploymentPresent && hasStoragePlacement(deployment) && current.PlacementFingerprint != deployment.PlacementFingerprint
 		deploymentChanged := !current.DeploymentPresent || current.DeploymentUnsafe || current.DeploymentDigest != deployment.SourceDigest || (deployment.SecretConfigured && current.SecretFingerprint != deployment.SecretFingerprint) || placementChanged
 		deployID := ""
 		if deploymentChanged {
@@ -151,6 +151,15 @@ func serviceStoragePolicy(host facts.HostFacts, cfg config.Config, deployment se
 		}
 	}
 	return dependencies, preconditions, ""
+}
+
+func hasStoragePlacement(deployment services.Deployment) bool {
+	for _, resource := range deployment.Data {
+		if resource.Type == "path" && resource.Storage != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func serviceChange(deployment services.Deployment, suffix, summary, reason, current, desired string, risk plan.Risk, dependencies, requirements []string) plan.Change {
@@ -300,7 +309,7 @@ func (provider Compose) Verify(ctx context.Context, tr transport.Transport, cfg 
 	}
 	switch change.Action.Kind {
 	case "service.deploy":
-		_, err := tr.Run(ctx, transport.Request{Script: deploymentDigestCheck(cfg.Storage.DataRoot, deployment.Name, deployment.SourceDigest) + secretFingerprintCheck(cfg.Storage.DataRoot, deployment), Privileged: true})
+		_, err := tr.Run(ctx, transport.Request{Script: deploymentDigestCheck(cfg.Storage.DataRoot, deployment.Name, deployment.SourceDigest) + secretFingerprintCheck(cfg.Storage.DataRoot, deployment) + placementFingerprintCheck(cfg.Storage.DataRoot, deployment), Privileged: true})
 		return err
 	case "service.start":
 		return provider.waitForRunning(ctx, tr, cfg, deployment)
@@ -340,6 +349,7 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 	if deployment.SecretConfigured {
 		fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = 600\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretFingerprintName), transport.ShellQuote(deployment.SecretFingerprint))
 	}
+	fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.PlacementFingerprintName), transport.ShellQuote(services.PlacementFingerprintName), transport.ShellQuote(deployment.PlacementFingerprint))
 	fmt.Fprintf(&script, "env -i %sPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", composeEnvironment(deployment), transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
 	script.WriteString("if test -e \"$release\"; then rm -rf -- \"$release\"; fi\nmv -- \"$stage\" \"$release\"\nlink=$(mktemp \"$root/.current.XXXXXX\")\nrm -f -- \"$link\"\nln -s -- \"releases/")
 	script.WriteString(deployment.SourceDigest)
@@ -408,6 +418,11 @@ func secretFingerprintCheck(dataRoot string, deployment services.Deployment) str
 	}
 	current := path.Join(dataRoot, "services", deployment.Name, "current", services.SecretFingerprintName)
 	return "\ntest \"$(tr -d '\\n' < " + transport.ShellQuote(current) + ")\" = " + transport.ShellQuote(deployment.SecretFingerprint)
+}
+
+func placementFingerprintCheck(dataRoot string, deployment services.Deployment) string {
+	current := path.Join(dataRoot, "services", deployment.Name, "current", services.PlacementFingerprintName)
+	return "\ntest \"$(tr -d '\\n' < " + transport.ShellQuote(current) + ")\" = " + transport.ShellQuote(deployment.PlacementFingerprint)
 }
 
 func noRunningContainersScript(project string) string {

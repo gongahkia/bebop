@@ -206,7 +206,7 @@ source = "services/hello"
 			t.Fatalf("unsafe controlled archive entry: %#v", header)
 		}
 	}
-	if entries != 2 {
+	if entries != 3 {
 		t.Fatalf("unexpected archive entry count: %d", entries)
 	}
 }

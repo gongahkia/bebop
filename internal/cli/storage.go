@@ -65,9 +65,9 @@ func (r *Runner) storageList(arguments []string) error {
 		return writeJSON(r.Out, assessments)
 	}
 	writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "NAME\tMOUNT\tUUID\tSTATE\tDETAIL")
+	fmt.Fprintln(writer, "NAME\tMOUNT\tUUID\tSIZE\tFREE\tSTATE\tDETAIL")
 	for _, assessment := range assessments {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", assessment.Resource.Name, assessment.Resource.Mount, assessment.Resource.FilesystemUUID, assessment.State, assessment.Detail)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n", assessment.Resource.Name, assessment.Resource.Mount, assessment.Resource.FilesystemUUID, assessment.Mount.SizeBytes, assessment.Mount.AvailableBytes, assessment.State, assessment.Detail)
 	}
 	_ = writer.Flush()
 	if len(assessments) == 0 {
@@ -93,7 +93,7 @@ func (r *Runner) storageShow(arguments []string) error {
 	if jsonOutput {
 		return writeJSON(r.Out, assessment)
 	}
-	fmt.Fprintf(r.Out, "Storage     %s\nMount       %s\nUUID        %s\nState       %s\nDetail      %s\n", resource.Name, resource.Mount, resource.FilesystemUUID, assessment.State, assessment.Detail)
+	fmt.Fprintf(r.Out, "Storage     %s\nMount       %s\nExpected UUID %s\nObserved UUID %s\nFilesystem  %s\nDevice       %s\nCapacity     %d bytes\nFree         %d bytes\nManaged mount %t\nState       %s\nDetail      %s\n", resource.Name, resource.Mount, resource.FilesystemUUID, assessment.Mount.UUID, assessment.Mount.Filesystem, assessment.Mount.Source, assessment.Mount.SizeBytes, assessment.Mount.AvailableBytes, resource.ManagedMount, assessment.State, assessment.Detail)
 	return nil
 }
 

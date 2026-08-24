@@ -88,6 +88,37 @@ func TestComposeApplyRejectsChangedSourceBeforeTransportMutation(t *testing.T) {
 	}
 }
 
+func TestComposeBlocksExistingStoragePlacementChange(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services", "hello"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "hello", "compose.yaml"), []byte("services:\n  hello:\n    image: busybox:1.36.1\n    volumes:\n      - type: bind\n        source: ${BEBOP_STORAGE_BULK}/data\n        target: /data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contents := "version = 1\n[storage.resources.bulk]\nmount='/mnt/bulk'\nfilesystem_uuid='11111111-2222-3333-4444-555555555555'\n[services.hello]\ntype='compose'\nsource='services/hello'\n[[services.hello.data]]\nname='data'\ntype='path'\nstorage='bulk'\npath='data'\n"
+	if err := os.WriteFile(filepath.Join(root, "bebop.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := services.ResolveOne(cfg, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := composeHost(cfg, facts.Service{Name: "hello", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: deployment.SourceDigest, PlacementFingerprint: "old-placement", Runtime: "running", Health: "no-healthcheck"})
+	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/bulk", UUID: "11111111-2222-3333-4444-555555555555"}}}
+	result, err := planner.New(Compose{}).Build(host, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Changes) == 0 || result.Changes[0].Blocked == "" || !strings.Contains(result.Changes[0].Blocked, "backup/restore") {
+		t.Fatalf("placement change was not blocked for migration: %#v", result.Changes)
+	}
+}
+
 func TestComposeScriptsPreserveVolumesAndDoNotLeakSecret(t *testing.T) {
 	cfg := composeFixtureConfig(t, "running", "TOKEN=BEBOP_TEST_SECRET_DO_NOT_LEAK\n")
 	deployment, err := services.ResolveOne(cfg, "hello")

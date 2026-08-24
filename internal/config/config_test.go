@@ -169,3 +169,21 @@ path = "media"
 		}
 	}
 }
+
+func TestParseByteSizeAndStorageHumanCapacity(t *testing.T) {
+	for value, want := range map[string]int64{"20GiB": 20 << 30, "500MiB": 500 << 20, "1TiB": 1 << 40, "1GB": 1000 * 1000 * 1000} {
+		got, err := ParseByteSize(value)
+		if err != nil || got != want {
+			t.Fatalf("ParseByteSize(%q) = %d, %v; want %d", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"20", "-1GiB", "1XB", "999999999999999999999TiB"} {
+		if _, err := ParseByteSize(value); err == nil {
+			t.Fatalf("ParseByteSize accepted %q", value)
+		}
+	}
+	cfg, err := Decode(strings.NewReader("version = 1\n[storage.resources.bulk]\nmount='/mnt/bulk'\nfilesystem_uuid='11111111-2222-3333-4444-555555555555'\nminimum_capacity='1TiB'\nminimum_free='20GiB'\n"))
+	if err != nil || cfg.Storage.Resources[0].MinimumCapacityBytes != 1<<40 || cfg.Storage.Resources[0].MinimumFreeBytes != 20<<30 {
+		t.Fatalf("human capacities did not normalize: %#v %v", cfg.Storage.Resources, err)
+	}
+}

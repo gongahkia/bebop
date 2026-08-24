@@ -85,12 +85,12 @@ func assessMounted(result Assessment) Assessment {
 		result.State, result.Detail = ReadOnly, "mounted filesystem is read-only"
 		return result
 	}
-	if result.Resource.MinimumCapacityBytes > 0 && mount.SizeBytes > 0 && mount.SizeBytes < result.Resource.MinimumCapacityBytes {
-		result.State, result.Detail = CapacityLow, "mounted filesystem is below its configured capacity threshold"
+	if result.Resource.MinimumCapacityBytes > 0 && mount.SizeBytes < result.Resource.MinimumCapacityBytes {
+		result.State, result.Detail = CapacityLow, "mounted filesystem capacity is unavailable or below its configured capacity threshold"
 		return result
 	}
-	if result.Resource.MinimumFreeBytes > 0 && mount.AvailableBytes > 0 && mount.AvailableBytes < result.Resource.MinimumFreeBytes {
-		result.State, result.Detail = FreeSpaceLow, "mounted filesystem is below its configured free-space threshold"
+	if result.Resource.MinimumFreeBytes > 0 && mount.AvailableBytes < result.Resource.MinimumFreeBytes {
+		result.State, result.Detail = FreeSpaceLow, "mounted filesystem free space is unavailable or below its configured free-space threshold"
 		return result
 	}
 	result.State, result.Detail = Ready, "mounted filesystem identity and placement policy are satisfied"
