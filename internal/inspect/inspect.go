@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,11 +15,13 @@ import (
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
+	"github.com/bebop-home/bebop/internal/services"
 )
 
 type Inspector struct{}
 
-func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target target.Target, dataRoot string) (facts.HostFacts, error) {
+func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target target.Target, cfg config.Config) (facts.HostFacts, error) {
+	dataRoot := cfg.Storage.DataRoot
 	contents, err := tr.ReadFile(ctx, "/etc/os-release")
 	if err != nil {
 		kernelName := firstLine(mustProbe(ctx, tr, "uname -s"))
@@ -50,6 +53,11 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	}
 	f.SSH = inspectSSH(ctx, tr)
 	f.Docker = inspectDocker(ctx, tr, f.Systemd)
+	deployments, err := services.ResolveAll(cfg)
+	if err != nil {
+		return facts.HostFacts{}, err
+	}
+	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
 	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd)
 	f.AutomaticUpdates = inspectUpdates(ctx, tr)
 	f.Firewall = inspectFirewall(ctx, tr)
@@ -94,8 +102,138 @@ if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx insta
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if { test "$(id -u)" -eq 0 && docker info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+if apt-cache show docker-compose-plugin >/dev/null 2>&1; then printf 'compose_package=docker-compose-plugin\n'; elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then printf 'compose_package=docker-compose-v2\n'; else printf 'compose_package=\n'; fi
 `)
-	return facts.Docker{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes"}
+	return facts.Docker{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+}
+
+func inspectServices(ctx context.Context, tr transport.Transport, dataRoot string, deployments []services.Deployment, dockerResponsive bool) []facts.Service {
+	result := make([]facts.Service, 0, len(deployments))
+	for _, deployment := range deployments {
+		service := facts.Service{Name: deployment.Name, Project: deployment.Project, Runtime: "unknown", Health: "unknown"}
+		root := path.Join(dataRoot, "services", deployment.Name)
+		current := path.Join(root, "current")
+		lines := probeLines(ctx, tr, deploymentProbeScript(root, current, deployment.ComposeFile))
+		service.DeploymentPresent = lines["deployment"] == "yes"
+		service.DeploymentUnsafe = lines["unsafe"] == "yes"
+		service.DeploymentDigest = lines["digest"]
+		service.SecretFingerprint = lines["secret_fingerprint"]
+		if dockerResponsive {
+			service.Runtime, service.Health, service.ContainerCount = inspectServiceRuntime(ctx, tr, deployment.Project)
+		} else if !service.DeploymentPresent && !service.DeploymentUnsafe {
+			service.Runtime, service.Health = "missing", "missing"
+		}
+		result = append(result, service)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
+func deploymentProbeScript(root, current, composeFile string) string {
+	quotedRoot := transport.ShellQuote(root)
+	quotedCurrent := transport.ShellQuote(current)
+	quotedCompose := transport.ShellQuote(composeFile)
+	return `root=` + quotedRoot + `
+current=` + quotedCurrent + `
+if test -L -- "$current" && test -d -- "$current"; then
+  resolved=$(readlink -f -- "$current" 2>/dev/null || true)
+  case "$resolved" in "$root"/releases/*) ;; *) printf 'unsafe=yes\n'; exit 0;; esac
+  if test ! -f -- "$current"/` + quotedCompose + `; then printf 'unsafe=yes\n'; exit 0; fi
+  digest=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+    test -n "$file" || continue
+    mode=$(stat -c '%a' -- "$file")
+    checksum=$(sha256sum -- "$file" | awk '{print $1}')
+    printf '%s\t%s\t%s\n' "$mode" "$checksum" "$file"
+  done | sha256sum | awk '{print $1}')
+  printf 'deployment=yes\n'
+  printf 'digest=%s\n' "$digest"
+  if test -f -- "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + `; then tr -d '\n' < "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + ` | sed 's/^/secret_fingerprint=/'; else printf 'secret_fingerprint=\n'; fi
+elif test -e -- "$current"; then
+  printf 'unsafe=yes\n'
+else
+  printf 'deployment=no\n'
+fi`
+}
+
+func inspectServiceRuntime(ctx context.Context, tr transport.Transport, project string) (string, string, int) {
+	ids := strings.Fields(mustProbe(ctx, tr, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --filter label=com.docker.compose.project="+transport.ShellQuote(project)+" --format '{{.ID}}'"))
+	if len(ids) == 0 {
+		return "missing", "missing", 0
+	}
+	states := make([]dockerContainerState, 0, len(ids))
+	for _, id := range ids {
+		output := mustProbe(ctx, tr, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default inspect --format '{{json .State}}' -- "+transport.ShellQuote(id))
+		var state dockerContainerState
+		if output == "" || json.Unmarshal([]byte(output), &state) != nil {
+			return "unknown", "unknown", len(ids)
+		}
+		states = append(states, state)
+	}
+	return aggregateRuntime(states)
+}
+
+type dockerContainerState struct {
+	Status     string `json:"Status"`
+	Running    bool   `json:"Running"`
+	Restarting bool   `json:"Restarting"`
+	Dead       bool   `json:"Dead"`
+	Health     *struct {
+		Status string `json:"Status"`
+	} `json:"Health"`
+}
+
+func aggregateRuntime(states []dockerContainerState) (string, string, int) {
+	if len(states) == 0 {
+		return "missing", "missing", 0
+	}
+	allStopped := true
+	allRunning := true
+	anyStarting := false
+	anyUnhealthy := false
+	anyHealthcheck := false
+	allHealthy := true
+	for _, state := range states {
+		if state.Running {
+			allStopped = false
+		} else {
+			allRunning = false
+		}
+		if state.Restarting || state.Status == "created" {
+			anyStarting = true
+		}
+		if state.Dead || (state.Health != nil && state.Health.Status == "unhealthy") {
+			anyUnhealthy = true
+		}
+		if state.Health != nil {
+			anyHealthcheck = true
+			if state.Health.Status == "starting" {
+				anyStarting = true
+			}
+			if state.Health.Status != "healthy" {
+				allHealthy = false
+			}
+		}
+	}
+	if anyUnhealthy {
+		return "unhealthy", "unhealthy", len(states)
+	}
+	if anyStarting {
+		return "starting", "starting", len(states)
+	}
+	if allStopped {
+		return "stopped", "stopped", len(states)
+	}
+	if !allRunning {
+		return "unknown", "unknown", len(states)
+	}
+	if !anyHealthcheck {
+		return "running", "no-healthcheck", len(states)
+	}
+	if allHealthy {
+		return "running", "healthy", len(states)
+	}
+	return "starting", "starting", len(states)
 }
 
 func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
@@ -237,3 +375,4 @@ func parseSizeKiB(value string) int64 {
 	parsed, _ := strconv.ParseFloat(value, 64)
 	return int64(parsed * float64(multiplier))
 }
+	"github.com/bebop-home/bebop/internal/config"

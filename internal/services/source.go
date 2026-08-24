@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	secretEnvName         = ".bebop-secret.env"
-	secretFingerprintName = ".bebop-secret-fingerprint"
+	SecretEnvName         = ".bebop-secret.env"
+	SecretFingerprintName = ".bebop-secret-fingerprint"
 	maxFiles              = 10_000
 	maxBytes              = 256 << 20
 )
@@ -301,7 +301,7 @@ func manifest(root string) ([]File, string, string, int64, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("special file %q is not allowed in a deployment source", logical)
 		}
-		if logical == secretEnvName || logical == secretFingerprintName {
+		if logical == SecretEnvName || logical == SecretFingerprintName {
 			return fmt.Errorf("source may not contain reserved file %q", logical)
 		}
 		contents, err := readRegularFile(filename, false)
@@ -434,10 +434,10 @@ func archivePayload(root string, files []File, secret []byte, secretFingerprint 
 		}
 	}
 	if secret != nil {
-		if err := writeArchiveFile(writer, secretEnvName, 0o600, secret); err != nil {
+		if err := writeArchiveFile(writer, SecretEnvName, 0o600, secret); err != nil {
 			return nil, err
 		}
-		if err := writeArchiveFile(writer, secretFingerprintName, 0o600, []byte(secretFingerprint+"\n")); err != nil {
+		if err := writeArchiveFile(writer, SecretFingerprintName, 0o600, []byte(secretFingerprint+"\n")); err != nil {
 			return nil, err
 		}
 	}
@@ -544,9 +544,9 @@ func validateEnvFiles(node *yaml.Node, sourceFiles map[string]bool, secretConfig
 			return fmt.Errorf("env_file supports only relative string paths")
 		}
 		path := value.Value
-		if path == secretEnvName {
+		if path == SecretEnvName {
 			if !secretConfigured {
-				return fmt.Errorf("env_file %q requires service.secret_env_file", secretEnvName)
+				return fmt.Errorf("env_file %q requires service.secret_env_file", SecretEnvName)
 			}
 			continue
 		}

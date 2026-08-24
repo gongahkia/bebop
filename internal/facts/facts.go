@@ -23,6 +23,7 @@ type HostFacts struct {
 	SudoAvailable       bool             `json:"sudo_available"`
 	SSH                 SSH              `json:"ssh"`
 	Docker              Docker           `json:"docker"`
+	Services            []Service        `json:"services,omitempty"`
 	Tailscale           Tailscale        `json:"tailscale"`
 	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
 	Firewall            Firewall         `json:"firewall"`
@@ -65,10 +66,27 @@ type SSH struct {
 }
 
 type Docker struct {
-	Installed      bool `json:"installed"`
-	ServiceEnabled bool `json:"service_enabled"`
-	ServiceActive  bool `json:"service_active"`
-	Responsive     bool `json:"responsive"`
+	Installed               bool   `json:"installed"`
+	ServiceEnabled          bool   `json:"service_enabled"`
+	ServiceActive           bool   `json:"service_active"`
+	Responsive              bool   `json:"responsive"`
+	ComposeAvailable        bool   `json:"compose_available"`
+	ComposePackageAvailable string `json:"compose_package_available,omitempty"`
+}
+
+// Service is a normalized view of one declared Compose project. Deployment
+// facts concern only Bebop's replaceable source tree; runtime facts come from
+// Docker labels and container state rather than controller-side metadata.
+type Service struct {
+	Name                string `json:"name"`
+	Project             string `json:"project"`
+	DeploymentPresent   bool   `json:"deployment_present"`
+	DeploymentUnsafe    bool   `json:"deployment_unsafe,omitempty"`
+	DeploymentDigest    string `json:"deployment_digest,omitempty"`
+	Runtime             string `json:"runtime"`
+	Health              string `json:"health"`
+	ContainerCount      int    `json:"container_count"`
+	SecretFingerprint   string `json:"-"`
 }
 
 type Tailscale struct {
@@ -147,6 +165,7 @@ type ConvergenceSnapshot struct {
 	SudoAvailable       bool             `json:"sudo_available"`
 	SSH                 SSH              `json:"ssh"`
 	Docker              Docker           `json:"docker"`
+	Services            []Service        `json:"services,omitempty"`
 	Tailscale           Tailscale        `json:"tailscale"`
 	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
 	Firewall            Firewall         `json:"firewall"`
@@ -157,12 +176,14 @@ type ConvergenceSnapshot struct {
 func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	storage := append([]StorageDevice(nil), host.UnconfiguredStorage...)
 	sort.Slice(storage, func(i, j int) bool { return storage[i].Name < storage[j].Name })
+	services := append([]Service(nil), host.Services...)
+	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	return ConvergenceSnapshot{
 		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
 		PackageManager: host.PackageManager, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, Firewall: host.Firewall,
-		UnconfiguredStorage: storage, DataRoot: host.DataRoot,
+		UnconfiguredStorage: storage, DataRoot: host.DataRoot, Services: services,
 	}
 }
 

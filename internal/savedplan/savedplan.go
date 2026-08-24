@@ -37,7 +37,7 @@ func Prepare(ctx context.Context, service *bebop.Service, saved artifact.Artifac
 	if err != nil {
 		return Prepared{}, errs.New(errs.PlanInvalid, "saved plan target is invalid", err)
 	}
-	host, tr, err := service.Inspect(ctx, current, desired.Storage.DataRoot)
+	host, tr, err := service.Inspect(ctx, current, desired)
 	if err != nil {
 		return Prepared{}, err
 	}

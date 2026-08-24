@@ -9,6 +9,7 @@ import (
 	"os/exec"
 
 	"github.com/bebop-home/bebop/internal/bebop"
+	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/target"
@@ -48,14 +49,14 @@ type Result struct {
 	Checks         []Check               `json:"checks"`
 }
 
-func Run(ctx context.Context, service *bebop.Service, current target.Target, dataRoot string) Result {
+func Run(ctx context.Context, service *bebop.Service, current target.Target, cfg config.Config) Result {
 	result := Result{Target: current.String()}
 	if current.Kind == target.SSH {
 		if _, err := exec.LookPath("ssh"); err != nil {
 			return unavailable(result, transport.FailureSSHClient, "the controller does not have an ssh client in PATH")
 		}
 	}
-	host, _, err := service.Inspect(ctx, current, dataRoot)
+	host, _, err := service.Inspect(ctx, current, cfg)
 	if err != nil {
 		return unavailable(result, transport.ClassifyFailure(err), failureMessage(transport.ClassifyFailure(err), err))
 	}

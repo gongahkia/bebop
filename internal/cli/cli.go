@@ -194,7 +194,7 @@ func (r *Runner) inspect(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (r *Runner) init(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, resolution.Target, config.DefaultDataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, config.Defaults())
 	if err != nil {
 		return err
 	}
@@ -681,7 +681,7 @@ func (r *Runner) doctor(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
+	result := preflight.Run(ctx, r.Service, resolution.Target, cfg)
 	result = withInventoryCheck(result, resolution)
 	report := doctorReport(result)
 	if common.json {
@@ -716,7 +716,7 @@ func (r *Runner) bootstrap(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
+	result := preflight.Run(ctx, r.Service, resolution.Target, cfg)
 	result = withInventoryCheck(result, resolution)
 	if common.json {
 		if err := writeJSON(r.Out, result); err != nil {
@@ -765,7 +765,7 @@ func (r *Runner) status(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg)
 	if err != nil {
 		return err
 	}
@@ -808,7 +808,7 @@ func (r *Runner) statusAll(common *commonFlags, requestedConfig string, configEx
 		if err != nil {
 			return result, err
 		}
-		host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
+		host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg)
 		if err != nil {
 			return result, err
 		}
@@ -865,7 +865,7 @@ func (r *Runner) doctorAll(common *commonFlags, requestedConfig string, configEx
 		if err != nil {
 			return result, err
 		}
-		preflightResult := withInventoryCheck(preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot), resolution)
+		preflightResult := withInventoryCheck(preflight.Run(ctx, r.Service, resolution.Target, cfg), resolution)
 		report := doctorReport(preflightResult)
 		result.Doctor = &report
 		return result, preflightResult.FailureError()
