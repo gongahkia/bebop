@@ -3,65 +3,18 @@ package cli
 import (
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/modules"
+	"github.com/bebop-home/bebop/internal/preflight"
 )
 
-type Check struct {
-	Status  string `json:"status"`
-	Message string `json:"message"`
-}
+type Check = preflight.Check
 type DoctorReport struct {
 	Target string  `json:"target"`
+	Ready  bool    `json:"ready"`
 	Checks []Check `json:"checks"`
 }
 
-func doctorReport(host facts.HostFacts) DoctorReport {
-	checks := []Check{{"success", "target reachable"}}
-	if host.OS.Supported {
-		checks = append(checks, Check{"success", "Debian-family OS supported: " + host.OS.Display()})
-	} else {
-		checks = append(checks, Check{"failure", "unsupported target OS: " + host.OS.Display()})
-	}
-	if host.Systemd {
-		checks = append(checks, Check{"success", "systemd available"})
-	} else {
-		checks = append(checks, Check{"failure", "systemd unavailable; Bebop M0 requires systemd"})
-	}
-	if host.SudoAvailable {
-		checks = append(checks, Check{"success", "non-interactive privilege escalation available"})
-	} else {
-		checks = append(checks, Check{"warning", "non-interactive sudo unavailable; privileged changes will be blocked"})
-	}
-	if host.SSH.Installed && !host.SSH.ConfigValid {
-		checks = append(checks, Check{"warning", "current SSH configuration does not validate with sshd -t"})
-	} else if host.SSH.Installed {
-		checks = append(checks, Check{"success", "SSH configuration validates"})
-	}
-	if host.Docker.Responsive {
-		checks = append(checks, Check{"success", "Docker healthy"})
-	} else {
-		checks = append(checks, Check{"warning", "Docker is not healthy or not installed"})
-	}
-	if host.Tailscale.Connected {
-		checks = append(checks, Check{"success", "Tailscale connected"})
-	} else if host.Tailscale.Installed {
-		checks = append(checks, Check{"warning", "Tailscale installed but not authenticated"})
-	} else {
-		checks = append(checks, Check{"warning", "Tailscale not installed"})
-	}
-	if host.DataRoot.Exists && host.DataRoot.Mode == "750" && host.DataRoot.UID == 0 && host.DataRoot.GID == 0 {
-		checks = append(checks, Check{"success", host.DataRoot.Path + " exists with Bebop data-root ownership and mode"})
-	} else if host.DataRoot.Exists {
-		checks = append(checks, Check{"warning", host.DataRoot.Path + " exists but does not match Bebop data-root ownership and mode"})
-	} else {
-		checks = append(checks, Check{"warning", host.DataRoot.Path + " does not exist yet"})
-	}
-	if host.Firewall.UFWActive || host.Firewall.OtherActive {
-		checks = append(checks, Check{"warning", "an existing firewall is active; Bebop M0 will not modify it"})
-	}
-	for _, device := range host.UnconfiguredStorage {
-		checks = append(checks, Check{"warning", "unconfigured storage detected: " + device.Name + "; Bebop M0 will not modify disk layouts"})
-	}
-	return DoctorReport{Target: host.Target, Checks: checks}
+func doctorReport(result preflight.Result) DoctorReport {
+	return DoctorReport{Target: result.Target, Ready: result.Ready, Checks: result.Checks}
 }
 
 type StatusReport struct {

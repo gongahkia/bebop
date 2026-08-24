@@ -16,3 +16,10 @@ func TestParseTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAllowsSafeOpenSSHAliasCharacters(t *testing.T) {
+	parsed, err := Parse("ssh://pi@home_pi")
+	if err != nil || parsed.Host != "home_pi" {
+		t.Fatalf("safe SSH alias did not parse: %#v err=%v", parsed, err)
+	}
+}

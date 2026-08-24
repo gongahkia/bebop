@@ -28,7 +28,11 @@ type Target struct {
 }
 
 var userPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
-var hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
+
+// OpenSSH configuration aliases commonly contain underscores. Allow them while
+// still rejecting a leading dash or shell/meta characters before a target ever
+// becomes a process argument.
+var hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func Parse(raw string) (Target, error) {
 	if raw == "" || raw == "local" {

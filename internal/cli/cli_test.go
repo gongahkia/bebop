@@ -152,6 +152,8 @@ func (f *cliFakeTransport) Run(_ context.Context, request transport.Request) (tr
 		return transport.Result{Stdout: "yes"}, nil
 	case strings.Contains(script, "command -v systemctl"):
 		return transport.Result{Stdout: "yes"}, nil
+	case strings.Contains(script, "command -v apt-get"):
+		return transport.Result{Stdout: "apt"}, nil
 	case strings.Contains(script, "command -v sshd"):
 		return transport.Result{Stdout: "installed=yes\nservice=ssh.service\nenabled=yes\nactive=yes\nvalid=yes\ndropin=yes\nfirst=00-bebop.conf\neffective=yes\nkeys=yes\n"}, nil
 	case strings.Contains(script, "test -r /etc/ssh/sshd_config.d/00-bebop.conf"):

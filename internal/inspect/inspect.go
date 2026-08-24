@@ -31,14 +31,18 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	if err != nil {
 		return facts.HostFacts{}, fmt.Errorf("parse target os-release: %w", err)
 	}
-	f := facts.HostFacts{Target: target.String(), OS: osFacts, PackageManager: "apt", DataRoot: facts.Directory{Path: dataRoot}}
+	f := facts.HostFacts{Target: target.String(), OS: osFacts, PackageManager: "unknown", DataRoot: facts.Directory{Path: dataRoot}}
 	f.Hostname = firstLine(mustProbe(ctx, tr, "hostname"))
+	f.MachineID = firstLine(mustProbe(ctx, tr, "cat /etc/machine-id 2>/dev/null || true"))
 	rawArchitecture := firstLine(mustProbe(ctx, tr, "uname -m"))
 	f.Architecture, f.ArchitectureKnown = facts.NormalizeArchitecture(rawArchitecture)
 	f.Kernel = firstLine(mustProbe(ctx, tr, "uname -r"))
 	f.EffectiveUser = firstLine(mustProbe(ctx, tr, "id -un"))
 	f.SudoAvailable = firstLine(mustProbe(ctx, tr, "if test \"$(id -u)\" -eq 0 || (command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then printf yes; else printf no; fi")) == "yes"
 	f.Systemd = firstLine(mustProbe(ctx, tr, "if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then printf yes; else printf no; fi")) == "yes"
+	if firstLine(mustProbe(ctx, tr, "if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then printf apt; fi")) == "apt" {
+		f.PackageManager = "apt"
+	}
 	if f.Systemd {
 		f.InitSystem = "systemd"
 	} else {

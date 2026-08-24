@@ -48,3 +48,21 @@ func TestShellQuoteAndSSHArgumentConstruction(t *testing.T) {
 		t.Fatalf("unsafe remote command: %q", args[len(args)-1])
 	}
 }
+
+func TestClassifyFailure(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want FailureKind
+	}{
+		{errors.New("ssh: Could not resolve hostname pi: Name or service not known"), FailureDNS},
+		{errors.New("ssh: connect to host pi port 22: Connection refused"), FailureRefused},
+		{errors.New("Host key verification failed."), FailureHostKey},
+		{errors.New("Permission denied (publickey)."), FailureAuthentication},
+		{context.DeadlineExceeded, FailureTimeout},
+		{errors.New("sudo: a password is required"), FailureSudoAuthentication},
+	} {
+		if got := ClassifyFailure(test.err); got != test.want {
+			t.Fatalf("ClassifyFailure(%q) = %q, want %q", test.err, got, test.want)
+		}
+	}
+}

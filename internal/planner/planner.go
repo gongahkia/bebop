@@ -32,6 +32,9 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if !host.Systemd {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported Debian-family target does not expose systemd; Bebop M0 requires systemd", nil)
 	}
+	if host.PackageManager != "apt" {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported Debian-family target does not expose the required apt/dpkg package tools", nil)
+	}
 	result := plan.Plan{Version: 1, Target: host.Target}
 	if !host.ArchitectureKnown {
 		result.Warnings = append(result.Warnings, plan.Warning{ID: "host.architecture", Module: "host", Summary: "unknown target architecture: " + host.Architecture, Resolution: "Bebop will not infer architecture-specific packages; confirm repository availability before apply."})

@@ -4,6 +4,7 @@ package facts
 type HostFacts struct {
 	Target              string           `json:"target"`
 	Hostname            string           `json:"hostname"`
+	MachineID           string           `json:"machine_id,omitempty"`
 	OS                  OS               `json:"os"`
 	Architecture        string           `json:"architecture"`
 	ArchitectureKnown   bool             `json:"architecture_known"`

@@ -20,6 +20,7 @@ import (
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/plan"
+	"github.com/bebop-home/bebop/internal/preflight"
 	"github.com/bebop-home/bebop/internal/resolve"
 )
 
@@ -51,6 +52,8 @@ func (r *Runner) Run(arguments []string) int {
 		err = r.host(arguments[1:])
 	case "init":
 		err = r.init(arguments[1:])
+	case "bootstrap":
+		err = r.bootstrap(arguments[1:])
 	case "plan":
 		err = r.plan(arguments[1:])
 	case "apply":
@@ -507,25 +510,65 @@ func (r *Runner) doctor(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
+	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
+	if resolution.Alias != "" {
+		result.Checks = append([]preflight.Check{{Status: preflight.Pass, Code: "inventory.resolved", Message: "inventory alias resolved: " + resolution.Alias}}, result.Checks...)
+	}
+	report := doctorReport(result)
+	if common.json {
+		if err := writeJSON(r.Out, report); err != nil {
+			return err
+		}
+	} else {
+		for _, check := range report.Checks {
+			label := strings.ToUpper(string(check.Status))
+			fmt.Fprintf(r.Out, "%s  %s\n", label, check.Message)
+		}
+	}
+	return result.FailureError()
+}
+
+func (r *Runner) bootstrap(arguments []string) error {
+	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	fs.SetOutput(r.Err)
+	common := addCommon(fs, true)
+	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
+		return err
+	}
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
-	report := doctorReport(host)
+	path := configured(fs, resolution, *configPath)
+	cfg, err := loadOptionalConfig(path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
+	defer cancel()
+	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
+	if resolution.Alias != "" {
+		result.Checks = append([]preflight.Check{{Status: preflight.Pass, Code: "inventory.resolved", Message: "inventory alias resolved: " + resolution.Alias}}, result.Checks...)
+	}
 	if common.json {
-		return writeJSON(r.Out, report)
-	}
-	for _, check := range report.Checks {
-		symbol := "✓"
-		if check.Status == "warning" {
-			symbol = "!"
+		if err := writeJSON(r.Out, result); err != nil {
+			return err
 		}
-		if check.Status == "failure" {
-			symbol = "✗"
+	} else {
+		fmt.Fprintf(r.Out, "Target: %s\n\n", result.Target)
+		for _, check := range result.Checks {
+			fmt.Fprintf(r.Out, "%s  %s\n", strings.ToUpper(string(check.Status)), check.Message)
 		}
-		fmt.Fprintf(r.Out, "%s %s\n", symbol, check.Message)
+		if result.Ready {
+			next := resolution.Target.String()
+			if resolution.Alias != "" {
+				next = resolution.Alias
+			}
+			fmt.Fprintf(r.Out, "\nTarget ready. Next: bebop plan %s\n", next)
+		}
 	}
-	return nil
+	return result.FailureError()
 }
 
 func (r *Runner) status(arguments []string) error {
