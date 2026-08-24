@@ -3,8 +3,10 @@ package notification
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -60,6 +62,36 @@ func TestWebhookRetriesOnlyTransientFailuresAndRedactsPayload(t *testing.T) {
 	if result.Delivered || result.Attempts != 1 || result.Category != "authentication" || requests.Load() != 1 {
 		t.Fatalf("401 retry policy = %#v requests=%d", result, requests.Load())
 	}
+}
+
+func TestWebhookFailureClassificationAndTimeoutRetries(t *testing.T) {
+	for _, test := range []struct {
+		status   int
+		category string
+		retry    bool
+	}{
+		{http.StatusTooManyRequests, "rate_limited", true}, {http.StatusBadGateway, "server_error", true}, {http.StatusGatewayTimeout, "server_error", true}, {http.StatusInternalServerError, "server_error", false}, {http.StatusForbidden, "authentication", false},
+	} {
+		category, retry := httpFailure(test.status)
+		if category != test.category || retry != test.retry {
+			t.Fatalf("HTTP %d = %s/%t, want %s/%t", test.status, category, retry, test.category, test.retry)
+		}
+	}
+	if category, retry := requestFailure(&url.Error{Err: &net.DNSError{Name: "unavailable.invalid"}}); category != "dns" || !retry {
+		t.Fatalf("DNS category = %s/%t", category, retry)
+	}
+	t.Setenv("BEBOP_TEST_WEBHOOK_TIMEOUT", "http://127.0.0.1:1/hook")
+	sink := WebhookSink{urlEnv: "BEBOP_TEST_WEBHOOK_TIMEOUT", client: &http.Client{Transport: timeoutRoundTripper{}}, sleep: func(time.Duration) {}}
+	result := sink.Deliver(context.Background(), testEvent(time.Now().UTC(), "doctor.failed", Error, "doctor", "timeout"))
+	if result.Delivered || result.Category != "timeout" || result.Attempts != 3 {
+		t.Fatalf("timeout retry = %#v", result)
+	}
+}
+
+type timeoutRoundTripper struct{}
+
+func (timeoutRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, context.DeadlineExceeded
 }
 
 func TestWebhookEnforcesTLSAndRejectsRedirects(t *testing.T) {

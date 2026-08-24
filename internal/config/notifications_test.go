@@ -55,6 +55,7 @@ cooldown = "1h"
 		strings.Replace(valid, `url_env = "BEBOP_OPS_WEBHOOK_URL"`, `url = "https://secret.example"`, 1),
 		strings.Replace(valid, `"backup.failed", "doctor.failed"`, `"backup.unknown"`, 1),
 		strings.Replace(valid, `state_dir = ".bebop/notifications"`, `state_dir = "../notifications"`, 1),
+		strings.Replace(valid, `path = ".bebop/notifications/events.jsonl"`, `path = "events.jsonl"`, 1),
 		strings.Replace(valid, `cooldown = "1h"`, `cooldown = "1x"`, 1),
 	} {
 		if _, err := Decode(strings.NewReader(malformed)); err == nil {

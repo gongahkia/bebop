@@ -194,6 +194,10 @@ func requestFailure(err error) (string, bool) {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout", true
 	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns", true
+	}
 	var networkErr net.Error
 	if errors.As(err, &networkErr) && networkErr.Timeout() {
 		return "timeout", true

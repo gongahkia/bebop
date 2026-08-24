@@ -248,7 +248,7 @@ func routeMatches(route config.NotificationRoute, event Event, recovery bool) bo
 	if recovery && !route.Recoveries {
 		return false
 	}
-	if len(route.Severities) > 0 {
+	if !recovery && len(route.Severities) > 0 {
 		found := false
 		for _, severity := range route.Severities {
 			if severity == string(event.Severity) {

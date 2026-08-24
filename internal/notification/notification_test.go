@@ -60,6 +60,24 @@ func TestDeriveUsesStableSecretSafeIssueFingerprints(t *testing.T) {
 	if !types["storage.failed"] || !types["service.unhealthy"] || !types["doctor.warning"] {
 		t.Fatalf("doctor findings did not derive typed events: %#v", doctor)
 	}
+	for _, test := range []struct {
+		operation Operation
+		want      string
+	}{
+		{Operation{RunID: "run", Job: "backup", Operation: "backup", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(4, 0)}, "backup.succeeded"},
+		{Operation{RunID: "run", Job: "backup", Operation: "backup", Target: "pi", Origin: "scheduled", Result: "warning", OccurredAt: time.Unix(5, 0), RetentionFailure: true}, "backup.retention_failed"},
+		{Operation{RunID: "run", Job: "doctor", Operation: "doctor", Target: "pi", Origin: "scheduled", Result: "failure", OccurredAt: time.Unix(6, 0), Findings: []Finding{{Code: "ssh.config_invalid", Status: "fail"}}}, "doctor.failed"},
+		{Operation{RunID: "run", Job: "doctor", Operation: "doctor", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(7, 0), Findings: []Finding{{Code: "storage.bulk", Status: "pass"}}}, "storage.recovered"},
+		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(8, 0), Updates: 2}, "updates.available"},
+		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(9, 0)}, "updates.cleared"},
+		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "failure", OccurredAt: time.Unix(10, 0), FailureCategory: "target_unreachable"}, "maintenance.failed"},
+		{Operation{RunID: "run", Job: "doctor", Operation: "custom", Target: "pi", Origin: "scheduled", Result: "skipped", OccurredAt: time.Unix(11, 0), Reason: "outside-window"}, "maintenance.skipped"},
+	} {
+		events, deriveErr := Derive(test.operation)
+		if deriveErr != nil || len(events) == 0 || events[0].Type != test.want {
+			t.Fatalf("derive %s: %#v %v", test.want, events, deriveErr)
+		}
+	}
 }
 
 func TestProcessDeduplicatesEscalatesRecoversAndPersists(t *testing.T) {
@@ -146,6 +164,38 @@ func TestProcessCooldownAndConcurrentDuplicateEvaluation(t *testing.T) {
 	}
 }
 
+func TestRouteFilteringSeverityAndRecoveryPolicy(t *testing.T) {
+	cfg := testConfig(t, ".bebop/notifications")
+	cfg.Notifications.Routes = []config.NotificationRoute{
+		{Name: "errors", Sink: "events", Events: []string{"doctor.failed"}, Severities: []string{"error"}, Recoveries: false},
+		{Name: "warnings", Sink: "events", Events: []string{"doctor.warning"}, Severities: []string{"warning"}, Recoveries: true},
+	}
+	store, err := OpenStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &captureSink{}
+	service := NewServiceForTest(*cfg.Notifications, store, map[string]Sink{"events": sink}, time.Now)
+	warning := testEvent(time.Now().UTC(), "doctor.warning", Warning, "doctor", "warning")
+	if results, err := service.Process(context.Background(), []Event{warning}); err != nil || len(results) != 1 || results[0].Route != "warnings" || results[0].Result != "delivered" {
+		t.Fatalf("warning route = %#v %v", results, err)
+	}
+	recovery := warning
+	recovery.EventID, recovery.Type, recovery.Severity = "evt-warning-recovered", "doctor.recovered", Recovery
+	if results, err := service.Process(context.Background(), []Event{recovery}); err != nil || len(results) != 1 || results[0].Route != "warnings" || results[0].Result != "delivered" {
+		t.Fatalf("recovery policy = %#v %v", results, err)
+	}
+	errorEvent := testEvent(time.Now().UTC(), "doctor.failed", Error, "doctor", "error")
+	if results, err := service.Process(context.Background(), []Event{errorEvent}); err != nil || len(results) != 1 || results[0].Route != "errors" {
+		t.Fatalf("error route = %#v %v", results, err)
+	}
+	errorRecovery := errorEvent
+	errorRecovery.EventID, errorRecovery.Type, errorRecovery.Severity = "evt-error-recovered", "doctor.recovered", Recovery
+	if results, err := service.Process(context.Background(), []Event{errorRecovery}); err != nil || len(results) != 0 {
+		t.Fatalf("disabled recovery route = %#v %v", results, err)
+	}
+}
+
 func TestStateCorruptionAndTestEventDoNotAlterOperations(t *testing.T) {
 	cfg := testConfig(t, ".bebop/notifications")
 	store, err := OpenStore(cfg)
@@ -193,6 +243,20 @@ func TestFileSinkIsSecretSafeAndRejectsSymlinkEscape(t *testing.T) {
 	}
 	if strings.Contains(string(contents), "BEBOP_TEST_SECRET_DO_NOT_LEAK") {
 		t.Fatalf("file sink leaked secret: %s", contents)
+	}
+	for _, filename := range []string{filepath.Join(store.Root(), "state.json")} {
+		stored, readErr := os.ReadFile(filename)
+		if readErr != nil || strings.Contains(string(stored), "BEBOP_TEST_SECRET_DO_NOT_LEAK") {
+			t.Fatalf("notification state leaked secret: %q %v", stored, readErr)
+		}
+	}
+	history, historyErr := store.DeliveryHistory()
+	if historyErr != nil {
+		t.Fatal(historyErr)
+	}
+	encodedHistory, _ := json.Marshal(history)
+	if strings.Contains(string(encodedHistory), "BEBOP_TEST_SECRET_DO_NOT_LEAK") {
+		t.Fatalf("delivery history leaked secret: %s", encodedHistory)
 	}
 	if err := os.MkdirAll(filepath.Join(store.Root(), "nested"), 0o700); err != nil {
 		t.Fatal(err)

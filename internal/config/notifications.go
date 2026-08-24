@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -177,6 +178,12 @@ func ValidateNotifications(notifications Notifications) error {
 		case "file":
 			if err := ValidateControllerRelativePath(sink.Path, true); err != nil {
 				return fmt.Errorf("notification sink %s path %w", sink.Name, err)
+			}
+			stateRoot := filepath.Clean(filepath.FromSlash(notifications.StateDirectory))
+			filePath := filepath.Clean(filepath.FromSlash(sink.Path))
+			relative, err := filepath.Rel(stateRoot, filePath)
+			if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+				return fmt.Errorf("notification file sink %s path must be below notifications.state_dir", sink.Name)
 			}
 			if sink.URLEnv != "" || sink.AuthorizationEnv != "" {
 				return fmt.Errorf("notification file sink %s must not declare webhook settings", sink.Name)
