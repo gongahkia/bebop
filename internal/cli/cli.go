@@ -775,7 +775,7 @@ func (r *Runner) status(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	report := statusReport(host)
+	report := statusReport(host, cfg)
 	if common.json {
 		return writeJSON(r.Out, report)
 	}
@@ -828,7 +828,7 @@ func (r *Runner) statusAll(common *commonFlags, requestedConfig string, configEx
 		if err != nil {
 			return result, err
 		}
-		report := statusReport(host)
+		report := statusReport(host, cfg)
 		result.Status = &report
 		return result, nil
 	})

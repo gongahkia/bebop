@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/preflight"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 )
 
 type Check = preflight.Check
@@ -32,6 +34,7 @@ type StatusReport struct {
 	Services            []ServiceStatus       `json:"services,omitempty"`
 	UnconfiguredStorage []facts.StorageDevice `json:"unconfigured_storage,omitempty"`
 	StorageAvailable    bool                  `json:"storage_available"`
+	Storage             []StorageStatus       `json:"storage,omitempty"`
 	Overall             string                `json:"overall"`
 }
 
@@ -43,7 +46,13 @@ type ServiceStatus struct {
 	Deployment string `json:"deployment"`
 }
 
-func statusReport(host facts.HostFacts) StatusReport {
+type StorageStatus struct {
+	Name  string `json:"name"`
+	Mount string `json:"mount"`
+	State string `json:"state"`
+}
+
+func statusReport(host facts.HostFacts, cfg config.Config) StatusReport {
 	report := StatusReport{Host: host.Hostname, OS: host.OS.Display(), Architecture: host.Architecture, Docker: dockerState(host), Tailscale: tailscaleState(host), Updates: "disabled", SSH: "not hardened", DataRoot: "missing", UnconfiguredStorage: host.UnconfiguredStorage, StorageAvailable: host.Storage.Available, Overall: "needs attention"}
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled {
 		report.Updates = "enabled"
@@ -53,6 +62,9 @@ func statusReport(host facts.HostFacts) StatusReport {
 	}
 	if host.DataRoot.Exists {
 		report.DataRoot = host.DataRoot.Path
+	}
+	for _, assessment := range storagepolicy.AssessAll(cfg.Storage, host.Storage) {
+		report.Storage = append(report.Storage, StorageStatus{Name: assessment.Resource.Name, Mount: assessment.Resource.Mount, State: string(assessment.State)})
 	}
 	servicesHealthy := true
 	for _, service := range host.Services {
