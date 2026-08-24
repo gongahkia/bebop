@@ -9,12 +9,14 @@ filesystem through a marker-scoped fstab entry; it never formats, partitions,
 selects a disk, changes Docker storage, or migrates live data.
 
 Service data may declare a logical storage resource and relative target path.
-Compose sources use a fixed generated `${BEBOP_STORAGE_NAME}` interpolation,
-so physical mount prefixes stay in the storage declaration. Service deploy/start
-plans gain stable mount dependencies and immediate identity preconditions.
-Backup and restore use the same placement guard and therefore refuse root spill,
-wrong UUID, read-only, and threshold-failing locations before data mutation.
-Restore checks the snapshot archive size again immediately before extraction.
+Compose sources can use fixed `${BEBOP_DATA_NAME}` interpolation keyed by the
+portable logical data identity, so physical mount prefixes and host-local
+storage names stay out of source content. Service deploy/start plans gain stable
+mount dependencies and immediate identity preconditions. Backup and restore use
+the same placement guard and therefore refuse root spill, wrong UUID, read-only,
+and threshold-failing locations before data mutation. Restore checks the
+snapshot archive size plus a small safety margin again immediately before
+extraction.
 
 The new controller-side commands are `storage list`, `show`, `inspect`,
 `doctor`, and read-only `adopt`. Storage inspection is available in normal
@@ -22,7 +24,9 @@ facts/status and doctor reports readiness. The next coherent milestone should
 focus on scheduled/external backup repositories, not storage provisioning or
 application catalog expansion.
 
-The opt-in `make test-storage-integration` tier uses a temporary ext4 image
+The opt-in `make test-storage-integration` tier uses temporary ext4 images
 inside privileged disposable Docker-in-Docker. It verifies Bebop's scoped fstab
-write, UUID mount, post-mount verification, and no-op second plan without
-touching any controller disk or `/etc/fstab`.
+write, UUID mount, post-mount verification, and no-op second plan, then proves
+backup/restore from source `fast` storage to destination `bulk` storage with
+the exact persistent file preserved. It never touches a controller disk or
+`/etc/fstab`.

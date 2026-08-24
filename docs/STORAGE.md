@@ -24,11 +24,13 @@ path = "media"
 ```
 
 `storage` plus a relative `path` resolves to `/mnt/bulk/media`. The matching
-Compose bind source can use `${BEBOP_STORAGE_BULK}/media`, so the absolute
-mount prefix is declared once. Bebop injects only these fixed, generated
-storage variables into Compose; arbitrary Compose bind interpolation remains
-rejected. Named Docker volumes remain supported but are intentionally not
-placeable in M6: Docker's data root is out of scope.
+Compose bind source should use `${BEBOP_DATA_MEDIA}` (the portable logical data
+name), so identical source can migrate to a differently named storage resource
+on another host. `${BEBOP_STORAGE_BULK}/media` remains available for direct
+host-local placement. Bebop injects only these fixed, generated storage
+variables into Compose; arbitrary Compose bind interpolation remains rejected.
+Named Docker volumes remain supported but are intentionally not placeable in
+M6: Docker's data root is out of scope.
 
 Before deployment or restore creates a storage-relative bind directory, Bebop
 checks that the declared mount and every already-existing component below it is

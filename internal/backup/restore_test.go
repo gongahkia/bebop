@@ -117,6 +117,30 @@ func TestRestoreStoragePlacementAndCapacityAreRechecked(t *testing.T) {
 	}
 }
 
+func TestRestoreMapsLogicalDataToDifferentlyNamedDestinationStorage(t *testing.T) {
+	repository, sourceConfig, sourceDeployment, manifest := storageRestoreFixture(t)
+	destinationConfig := sourceConfig
+	destinationConfig.Storage.Resources = []config.StorageResource{{Name: "archive", Mount: "/mnt/archive", FilesystemUUID: "22222222-3333-4444-5555-666666666666", FilesystemType: "ext4"}}
+	destinationConfig.Services[0].Data[0].Storage = "archive"
+	destinationDeployment, err := services.ResolveOne(destinationConfig, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destinationDeployment.SourceDigest != sourceDeployment.SourceDigest {
+		t.Fatal("portable data interpolation changed Compose source identity")
+	}
+	destinationHost := restoreHost(destinationDeployment)
+	destinationHost.MachineID = "different-destination"
+	destinationHost.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/archive", UUID: "22222222-3333-4444-5555-666666666666", Filesystem: "ext4", SizeBytes: 256 << 20, AvailableBytes: 128 << 20}}}
+	plan, err := BuildRestorePlan(context.Background(), repository, RestoreRequest{SnapshotID: manifest.SnapshotID, Target: "destination", Config: destinationConfig, Host: destinationHost, Service: "hello", Transport: &restoreTransport{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Services[0].Resources[0].Destination != "/mnt/archive/state" {
+		t.Fatalf("logical resource did not map to destination storage: %#v", plan.Services)
+	}
+}
+
 func restoreFixture(t *testing.T) (Repository, config.Config, services.Deployment, Manifest) {
 	t.Helper()
 	root := t.TempDir()
@@ -197,7 +221,7 @@ func storageRestoreFixture(t *testing.T) (Repository, config.Config, services.De
 	if err := os.WriteFile(filepath.Join(root, "services", "hello", "compose.yaml"), []byte(`services:
   hello:
     image: alpine:3.20
-    volumes: ["${BEBOP_STORAGE_BULK}/state:/data"]
+    volumes: ["${BEBOP_DATA_APP_DATA}:/data"]
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

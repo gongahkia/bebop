@@ -63,6 +63,10 @@ storage = "bulk"
 path = "media"
 ```
 
+Use `${BEBOP_DATA_MEDIA}` as the matching Compose bind source. It is keyed by
+the portable logical data name, so a destination host may map `media` to a
+differently named storage resource without changing the reviewed source.
+
 Use `bebop storage inspect pi` to inspect normalized topology, `storage list
 pi` to assess declarations, and `storage adopt bulk pi --mount /mnt/bulk`
 to record the UUID/type observed at that mount as verified local config

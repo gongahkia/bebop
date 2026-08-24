@@ -52,7 +52,7 @@ test-storage:
 
 test-storage-integration:
 	@if docker info >/dev/null 2>&1; then \
-		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestManagedStorageMountAgainstDisposableImage$$' ./internal/integration; \
+		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^Test(ManagedStorageMountAgainstDisposableImage|StoragePlacementMigrationAgainstDisposableDind)$$' ./internal/integration; \
 	else \
 		echo "Docker daemon unavailable; skipping storage integration tests."; \
 	fi

@@ -325,7 +325,7 @@ func TestStorageRelativeBindPathUsesDeclaredComposeInterpolation(t *testing.T) {
     image: busybox:1.36.1
     volumes:
       - type: bind
-        source: ${BEBOP_STORAGE_BULK}/media
+        source: ${BEBOP_DATA_MEDIA}
         target: /data
 `)
 	writeFixture(t, root, "bebop.toml", `version = 1
@@ -352,7 +352,7 @@ path = "media"
 	if got := deployment.Data[0].Path; got != "/mnt/bulk/media" {
 		t.Fatalf("resolved storage path = %q", got)
 	}
-	if len(deployment.StorageEnvironment) != 1 || deployment.StorageEnvironment[0].Name != "BEBOP_STORAGE_BULK" {
+	if len(deployment.StorageEnvironment) != 2 || deployment.StorageEnvironment[0].Name != "BEBOP_DATA_MEDIA" || deployment.StorageEnvironment[0].Value != "/mnt/bulk/media" || deployment.StorageEnvironment[1].Name != "BEBOP_STORAGE_BULK" {
 		t.Fatalf("storage environment = %#v", deployment.StorageEnvironment)
 	}
 }

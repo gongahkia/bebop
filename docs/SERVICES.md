@@ -34,12 +34,14 @@ directory. A source must contain exactly one root-level `compose.yaml`,
 
 A path resource may retain M4's explicit absolute `path`, or use a declared
 M6 storage resource plus a clean relative path. For `storage = "bulk"` and
-`path = "media"`, the Compose source binds `${BEBOP_STORAGE_BULK}/media`;
-Bebop provides that fixed value from the storage declaration while validating
-and running Compose. This is the only supported bind-path interpolation. It
-keeps placement out of service source and blocks deployment/start if UUID,
-mount, writeability, or configured capacity policy is not ready. See
-[STORAGE.md](STORAGE.md).
+`path = "media"`, the Compose source should bind `${BEBOP_DATA_MEDIA}`;
+Bebop provides that fixed value from the logical data declaration while
+validating and running Compose. This preserves identical source when another
+host maps `media` to a different storage name. `${BEBOP_STORAGE_BULK}/media`
+remains available for direct host-local placement. These are the only supported
+bind-path interpolations. They keep placement out of service source and block
+deployment/start if UUID, mount, writeability, or configured capacity policy is
+not ready. See [STORAGE.md](STORAGE.md).
 
 ## Recipe-generated services (M5)
 

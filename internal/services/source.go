@@ -188,7 +188,10 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" source is unsafe", err)
 	}
-	storageEnvironment := StorageEnvironment(cfg.Storage)
+	storageEnvironment, err := StorageEnvironment(cfg.Storage, service.Data)
+	if err != nil {
+		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" storage interpolation is invalid", err)
+	}
 	validation, err := validateCompose(filepath.Join(source, filepath.FromSlash(composeFile)), files, service.SecretEnvFile != "", deployment.Project, environmentMap(storageEnvironment))
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" Compose source is unsupported", err)
@@ -237,17 +240,29 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	return deployment, nil
 }
 
-// StorageEnvironment makes a storage-relative bind source portable in Compose
-// without repeating the mount prefix. A source may use, for example,
-// ${BEBOP_STORAGE_BULK}/media for storage resource "bulk".
-func StorageEnvironment(storage config.Storage) []Environment {
-	result := make([]Environment, 0, len(storage.Resources))
+// StorageEnvironment supplies two fixed, non-secret interpolation forms.
+// BEBOP_STORAGE_NAME is retained for direct host-local placement. BEBOP_DATA_NAME
+// is keyed by portable logical data identity and therefore lets identical
+// Compose source map a resource to differently named storage on each host.
+func StorageEnvironment(storage config.Storage, data []config.DataResource) ([]Environment, error) {
+	result := make([]Environment, 0, len(storage.Resources)+len(data))
 	for _, resource := range storage.Resources {
 		name := "BEBOP_STORAGE_" + strings.ToUpper(strings.ReplaceAll(resource.Name, "-", "_"))
 		result = append(result, Environment{Name: name, Value: resource.Mount})
 	}
+	for _, resource := range data {
+		if resource.Type != "path" || resource.Storage == "" {
+			continue
+		}
+		resolved, err := config.ResolveDataPath(storage, resource)
+		if err != nil {
+			return nil, err
+		}
+		name := "BEBOP_DATA_" + strings.ToUpper(strings.ReplaceAll(resource.Name, "-", "_"))
+		result = append(result, Environment{Name: name, Value: resolved})
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result
+	return result, nil
 }
 
 func environmentMap(values []Environment) map[string]string {
