@@ -27,6 +27,7 @@ import (
 const (
 	SecretEnvName         = ".bebop-secret.env"
 	SecretFingerprintName = ".bebop-secret-fingerprint"
+	PlacementFingerprintName = ".bebop-placement-fingerprint"
 	maxFiles              = 10_000
 	maxBytes              = 256 << 20
 )
@@ -60,6 +61,7 @@ type Deployment struct {
 	Files              []File
 	SourceDigest       string
 	SecretFingerprint  string
+	PlacementFingerprint string
 	InputFingerprint   string
 	SecretConfigured   bool
 	Ports              []Port
@@ -111,13 +113,14 @@ type Input struct {
 	InputFingerprint  string `json:"input_fingerprint,omitempty"`
 	SecretConfigured  bool   `json:"secret_configured,omitempty"`
 	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
+	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 
 func (deployment Deployment) Input() Input {
 	return Input{
 		Name: deployment.Name, Project: deployment.Project, State: deployment.State,
 		SourceDigest: deployment.SourceDigest, InputFingerprint: deployment.InputFingerprint,
-		SecretConfigured: deployment.SecretConfigured, SecretFingerprint: deployment.SecretFingerprint,
+		SecretConfigured: deployment.SecretConfigured, SecretFingerprint: deployment.SecretFingerprint, PlacementFingerprint: deployment.PlacementFingerprint,
 	}
 }
 
@@ -217,8 +220,13 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 		deployment.SecretFingerprint = hex.EncodeToString(mac.Sum(nil))
 		deployment.SecretConfigured = true
 	}
-	deployment.InputFingerprint = inputFingerprint(deployment.SourceDigest, deployment.SecretFingerprint)
-	payload, err := archivePayload(source, files, secret, deployment.SecretFingerprint)
+	placementFingerprint, err := persistentPlacementFingerprint(deployment.Data)
+	if err != nil {
+		return Deployment{}, err
+	}
+	deployment.PlacementFingerprint = placementFingerprint
+	deployment.InputFingerprint = inputFingerprint(deployment.SourceDigest, deployment.SecretFingerprint, deployment.PlacementFingerprint)
+	payload, err := archivePayload(source, files, secret, deployment.SecretFingerprint, deployment.PlacementFingerprint)
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -501,7 +509,7 @@ func secretKey(base string) ([]byte, error) {
 	return key, nil
 }
 
-func archivePayload(root string, files []File, secret []byte, secretFingerprint string) ([]byte, error) {
+func archivePayload(root string, files []File, secret []byte, secretFingerprint, placementFingerprint string) ([]byte, error) {
 	var output bytes.Buffer
 	writer := tar.NewWriter(&output)
 	for _, file := range files {
@@ -529,6 +537,9 @@ func archivePayload(root string, files []File, secret []byte, secretFingerprint 
 		if err := writeArchiveFile(writer, SecretFingerprintName, 0o600, []byte(secretFingerprint+"\n")); err != nil {
 			return nil, err
 		}
+	}
+	if err := writeArchiveFile(writer, PlacementFingerprintName, 0o600, []byte(placementFingerprint+"\n")); err != nil {
+		return nil, err
 	}
 	if err := writer.Close(); err != nil {
 		return nil, err
