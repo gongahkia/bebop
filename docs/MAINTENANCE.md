@@ -171,6 +171,9 @@ result (`success`, `warning`, `failure`, or `skipped`), and typed summary. Raw
 stderr and arbitrary error text are intentionally excluded, so scheduler logs
 remain in `journalctl --user -u bebop-maintenance-NAME.service`.
 
+The history directory must be a real controller directory that is not group- or
+world-writable; new directories are created with restrictive user permissions.
+
 History is provenance, not truth: deleting it does not affect targets,
 snapshots, eligibility, locks, or recovery. Per-job controller advisory leases
 under `.bebop/maintenance/locks` prevent duplicate manual/timer runs and are

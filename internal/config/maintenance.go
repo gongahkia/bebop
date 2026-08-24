@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -136,6 +137,9 @@ func ValidateMaintenance(maintenance Maintenance) error {
 	}
 	if err := ValidateControllerRelativePath(maintenance.HistoryDirectory, false); err != nil {
 		return fmt.Errorf("maintenance.history_dir %w", err)
+	}
+	if filepath.Clean(filepath.FromSlash(maintenance.HistoryDirectory)) == "." {
+		return fmt.Errorf("maintenance.history_dir must name a dedicated directory")
 	}
 	if maintenance.HistoryMaxEntries < 1 || maintenance.HistoryMaxEntries > 100_000 {
 		return fmt.Errorf("maintenance.history_max_entries must be between 1 and 100000")

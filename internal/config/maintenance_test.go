@@ -66,6 +66,7 @@ refresh_metadata = true
 		"version=1\n[maintenance]\nversion=1\n[[maintenance.jobs]]\nname='doctor'\ntype='doctor'\ntarget='pi'\nschedule='daily@03:00'\ncommand='unsafe'\n",
 		"version=1\n[maintenance]\nversion=1\n[[maintenance.jobs]]\nname='doctor'\ntype='doctor'\ntarget='pi'\nschedule='daily@03:00'\n[maintenance.jobs.window]\nstart='02:00'\nend='02:00'\n",
 		"version=1\n[maintenance]\nversion=1\n[[maintenance.jobs]]\nname='doctor'\ntype='doctor'\ntarget='pi'\nschedule='daily@03:00'\n[maintenance.jobs.retention]\nkeep_last=2\n",
+		"version=1\n[maintenance]\nversion=1\nhistory_dir='.'\n",
 	} {
 		if _, err := Decode(strings.NewReader(contents)); err == nil {
 			t.Fatalf("unsafe maintenance configuration was accepted: %s", contents)

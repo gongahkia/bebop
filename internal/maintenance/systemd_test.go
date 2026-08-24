@@ -86,6 +86,12 @@ func TestSystemdStatusDetectsTamperingAndConfigDrift(t *testing.T) {
 	if err != nil || statuses[0].State != "stale" {
 		t.Fatalf("binary drift status = %#v, %v", statuses, err)
 	}
+	changed = job
+	changed.Target = "nuc"
+	statuses, err = scheduler.Status(context.Background(), []config.MaintenanceJob{changed})
+	if err != nil || statuses[0].State != "stale" {
+		t.Fatalf("job policy drift status = %#v, %v", statuses, err)
+	}
 }
 
 func TestSystemdInstallReconcilesOnlyOwnedUnits(t *testing.T) {

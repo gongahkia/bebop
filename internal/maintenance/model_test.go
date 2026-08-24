@@ -3,6 +3,7 @@ package maintenance
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -156,6 +157,23 @@ func TestLocalJobLockIsCrashSafeProcessLease(t *testing.T) {
 		t.Fatalf("released lease remained stale: %v", err)
 	} else if err := second.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHistoryRejectsWorldWritableDirectory(t *testing.T) {
+	base := maintenanceConfig(t)
+	root, err := HistoryRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewHistory(base); err == nil || !strings.Contains(err.Error(), "world-writable") {
+		t.Fatalf("world-writable history directory was accepted: %v", err)
 	}
 }
 

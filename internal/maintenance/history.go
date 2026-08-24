@@ -34,6 +34,9 @@ func NewHistory(cfg config.Config) (History, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return History{}, fmt.Errorf("maintenance history directory must be a real directory")
 	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return History{}, fmt.Errorf("maintenance history directory must not be group- or world-writable")
+	}
 	return History{root: root, maxEntries: cfg.Maintenance.HistoryMaxEntries}, nil
 }
 
@@ -54,6 +57,9 @@ func ExistingHistory(cfg config.Config) (History, error) {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return History{}, fmt.Errorf("maintenance history directory must be a real directory")
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return History{}, fmt.Errorf("maintenance history directory must not be group- or world-writable")
 	}
 	return History{root: root, maxEntries: cfg.Maintenance.HistoryMaxEntries}, nil
 }

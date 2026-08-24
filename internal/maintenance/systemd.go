@@ -156,6 +156,10 @@ func (scheduler SystemdUser) TimerName(job string) string {
 }
 
 func (scheduler SystemdUser) renderService(job config.MaintenanceJob, serviceName string) (string, error) {
+	fingerprint, err := job.Fingerprint()
+	if err != nil {
+		return "", err
+	}
 	arguments := []string{scheduler.Executable, "maintenance", "run", "--scheduled", "--config", scheduler.ConfigPath, "--inventory", scheduler.InventoryPath, job.Name}
 	escaped := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
@@ -169,7 +173,7 @@ func (scheduler SystemdUser) renderService(job config.MaintenanceJob, serviceNam
 	if err != nil {
 		return "", err
 	}
-	return unitHeader + "[Unit]\nDescription=Bebop maintenance " + job.Name + "\n\n[Service]\nType=oneshot\nWorkingDirectory=" + workingDirectory + "\nExecStart=" + strings.Join(escaped, " ") + "\n", nil
+	return unitHeader + "# Bebop-Job-Fingerprint: " + fingerprint + "\n[Unit]\nDescription=Bebop maintenance " + job.Name + "\n\n[Service]\nType=oneshot\nWorkingDirectory=" + workingDirectory + "\nExecStart=" + strings.Join(escaped, " ") + "\n", nil
 }
 
 func (scheduler SystemdUser) renderTimer(job config.MaintenanceJob, serviceName string) (string, error) {
