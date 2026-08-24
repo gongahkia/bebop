@@ -232,9 +232,6 @@ func (stage *Stage) Complete() (Manifest, error) {
 	if err := os.WriteFile(filepath.Join(stage.path, manifestFilename), append(encoded, '\n'), 0o400); err != nil {
 		return Manifest{}, err
 	}
-	if err := setReadOnly(stage.path); err != nil {
-		return Manifest{}, err
-	}
 	if err := repositoryVerifyPath(stage.path, stage.manifest); err != nil {
 		return Manifest{}, err
 	}
@@ -244,6 +241,9 @@ func (stage *Stage) Complete() (Manifest, error) {
 	}
 	if err := os.Rename(stage.path, completed); err != nil {
 		return Manifest{}, errs.New(errs.ConfigInvalid, "publish completed backup snapshot", err)
+	}
+	if err := setReadOnly(completed); err != nil {
+		return Manifest{}, errs.New(errs.VerificationFailed, "mark completed backup snapshot immutable", err)
 	}
 	return stage.manifest, nil
 }

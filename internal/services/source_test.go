@@ -211,6 +211,64 @@ source = "services/hello"
 	}
 }
 
+func TestPersistentVolumeResolutionUsesLogicalComposeKeys(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", `services:
+  hello:
+    image: alpine:3.20
+    volumes:
+      - data:/var/lib/hello
+      - type: volume
+        source: external-data
+        target: /external
+volumes:
+  data: {}
+  external-data:
+    external: true
+    name: shared_hello_data
+`)
+	writeFixture(t, root, "bebop.toml", `version = 1
+
+[server]
+name = "destination"
+
+[services.hello]
+type = "compose"
+source = "services/hello"
+
+[[services.hello.data]]
+name = "app-data"
+type = "volume"
+volume = "data"
+
+[[services.hello.data]]
+name = "external-data"
+type = "volume"
+volume = "external-data"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil { t.Fatal(err) }
+	deployment, err := ResolveOne(cfg, "hello")
+	if err != nil { t.Fatal(err) }
+	if len(deployment.Data) != 2 || deployment.Data[0].RuntimeVolume != deployment.Project+"_data" || !deployment.Data[1].External || deployment.Data[1].RuntimeVolume != "shared_hello_data" {
+		t.Fatalf("logical volumes did not resolve safely: %#v", deployment.Data)
+	}
+	writeFixture(t, root, "bebop.toml", `version = 1
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "missing"
+type = "volume"
+volume = "not-mounted"
+`)
+	cfg, err = config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil { t.Fatal(err) }
+	if _, err := ResolveOne(cfg, "hello"); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("undeclared Compose volume was accepted: %v", err)
+	}
+}
+
 func writeFixture(t *testing.T, root, name, contents string) {
 	t.Helper()
 	filename := filepath.Join(root, filepath.FromSlash(name))

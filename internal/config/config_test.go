@@ -85,3 +85,45 @@ health_timeout = "15s"
 		}
 	}
 }
+
+func TestPersistentDataDeclarationsAreExplicitAndSafe(t *testing.T) {
+	actual, err := Decode(strings.NewReader(`version = 1
+
+[backup]
+destination = ".bebop/backups"
+
+[services.hello]
+type = "compose"
+source = "services/hello"
+
+[[services.hello.data]]
+name = "app-data"
+type = "volume"
+volume = "data"
+
+[[services.hello.data]]
+name = "uploads"
+type = "path"
+path = "/srv/hello/uploads"
+
+[services.hello.backup]
+consistency = "live"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Backup.Destination != ".bebop/backups" || len(actual.Services[0].Data) != 2 || actual.Services[0].Backup.Consistency != "live" {
+		t.Fatalf("persistent data declarations did not decode: %#v", actual)
+	}
+	for _, contents := range []string{
+		"version = 1\n[backup]\ndestination = '../escape'\n",
+		"version = 1\n[services.hello]\ntype='compose'\nsource='services/hello'\n[[services.hello.data]]\nname='data'\ntype='volume'\nvolume='../bad'\n",
+		"version = 1\n[services.hello]\ntype='compose'\nsource='services/hello'\n[[services.hello.data]]\nname='data'\ntype='path'\npath='/etc'\n",
+		"version = 1\n[services.hello]\ntype='compose'\nsource='services/hello'\n[[services.hello.data]]\nname='data'\ntype='path'\npath='/srv/bebop/services/hello'\n",
+		"version = 1\n[services.hello]\ntype='compose'\nsource='services/hello'\n[services.hello.backup]\nconsistency='hook'\n",
+	} {
+		if _, err := Decode(strings.NewReader(contents)); err == nil {
+			t.Fatalf("expected unsafe persistent-data declaration to fail: %s", contents)
+		}
+	}
+}
