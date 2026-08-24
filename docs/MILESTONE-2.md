@@ -29,6 +29,12 @@ and `host remove NAME --yes` manage only this controller file. A host reference
 accepted by normal commands can be either an inventory alias or a literal
 target. Supplying both an alias and `--target` is rejected as ambiguous.
 
+User-authored controller inputs are `bebop.toml`, `bebop.hosts.toml`, and any
+referenced host configs. Plan output is explicitly selected with `--out` (the
+recommended `.bebop/plans/` location is intentionally not ignored, so reviewed
+plans can be committed). `.bebop/cache/` and `.bebop/history/` are reserved
+local generated locations and ignored; M2 does not require a history database.
+
 ## Preflight and fleet reads
 
 `bootstrap HOST` is read-only. It resolves the normal target, uses the ordinary
