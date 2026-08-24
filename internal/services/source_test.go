@@ -275,6 +275,49 @@ volume = "not-mounted"
 	}
 }
 
+func TestPersistentBindPathMustBeMountedByComposeService(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", `services:
+  hello:
+    image: alpine:3.20
+    volumes:
+      - /srv/hello/uploads:/uploads
+`)
+	writeFixture(t, root, "bebop.toml", `version = 1
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "uploads"
+type = "path"
+path = "/srv/hello/uploads"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := ResolveOne(cfg, "hello")
+	if err != nil || len(deployment.Data) != 1 || deployment.Data[0].Path != "/srv/hello/uploads" {
+		t.Fatalf("mounted bind path was not resolved: %#v %v", deployment.Data, err)
+	}
+	writeFixture(t, root, "bebop.toml", `version = 1
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "other"
+type = "path"
+path = "/srv/hello/other"
+`)
+	cfg, err = config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveOne(cfg, "hello"); err == nil || !strings.Contains(err.Error(), "not mounted") {
+		t.Fatalf("undeclared Compose bind path was accepted: %v", err)
+	}
+}
+
 func writeFixture(t *testing.T, root, name, contents string) {
 	t.Helper()
 	filename := filepath.Join(root, filepath.FromSlash(name))

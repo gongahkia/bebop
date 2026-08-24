@@ -21,7 +21,8 @@ func TestRepositoryPublishesOnlyVerifiedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource, err := stage.WriteArchive(context.Background(), "services/hello/data/app-data.tar", fixtureArchive(t, map[string]string{"state.txt": "portable state"}))
+	const secretSentinel = "BEBOP_M4_SECRET_DO_NOT_RENDER"
+	resource, err := stage.WriteArchive(context.Background(), "services/hello/data/app-data.tar", fixtureArchive(t, map[string]string{"state.txt": "portable state", "application-data.txt": secretSentinel}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,13 @@ func TestRepositoryPublishesOnlyVerifiedSnapshots(t *testing.T) {
 	}
 	if manifest.Digest == "" || manifest.Services[0].Resources[0].SHA256 == "" {
 		t.Fatalf("missing snapshot integrity metadata: %#v", manifest)
+	}
+	encoded, err := os.ReadFile(filepath.Join(repository.Root(), snapshotsDirectory, manifest.SnapshotID, manifestFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secretSentinel) {
+		t.Fatalf("snapshot manifest leaked resource contents: %s", encoded)
 	}
 }
 
@@ -96,6 +104,27 @@ func TestRepositoryRejectsCorruptAndUnsafeArchives(t *testing.T) {
 	}
 	if _, err := repository.OpenArchive("../../etc", resource); err == nil {
 		t.Fatal("path-injected snapshot ID accepted")
+	}
+}
+
+func TestRepositoryRejectsArchiveLinkEscapesAndHardLinks(t *testing.T) {
+	repository := testRepository(t)
+	for name, header := range map[string]*tar.Header{
+		"link escape": {Name: "data/link", Typeflag: tar.TypeSymlink, Linkname: "../../etc/passwd"},
+		"hard link":   {Name: "data/hard", Typeflag: tar.TypeLink, Linkname: "data/file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stage, err := repository.Begin(Source{Target: "local"}, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := stage.WriteArchive(context.Background(), "services/hello/data/app.tar", archiveWithHeader(t, header)); err == nil {
+				t.Fatal("unsafe link archive was accepted")
+			}
+			if err := stage.Abort(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -165,6 +194,19 @@ func fixtureArchive(t *testing.T, files map[string]string) io.Reader {
 		if _, err := writer.Write([]byte(contents)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(output.Bytes())
+}
+
+func archiveWithHeader(t *testing.T, header *tar.Header) io.Reader {
+	t.Helper()
+	var output bytes.Buffer
+	writer := tar.NewWriter(&output)
+	if err := writer.WriteHeader(header); err != nil {
+		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

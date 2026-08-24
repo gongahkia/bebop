@@ -235,6 +235,11 @@ func (stage *Stage) Complete() (Manifest, error) {
 	if err := repositoryVerifyPath(stage.path, stage.manifest); err != nil {
 		return Manifest{}, err
 	}
+	// Make archive and manifest contents immutable before publication. Directories
+	// stay writable until after the rename so a failed publication remains staging.
+	if err := setFilesReadOnly(stage.path); err != nil {
+		return Manifest{}, errs.New(errs.VerificationFailed, "mark backup snapshot contents immutable", err)
+	}
 	completed, err := stage.repository.child(snapshotsDirectory, stage.id)
 	if err != nil {
 		return Manifest{}, err
@@ -242,16 +247,18 @@ func (stage *Stage) Complete() (Manifest, error) {
 	if err := os.Rename(stage.path, completed); err != nil {
 		return Manifest{}, errs.New(errs.ConfigInvalid, "publish completed backup snapshot", err)
 	}
-	if err := setReadOnly(completed); err != nil {
+	if err := setDirectoriesReadOnly(completed); err != nil {
+		// A snapshot whose final directory cannot be protected must not remain in
+		// the completed namespace. Best-effort rollback leaves only recognizable
+		// staging residue if moving it back succeeds.
+		_ = setDirectoriesWritable(completed)
+		_ = os.Rename(completed, stage.path)
 		return Manifest{}, errs.New(errs.VerificationFailed, "mark completed backup snapshot immutable", err)
 	}
 	return stage.manifest, nil
 }
 
 func (stage *Stage) Abort() error {
-	if stage.closed {
-		return nil
-	}
 	stage.closed = true
 	return os.RemoveAll(stage.path)
 }
@@ -649,14 +656,32 @@ func (writer *countWriter) Write(contents []byte) (int, error) {
 	return count, err
 }
 
-func setReadOnly(root string) error {
+func setFilesReadOnly(root string) error {
 	return filepath.Walk(root, func(filename string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
-			return os.Chmod(filename, 0o500)
+			return nil
 		}
 		return os.Chmod(filename, 0o400)
+	})
+}
+
+func setDirectoriesReadOnly(root string) error {
+	return filepath.Walk(root, func(filename string, info fs.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return err
+		}
+		return os.Chmod(filename, 0o500)
+	})
+}
+
+func setDirectoriesWritable(root string) error {
+	return filepath.Walk(root, func(filename string, info fs.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return err
+		}
+		return os.Chmod(filename, 0o700)
 	})
 }

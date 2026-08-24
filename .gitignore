@@ -2,4 +2,5 @@ AGENTS.md
 bin/
 .bebop/cache/
 .bebop/history/
+.bebop/backups/
 coverage.out

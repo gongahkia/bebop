@@ -6,7 +6,9 @@ package preflight
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/bebop-home/bebop/internal/bebop"
 	"github.com/bebop-home/bebop/internal/config"
@@ -60,7 +62,10 @@ func Run(ctx context.Context, service *bebop.Service, current target.Target, cfg
 	if err != nil {
 		return unavailable(result, transport.ClassifyFailure(err), failureMessage(transport.ClassifyFailure(err), err))
 	}
-	return FromFacts(current, host)
+	result = FromFacts(current, host)
+	appendBackupChecks(&result, cfg)
+	result.Ready = !hasFailure(result.Checks)
+	return result
 }
 
 // FromFacts is deterministic and exists both for focused tests and callers
@@ -168,6 +173,42 @@ func appendOperationalChecks(result *Result, host facts.HostFacts) {
 	for _, device := range host.UnconfiguredStorage {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "storage.unconfigured", Message: "unconfigured storage detected: " + device.Name + "; Bebop will not modify disk layouts"})
 	}
+}
+
+// appendBackupChecks deliberately remains controller-local and read-only. A
+// normal doctor must not create a repository, pull a helper image, or scan
+// potentially large declared data resources.
+func appendBackupChecks(result *Result, cfg config.Config) {
+	resources := 0
+	for _, service := range cfg.Services {
+		resources += len(service.Data)
+	}
+	if resources == 0 {
+		return
+	}
+	result.Checks = append(result.Checks, Check{Status: Pass, Code: "backup.resources_declared", Message: fmt.Sprintf("%d explicit persistent data resource(s) declared for backup", resources)})
+	destination := cfg.Backup.Destination
+	if !filepath.IsAbs(destination) {
+		if cfg.SourceDirectory() == "" {
+			result.Checks = append(result.Checks, Check{Status: Warn, Code: "backup.destination_unresolved", Message: "relative backup destination needs a file-backed configuration"})
+			return
+		}
+		destination = filepath.Join(cfg.SourceDirectory(), destination)
+	}
+	info, err := os.Lstat(destination)
+	if os.IsNotExist(err) {
+		result.Checks = append(result.Checks, Check{Status: Warn, Code: "backup.destination_absent", Message: "backup destination will be created on first backup: " + destination})
+		return
+	}
+	if err != nil {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "backup.destination_unavailable", Message: "cannot inspect backup destination: " + err.Error()})
+		return
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "backup.destination_unsafe", Message: "backup destination must be a real controller directory"})
+		return
+	}
+	result.Checks = append(result.Checks, Check{Status: Pass, Code: "backup.destination_ready", Message: "backup destination is a controller-side directory: " + destination})
 }
 
 func hasFailure(checks []Check) bool {

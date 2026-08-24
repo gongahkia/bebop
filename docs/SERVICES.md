@@ -134,3 +134,14 @@ M3 does not promise transactional deployment or rollback. The existing target
 apply lock and immediate deployment preconditions narrow races, but another
 actor can still modify Docker or files between checks. Reinspection and the next
 plan report any resulting divergence.
+
+## Persistent data declarations (M4)
+
+Compose storage use is not backup authorization. Add `[[services.NAME.data]]`
+only for named volumes or deliberate absolute application paths that Bebop may
+back up and restore. Volume declarations name a mounted top-level Compose key;
+they map by the resource's `name`, not a host-specific Docker volume name.
+Path declarations are deliberately restricted to safe application-data roots.
+`[services.NAME.backup].consistency` accepts `stop` (default) or explicit
+`live`. Service sources and `secret_env_file` inputs remain controller-side
+deployment inputs and are never part of M4 data snapshots. See [BACKUPS.md](BACKUPS.md).

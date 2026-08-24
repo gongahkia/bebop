@@ -1,5 +1,16 @@
 # Roadmap
 
+## Implemented in M4: backup, restore, and host migration
+
+- Explicit logical Compose volume and safe absolute bind-path data declarations,
+  controller-local full snapshots, streamed tar sanitization, canonical manifest
+  integrity, completion staging, inspection, and corruption refusal.
+- Stop-consistent backup with target locking and original runtime-state recovery,
+  plus separate destination restore plans with identity/config/state/snapshot
+  protections and empty-only restore semantics.
+- Portable logical resource mapping across distinct Docker project volume names,
+  with disposable two-target exact-data migration integration coverage.
+
 ## Implemented in M3: deterministic service runtime
 
 - Generic strict Compose service resources with deterministic source manifests,
@@ -40,9 +51,9 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M4: backup, restore, and host migration for explicit persistent-data
-  boundaries; M5: explicit storage workflows; M6: broader
-  Linux distribution support; M7: macOS/Windows target adapters.
+- M5: curated, deterministic service recipes built on the Compose and persistent
+  state primitives; M6: explicit storage workflows; M7: broader Linux
+  distribution support; M8: macOS/Windows target adapters.
 - Docker Compose application catalog, notifications, and richer drift controls.
 - Explicit storage workflows with no implicit disk automation.
 - Signed plans, generalized rollback, and transactions.

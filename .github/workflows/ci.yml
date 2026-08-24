@@ -43,3 +43,5 @@ jobs:
         run: make test-ssh-integration
       - name: Disposable Docker Compose lifecycle integration
         run: make test-compose-integration
+      - name: Disposable backup and migration integration
+        run: make test-backup-integration

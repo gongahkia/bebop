@@ -128,3 +128,45 @@ resize, encrypt, erase, or automate disks. It also does not install an OS,
 rotate SSH credentials, delete arbitrary user data,
 perform `apt upgrade`, use convenience installer pipes, send telemetry, depend
 on a Bebop cloud, or invoke an LLM/AI API.
+
+## M4 backup and restore boundary
+
+Backups include only explicit `[[services.NAME.data]]` declarations. A named
+volume must be declared by and mounted in the service's Compose project; an
+external volume is included only when explicitly declared. A bind path must be
+an absolute, clean path below `/srv`, `/mnt`, or `/data`; Bebop rejects root,
+system directories, its deployment root, traversal, and symlink targets. It
+never backs up `/var/lib/docker`, Docker layers or daemon metadata, deployment
+releases, host roots, disks, partitions, or undeclared storage.
+
+The controller-side repository stages every snapshot outside the completed
+namespace. Bebop accepts only regular files, directories, and relative symlinks
+that remain inside a resource archive; it rejects traversal, absolute names,
+hard links, device nodes, FIFOs, duplicate entries, and repository path
+injection. It hashes archive bytes and a canonical manifest before publishing.
+`backup verify` validates those hashes and tree shape. Restore validates the
+snapshot before acquiring mutation authority and refuses corruption.
+
+`stop` consistency is the default: Bebop records whether a service was running,
+holds the same `/run/lock/bebop.lock` lease used by apply, stops a running
+service, snapshots declared resources, then attempts to restore the original
+runtime state even when backup fails. `live` is explicit and may capture an
+application-inconsistent state. Neither policy is transactional and neither
+provides database-aware consistency or generalized rollback.
+
+Restore is governed by a separate self-hashed plan. It checks snapshot digest,
+destination configuration, fresh destination state, and M2 machine identity
+before mutation. `empty-only` is the only M4 overwrite policy: missing resources
+may be created; non-empty resources are blocked rather than overwritten. The
+target flock serializes restore with apply and stop-consistent backup. A restore
+then uses normal Bebop service convergence; it does not replay source release
+trees or Docker runtime state.
+
+Snapshot manifests, archive names, command output, history, and JSON never
+contain `secret_env_file` values. M4 does not back up controller-side secrets.
+Use encrypted controller storage or an encrypted mounted destination for
+encryption at rest; M4 intentionally implements no custom encryption. Tar
+metadata preserves numeric UID/GID and basic modes for container volume
+portability, but cross-host bind paths and applications can still require
+compatible ownership expectations. Architecture differences are reported as a
+warning, not a claim of application compatibility.

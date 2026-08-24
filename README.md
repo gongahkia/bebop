@@ -152,6 +152,40 @@ controllers without that local key safely require re-planning. Never put secret
 values in TOML, inventory, service source files intended for review, plans, or
 logs. See [service documentation](docs/SERVICES.md).
 
+## Persistent data backups and migration
+
+M4 backs up only explicitly declared service data to a controller-side
+filesystem repository. It does not copy Docker's data root, service releases,
+secrets, images, or undeclared host data. Named volumes use a portable logical
+resource name rather than their project-derived runtime name; explicit bind
+paths are restricted to safe application-data locations.
+
+```toml
+[backup]
+destination = ".bebop/backups"
+
+[[services.hello.data]]
+name = "app-data"
+type = "volume"
+volume = "data"
+
+[services.hello.backup]
+consistency = "stop"
+```
+
+```sh
+./bin/bebop backup create pi --service hello
+./bin/bebop backup verify SNAPSHOT
+./bin/bebop backup restore SNAPSHOT nuc --service hello --out restore.json
+./bin/bebop backup restore --plan restore.json --yes
+```
+
+The default `stop` policy preserves a running service's state by stopping it
+under Bebop's target lock, streaming a verified snapshot, restarting it, and
+checking health; already stopped services remain stopped. Restore is planned,
+identity/config/snapshot/destination-state guarded, and `empty-only`: Bebop
+refuses to overwrite non-empty data. See [backup documentation](docs/BACKUPS.md).
+
 ## Current desired state
 
 The generated configuration is intentionally small:

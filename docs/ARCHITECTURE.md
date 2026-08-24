@@ -150,3 +150,55 @@ the kernel lock. This narrows, but does not eliminate, out-of-band TOCTOU races.
 writes each result to its original sorted inventory index. `status --all` and
 `doctor --all` retain individual errors and render all hosts before returning a
 non-zero aggregate result. Fleet mutation is intentionally unsupported.
+
+## M4 persistent-state snapshots
+
+M4 extends a Compose service with explicit logical persistent resources. A
+resource is either an authorized Compose named volume or a narrow explicit
+absolute bind path. `internal/services` resolves the logical volume declaration
+through the project's Compose volume mapping, so a snapshot records `app-data`,
+not an implementation-specific source volume name. It also verifies that a
+declared volume is mounted by the declared project before backup or restore.
+
+```text
+config data declarations -> service deployment -> target resources
+                                                    |
+                  target stream <- unprivileged Docker helper
+                                                    |
+                                                    v
+controller Repository -> .staging/<id> -> hash + manifest -> snapshots/<id>
+
+completed snapshot -> restore plan -> fresh destination inspection
+                      |                   |
+                      +-- snapshot digest +-- identity/config/state fingerprints
+                                                      |
+                                                 target flock
+                                                      |
+                                       empty-only extraction -> normal convergence
+```
+
+`internal/backup.Repository` is a controller-local filesystem repository. It
+streams sanitized tar archives through bounded buffers, hashes each stored
+archive, seals a deterministic manifest digest, verifies the staging tree, then
+atomically publishes it under `snapshots/`. Staging data is never listed as a
+snapshot. Completed snapshot files and directories are made read-only; the
+repository contains no controller absolute path or secret value.
+
+`internal/backup.Create` uses the existing target flock for the complete
+stop-consistent window. The default policy records the service's current runtime
+state, stops only a running service, mounts one named volume read-only into a
+fixed unprivileged BusyBox helper, streams `tar` to the controller, and restores
+the original service state with M3's existing Compose verification. `live` is an
+explicit opt-in that does not stop the service and has no application-level
+consistency guarantee. Bind paths are captured by the same constrained helper
+pattern after conservative target validation.
+
+Restore plans are separate versioned, self-hashed artifacts: a snapshot is an
+immutable source fact, not an instruction to mutate a host. A restore plan
+stores the snapshot manifest digest, destination target identity, normalized
+configuration digest, destination persistent-state fingerprint, and sorted
+logical resource mapping. Applying it verifies the snapshot before mutation,
+re-inspects the destination under the target flock, blocks non-empty resources
+by default, restores through a narrow helper, then delegates deployment/startup
+to the existing service planner and apply path. Source and destination runtime
+volume names may therefore differ without losing the logical mapping.

@@ -1030,6 +1030,10 @@ Usage:
   bebop plan [HOST|--target TARGET] [--config bebop.toml] [--out FILE] [--json] [--show-commands]
   bebop apply [HOST|--target TARGET] [--config bebop.toml] [--yes]
   bebop apply --plan FILE [--config bebop.toml] [--yes]
+  bebop backup create [HOST|--target TARGET] [--service NAME] [--config bebop.toml] [--yes]
+  bebop backup list|show SNAPSHOT|verify SNAPSHOT [--config bebop.toml] [--json]
+  bebop backup restore SNAPSHOT HOST [--service NAME] [--out FILE]
+  bebop backup restore --plan FILE [--config bebop.toml] [--yes]
   bebop doctor [HOST|--target TARGET|--all] [--parallel N] [--json]
   bebop status [HOST|--target TARGET|--all] [--parallel N] [--json]
 `)
