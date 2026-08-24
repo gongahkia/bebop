@@ -106,6 +106,10 @@ func Derive(operation Operation) ([]Event, error) {
 		event.EventID = eventID(now)
 		result = append(result, event)
 	}
+	if operation.Result == "skipped" {
+		add(newEvent("maintenance.skipped", Info, operation, "maintenance", nonEmpty(operation.Reason, "skipped"), "Maintenance job skipped", Details{Category: nonEmpty(operation.Reason, "skipped")}))
+		return result, nil
+	}
 	switch operation.Operation {
 	case "backup":
 		if operation.Result == "success" {
@@ -113,7 +117,7 @@ func Derive(operation Operation) ([]Event, error) {
 			add(newEvent("maintenance.recovered", Recovery, operation, "backup", "failure", "Backup recovered", Details{Category: "backup"}))
 		} else if operation.RetentionFailure {
 			add(newEvent("backup.retention_failed", Error, operation, "backup", "failure", "Backup completed but retention failed", Details{Category: "retention", SnapshotID: operation.SnapshotID}))
-		} else if operation.Result != "skipped" {
+		} else {
 			category := cleanFailureCategory(operation.FailureCategory)
 			add(newEvent("backup.failed", Error, operation, "backup", "failure", "Backup failed", Details{Category: category}))
 		}
@@ -124,7 +128,7 @@ func Derive(operation Operation) ([]Event, error) {
 			}
 			result = append(result, eventForFinding(operation, finding, now))
 		}
-		if len(operation.Findings) == 0 && operation.Result != "success" && operation.Result != "skipped" {
+		if len(operation.Findings) == 0 && operation.Result != "success" {
 			category := cleanFailureCategory(operation.FailureCategory)
 			add(newEvent("doctor.failed", Error, operation, "doctor", "failure", "Doctor check failed", Details{Category: category}))
 		}
@@ -133,14 +137,12 @@ func Derive(operation Operation) ([]Event, error) {
 			add(newEvent("updates.available", Info, operation, "updates", "available", "Package updates are available", Details{Category: "available", Updates: operation.Updates, SecurityUpdates: operation.SecurityUpdates}))
 		} else if operation.Result == "success" {
 			add(newEvent("updates.cleared", Recovery, operation, "updates", "available", "No package updates are available", Details{Category: "available"}))
-		} else if operation.Result != "skipped" {
+		} else {
 			category := cleanFailureCategory(operation.FailureCategory)
 			add(newEvent("maintenance.failed", Error, operation, "maintenance", "failure", "Update check failed", Details{Category: category}))
 		}
 	default:
-		if operation.Result == "skipped" {
-			add(newEvent("maintenance.skipped", Info, operation, "maintenance", nonEmpty(operation.Reason, "skipped"), "Maintenance job skipped", Details{Category: nonEmpty(operation.Reason, "skipped")}))
-		} else if operation.Result != "success" {
+		if operation.Result != "success" {
 			category := cleanFailureCategory(operation.FailureCategory)
 			add(newEvent("maintenance.failed", Error, operation, "maintenance", "failure", "Maintenance job failed", Details{Category: category}))
 		} else {

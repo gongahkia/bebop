@@ -71,7 +71,9 @@ func TestDeriveUsesStableSecretSafeIssueFingerprints(t *testing.T) {
 		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(8, 0), Updates: 2}, "updates.available"},
 		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "success", OccurredAt: time.Unix(9, 0)}, "updates.cleared"},
 		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "failure", OccurredAt: time.Unix(10, 0), FailureCategory: "target_unreachable"}, "maintenance.failed"},
-		{Operation{RunID: "run", Job: "doctor", Operation: "custom", Target: "pi", Origin: "scheduled", Result: "skipped", OccurredAt: time.Unix(11, 0), Reason: "outside-window"}, "maintenance.skipped"},
+		{Operation{RunID: "run", Job: "backup", Operation: "backup", Target: "pi", Origin: "scheduled", Result: "skipped", OccurredAt: time.Unix(11, 0), Reason: "outside-window"}, "maintenance.skipped"},
+		{Operation{RunID: "run", Job: "doctor", Operation: "doctor", Target: "pi", Origin: "scheduled", Result: "skipped", OccurredAt: time.Unix(12, 0), Reason: "already-running"}, "maintenance.skipped"},
+		{Operation{RunID: "run", Job: "updates", Operation: "update-check", Target: "pi", Origin: "scheduled", Result: "skipped", OccurredAt: time.Unix(13, 0), Reason: "disabled"}, "maintenance.skipped"},
 	} {
 		events, deriveErr := Derive(test.operation)
 		if deriveErr != nil || len(events) == 0 || events[0].Type != test.want {
