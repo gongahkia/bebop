@@ -49,10 +49,10 @@ func (SSH) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.
 	return []plan.Change{change}, nil, nil
 }
 
-func (SSH) Apply(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (SSH) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "ssh.write-hardening")
 }
-func (SSH) Verify(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (SSH) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return verify(ctx, tr, "sshd -t\nsshd -T | grep -Fqx 'permitrootlogin no'\nsshd -T | grep -Fqx 'passwordauthentication no'\ntest \"$(cat /etc/ssh/sshd_config.d/00-bebop.conf)\" = \"$(printf '%s' '"+SSHDropIn+"')\"")
 }
 

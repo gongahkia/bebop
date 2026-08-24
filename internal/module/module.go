@@ -13,6 +13,6 @@ import (
 type Module interface {
 	Name() string
 	Plan(facts.HostFacts, config.Config) ([]plan.Change, []plan.Warning, error)
-	Apply(context.Context, transport.Transport, plan.Change) error
-	Verify(context.Context, transport.Transport, plan.Change) error
+	Apply(context.Context, transport.Transport, config.Config, plan.Change) error
+	Verify(context.Context, transport.Transport, config.Config, plan.Change) error
 }

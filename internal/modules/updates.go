@@ -41,10 +41,10 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	return []plan.Change{change}, nil, nil
 }
 
-func (Updates) Apply(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Updates) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "updates.enable-unattended")
 }
-func (Updates) Verify(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Updates) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return verify(ctx, tr, `dpkg-query -W -f='${db:Status-Status}' unattended-upgrades | grep -qx installed
 apt-config dump | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";'
 apt-config dump | grep -Fqx 'APT::Periodic::Update-Package-Lists "1";'`)

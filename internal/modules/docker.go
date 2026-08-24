@@ -14,7 +14,7 @@ type Docker struct{}
 func (Docker) Name() string { return "docker" }
 
 func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
-	if !cfg.Features.Docker {
+	if !cfg.Features.Docker && len(cfg.Services) == 0 {
 		return nil, nil, nil
 	}
 	changes := []plan.Change{}
@@ -36,15 +36,39 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 		rootBlocked(&change, host.SudoAvailable)
 		changes = append(changes, change)
 	}
+	if len(cfg.Services) > 0 && !host.Docker.ComposeAvailable {
+		dependencies := []string(nil)
+		if !host.Docker.Installed {
+			dependencies = append(dependencies, "docker.engine")
+		}
+		if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+			dependencies = append(dependencies, "docker.service")
+		}
+		change := plan.Change{ID: "docker.compose", Module: "docker", Summary: "install Docker Compose v2", Reason: "docker compose is unavailable", Risk: plan.Privileged, RequiresRoot: true, Current: "Compose v2 unavailable", Desired: "Docker Compose v2 available for managed services", Dependencies: dependencies, Action: plan.Action{Kind: "docker.install-compose", Resource: host.Docker.ComposePackageAvailable}, Verification: "docker compose version succeeds"}
+		if !reviewedComposePackage(host.Docker.ComposePackageAvailable) {
+			change.Blocked = "the target apt repositories do not advertise a reviewed Docker Compose v2 package"
+		} else {
+			change.Action.Script = "export DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y " + host.Docker.ComposePackageAvailable
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
 	return changes, nil, nil
 }
 
-func (Docker) Apply(ctx context.Context, tr transport.Transport, change plan.Change) error {
-	return runAction(ctx, tr, change, "docker.install-engine", "docker.enable-service")
+func reviewedComposePackage(candidate string) bool {
+	return candidate == "docker-compose-plugin" || candidate == "docker-compose-v2"
 }
-func (Docker) Verify(ctx context.Context, tr transport.Transport, change plan.Change) error {
+
+func (Docker) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
+	return runAction(ctx, tr, change, "docker.install-engine", "docker.enable-service", "docker.install-compose")
+}
+func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "docker.install-engine" {
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' docker.io | grep -qx installed")
 	}
-	return verify(ctx, tr, "systemctl is-enabled docker.service >/dev/null\nsystemctl is-active docker.service >/dev/null\ndocker info >/dev/null")
+	if change.Action.Kind == "docker.install-compose" {
+		return verify(ctx, tr, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null")
+	}
+	return verify(ctx, tr, "systemctl is-enabled docker.service >/dev/null\nsystemctl is-active docker.service >/dev/null\nenv -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null")
 }

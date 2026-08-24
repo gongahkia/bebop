@@ -15,6 +15,7 @@ import (
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/plan"
+	"github.com/bebop-home/bebop/internal/services"
 	"github.com/bebop-home/bebop/internal/target"
 )
 
@@ -25,30 +26,34 @@ const SchemaVersion = 1
 // Apply regenerates the Plan from fresh facts and never executes this JSON's
 // scripts directly.
 type Artifact struct {
-	SchemaVersion            int            `json:"schema_version"`
-	BebopVersion             string         `json:"bebop_version"`
-	HostAlias                string         `json:"host_alias,omitempty"`
-	Target                   string         `json:"target"`
-	ConfigPath               string         `json:"config_path,omitempty"`
-	Config                   config.Config  `json:"config"`
-	ConfigFingerprint        string         `json:"config_fingerprint"`
-	HostIdentity             facts.Identity `json:"host_identity"`
-	ObservedStateFingerprint string         `json:"observed_state_fingerprint"`
-	Plan                     plan.Plan      `json:"plan"`
-	Fingerprint              string         `json:"fingerprint"`
+	SchemaVersion            int              `json:"schema_version"`
+	BebopVersion             string           `json:"bebop_version"`
+	HostAlias                string           `json:"host_alias,omitempty"`
+	Target                   string           `json:"target"`
+	ConfigPath               string           `json:"config_path,omitempty"`
+	Config                   config.Config    `json:"config"`
+	ConfigFingerprint        string           `json:"config_fingerprint"`
+	ServiceInputs            []services.Input `json:"service_inputs,omitempty"`
+	ServiceInputsFingerprint string           `json:"service_inputs_fingerprint,omitempty"`
+	HostIdentity             facts.Identity   `json:"host_identity"`
+	ObservedStateFingerprint string           `json:"observed_state_fingerprint"`
+	Plan                     plan.Plan        `json:"plan"`
+	Fingerprint              string           `json:"fingerprint"`
 }
 
 type canonicalArtifact struct {
-	SchemaVersion            int            `json:"schema_version"`
-	BebopVersion             string         `json:"bebop_version"`
-	HostAlias                string         `json:"host_alias,omitempty"`
-	Target                   string         `json:"target"`
-	ConfigPath               string         `json:"config_path,omitempty"`
-	Config                   config.Config  `json:"config"`
-	ConfigFingerprint        string         `json:"config_fingerprint"`
-	HostIdentity             facts.Identity `json:"host_identity"`
-	ObservedStateFingerprint string         `json:"observed_state_fingerprint"`
-	Plan                     plan.Plan      `json:"plan"`
+	SchemaVersion            int              `json:"schema_version"`
+	BebopVersion             string           `json:"bebop_version"`
+	HostAlias                string           `json:"host_alias,omitempty"`
+	Target                   string           `json:"target"`
+	ConfigPath               string           `json:"config_path,omitempty"`
+	Config                   config.Config    `json:"config"`
+	ConfigFingerprint        string           `json:"config_fingerprint"`
+	ServiceInputs            []services.Input `json:"service_inputs,omitempty"`
+	ServiceInputsFingerprint string           `json:"service_inputs_fingerprint,omitempty"`
+	HostIdentity             facts.Identity   `json:"host_identity"`
+	ObservedStateFingerprint string           `json:"observed_state_fingerprint"`
+	Plan                     plan.Plan        `json:"plan"`
 }
 
 func New(alias, configPath string, current target.Target, desired config.Config, host facts.HostFacts, result plan.Plan) (Artifact, error) {
@@ -60,10 +65,17 @@ func New(alias, configPath string, current target.Target, desired config.Config,
 	if err != nil {
 		return Artifact{}, err
 	}
+	serviceInputsFingerprint, serviceInputs, err := services.InputsFingerprint(desired)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if err := validateServiceActions(result, serviceInputs); err != nil {
+		return Artifact{}, err
+	}
 	artifact := Artifact{
 		SchemaVersion: SchemaVersion, BebopVersion: buildinfo.Version, HostAlias: alias,
 		Target: current.String(), ConfigPath: configPath, Config: desired,
-		ConfigFingerprint: configFingerprint, HostIdentity: host.Identity(),
+		ConfigFingerprint: configFingerprint, ServiceInputs: serviceInputs, ServiceInputsFingerprint: serviceInputsFingerprint, HostIdentity: host.Identity(),
 		ObservedStateFingerprint: observedFingerprint, Plan: result,
 	}
 	if err := artifact.Finalize(); err != nil {
@@ -76,7 +88,7 @@ func (artifact Artifact) CanonicalJSON() ([]byte, error) {
 	return json.Marshal(canonicalArtifact{
 		SchemaVersion: artifact.SchemaVersion, BebopVersion: artifact.BebopVersion,
 		HostAlias: artifact.HostAlias, Target: artifact.Target, ConfigPath: artifact.ConfigPath,
-		Config: artifact.Config, ConfigFingerprint: artifact.ConfigFingerprint,
+		Config: artifact.Config, ConfigFingerprint: artifact.ConfigFingerprint, ServiceInputs: artifact.ServiceInputs, ServiceInputsFingerprint: artifact.ServiceInputsFingerprint,
 		HostIdentity: artifact.HostIdentity, ObservedStateFingerprint: artifact.ObservedStateFingerprint,
 		Plan: artifact.Plan,
 	})
@@ -112,6 +124,19 @@ func (artifact Artifact) Verify() error {
 	if artifact.ConfigFingerprint != configFingerprint {
 		return errs.New(errs.PlanTampered, "plan configuration fingerprint does not match its configuration", nil)
 	}
+	serviceInputsFingerprint, err := services.FingerprintInputs(artifact.ServiceInputs)
+	if err != nil {
+		return errs.New(errs.PlanInvalid, "plan contains invalid service input metadata", err)
+	}
+	if artifact.ServiceInputsFingerprint != serviceInputsFingerprint {
+		return errs.New(errs.PlanTampered, "plan service input fingerprint does not match its input metadata", nil)
+	}
+	if len(artifact.Config.Services) != len(artifact.ServiceInputs) {
+		return errs.New(errs.PlanTampered, "plan service inputs do not match its desired configuration", nil)
+	}
+	if err := validateServiceActions(artifact.Plan, artifact.ServiceInputs); err != nil {
+		return errs.New(errs.PlanTampered, "plan service actions do not match input metadata", err)
+	}
 	planFingerprint, err := fingerprintPlan(artifact.Plan)
 	if err != nil {
 		return errs.New(errs.PlanInvalid, "cannot canonicalize plan", err)
@@ -129,6 +154,32 @@ func (artifact Artifact) Verify() error {
 	sum := sha256.Sum256(canonical)
 	if artifact.Fingerprint == "" || artifact.Fingerprint != hex.EncodeToString(sum[:]) {
 		return errs.New(errs.PlanTampered, "plan artifact fingerprint mismatch", nil)
+	}
+	return nil
+}
+
+func validateServiceActions(result plan.Plan, inputs []services.Input) error {
+	byName := make(map[string]services.Input, len(inputs))
+	for _, input := range inputs {
+		byName[input.Name] = input
+	}
+	for _, change := range result.Changes {
+		if change.Module != "services" {
+			continue
+		}
+		input, exists := byName[change.Action.Resource]
+		if !exists || change.Action.Resource == "" {
+			return fmt.Errorf("unknown service resource %q", change.Action.Resource)
+		}
+		if change.Action.Kind == "service.remove" {
+			continue
+		}
+		if change.Action.Kind != "service.deploy" && change.Action.Kind != "service.start" && change.Action.Kind != "service.stop" {
+			return fmt.Errorf("unknown service action %q", change.Action.Kind)
+		}
+		if change.Action.SourceDigest != input.SourceDigest || change.Action.InputFingerprint != input.InputFingerprint || change.Action.SecretFingerprint != input.SecretFingerprint {
+			return fmt.Errorf("service action %q does not match input fingerprint", change.ID)
+		}
 	}
 	return nil
 }

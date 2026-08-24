@@ -4,5 +4,5 @@ package modules
 import "github.com/bebop-home/bebop/internal/module"
 
 func Default() []module.Module {
-	return []module.Module{Base{}, Updates{}, Docker{}, Tailscale{}, SSH{}}
+	return []module.Module{Base{}, Updates{}, Docker{}, Tailscale{}, SSH{}, Compose{}}
 }

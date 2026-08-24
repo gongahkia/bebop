@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/module"
 	"github.com/bebop-home/bebop/internal/plan"
@@ -23,7 +24,7 @@ type Result struct {
 // immediately before confirmation, which limits review-to-execution drift.
 type Replan func(context.Context) (plan.Plan, error)
 
-func Execute(ctx context.Context, reviewed plan.Plan, tr transport.Transport, modules []module.Module, replan Replan) (Result, error) {
+func Execute(ctx context.Context, reviewed plan.Plan, tr transport.Transport, desired config.Config, modules []module.Module, replan Replan) (Result, error) {
 	for _, change := range reviewed.Changes {
 		if change.Blocked != "" {
 			return Result{}, errs.New(errs.PlanBlocked, fmt.Sprintf("change %s is blocked: %s", change.ID, change.Blocked), nil)
@@ -54,11 +55,11 @@ func Execute(ctx context.Context, reviewed plan.Plan, tr transport.Transport, mo
 		if !found {
 			return result, errs.New(errs.ApplyFailed, "plan references unavailable module "+change.Module, nil)
 		}
-		if err := capability.Apply(ctx, tr, change); err != nil {
+		if err := capability.Apply(ctx, tr, desired, change); err != nil {
 			return result, errs.New(errs.ApplyFailed, "apply "+change.ID, err)
 		}
 		result.Applied = append(result.Applied, change.ID)
-		if err := capability.Verify(ctx, tr, change); err != nil {
+		if err := capability.Verify(ctx, tr, desired, change); err != nil {
 			return result, errs.New(errs.VerificationFailed, "verify "+change.ID, err)
 		}
 		result.Verified = append(result.Verified, change.ID)

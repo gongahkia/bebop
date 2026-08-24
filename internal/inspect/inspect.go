@@ -11,11 +11,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
+	"github.com/bebop-home/bebop/internal/services"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
-	"github.com/bebop-home/bebop/internal/services"
 )
 
 type Inspector struct{}
@@ -101,7 +102,7 @@ func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool) fa
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
-if { test "$(id -u)" -eq 0 && docker info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
 if apt-cache show docker-compose-plugin >/dev/null 2>&1; then printf 'compose_package=docker-compose-plugin\n'; elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then printf 'compose_package=docker-compose-v2\n'; else printf 'compose_package=\n'; fi
 `)
@@ -111,7 +112,7 @@ if apt-cache show docker-compose-plugin >/dev/null 2>&1; then printf 'compose_pa
 func inspectServices(ctx context.Context, tr transport.Transport, dataRoot string, deployments []services.Deployment, dockerResponsive bool) []facts.Service {
 	result := make([]facts.Service, 0, len(deployments))
 	for _, deployment := range deployments {
-		service := facts.Service{Name: deployment.Name, Project: deployment.Project, Runtime: "unknown", Health: "unknown"}
+		service := facts.Service{Name: deployment.Name, Project: deployment.Project, DesiredState: deployment.State, Runtime: "unknown", Health: "unknown"}
 		root := path.Join(dataRoot, "services", deployment.Name)
 		current := path.Join(root, "current")
 		lines := probeLines(ctx, tr, deploymentProbeScript(root, current, deployment.ComposeFile))
@@ -375,4 +376,3 @@ func parseSizeKiB(value string) int64 {
 	parsed, _ := strconv.ParseFloat(value, 64)
 	return int64(parsed * float64(multiplier))
 }
-	"github.com/bebop-home/bebop/internal/config"

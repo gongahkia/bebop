@@ -17,7 +17,7 @@ func TestVerificationFailureDoesNotReportConvergence(t *testing.T) {
 	capability := failingModule{}
 	replanCalls := 0
 	reviewed := plan.Plan{Changes: []plan.Change{{ID: "test.change", Module: "test", Action: plan.Action{Kind: "test.action", Script: "false"}}}}
-	_, err := Execute(context.Background(), reviewed, &noopTransport{}, []module.Module{capability}, func(context.Context) (plan.Plan, error) {
+	_, err := Execute(context.Background(), reviewed, &noopTransport{}, config.Defaults(), []module.Module{capability}, func(context.Context) (plan.Plan, error) {
 		replanCalls++
 		return plan.Plan{}, nil
 	})
@@ -30,7 +30,7 @@ func TestBusyApplyLockPreventsAnyModuleExecution(t *testing.T) {
 	capability := &countingModule{}
 	locked := &busyLockTransport{}
 	reviewed := plan.Plan{Changes: []plan.Change{{ID: "test.change", Module: "test", Action: plan.Action{Kind: "test.action", Script: "true"}}}}
-	_, err := Execute(context.Background(), reviewed, locked, []module.Module{capability}, func(context.Context) (plan.Plan, error) { return plan.Plan{}, nil })
+	_, err := Execute(context.Background(), reviewed, locked, config.Defaults(), []module.Module{capability}, func(context.Context) (plan.Plan, error) { return plan.Plan{}, nil })
 	var categorized *errs.Error
 	if !errors.As(err, &categorized) || categorized.Code != errs.ApplyLocked || capability.applied {
 		t.Fatalf("busy lock did not stop apply before mutation: err=%v applied=%t", err, capability.applied)
@@ -43,8 +43,10 @@ func (failingModule) Name() string { return "test" }
 func (failingModule) Plan(facts.HostFacts, config.Config) ([]plan.Change, []plan.Warning, error) {
 	return nil, nil, nil
 }
-func (failingModule) Apply(context.Context, transport.Transport, plan.Change) error { return nil }
-func (failingModule) Verify(context.Context, transport.Transport, plan.Change) error {
+func (failingModule) Apply(context.Context, transport.Transport, config.Config, plan.Change) error {
+	return nil
+}
+func (failingModule) Verify(context.Context, transport.Transport, config.Config, plan.Change) error {
 	return errors.New("candidate validation failed")
 }
 
@@ -69,10 +71,10 @@ func (module countingModule) Name() string { return "test" }
 func (module countingModule) Plan(facts.HostFacts, config.Config) ([]plan.Change, []plan.Warning, error) {
 	return nil, nil, nil
 }
-func (module *countingModule) Apply(context.Context, transport.Transport, plan.Change) error {
+func (module *countingModule) Apply(context.Context, transport.Transport, config.Config, plan.Change) error {
 	module.applied = true
 	return nil
 }
-func (module countingModule) Verify(context.Context, transport.Transport, plan.Change) error {
+func (module countingModule) Verify(context.Context, transport.Transport, config.Config, plan.Change) error {
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/plan"
+	"github.com/bebop-home/bebop/internal/services"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -88,6 +89,13 @@ func ValidateConfig(saved artifact.Artifact, desired config.Config) error {
 	}
 	if currentConfigFingerprint != saved.ConfigFingerprint {
 		return errs.New(errs.PlanStale, "saved plan configuration changed; generate a new plan", nil)
+	}
+	serviceInputsFingerprint, _, err := services.InputsFingerprint(desired)
+	if err != nil {
+		return err
+	}
+	if serviceInputsFingerprint != saved.ServiceInputsFingerprint {
+		return errs.New(errs.PlanStale, "saved plan service source or secret input changed; generate a new plan", nil)
 	}
 	return nil
 }

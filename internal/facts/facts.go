@@ -78,15 +78,16 @@ type Docker struct {
 // facts concern only Bebop's replaceable source tree; runtime facts come from
 // Docker labels and container state rather than controller-side metadata.
 type Service struct {
-	Name                string `json:"name"`
-	Project             string `json:"project"`
-	DeploymentPresent   bool   `json:"deployment_present"`
-	DeploymentUnsafe    bool   `json:"deployment_unsafe,omitempty"`
-	DeploymentDigest    string `json:"deployment_digest,omitempty"`
-	Runtime             string `json:"runtime"`
-	Health              string `json:"health"`
-	ContainerCount      int    `json:"container_count"`
-	SecretFingerprint   string `json:"-"`
+	Name              string `json:"name"`
+	Project           string `json:"project"`
+	DesiredState      string `json:"desired_state"`
+	DeploymentPresent bool   `json:"deployment_present"`
+	DeploymentUnsafe  bool   `json:"deployment_unsafe,omitempty"`
+	DeploymentDigest  string `json:"deployment_digest,omitempty"`
+	Runtime           string `json:"runtime"`
+	Health            string `json:"health"`
+	ContainerCount    int    `json:"container_count"`
+	SecretFingerprint string `json:"-"`
 }
 
 type Tailscale struct {
@@ -156,27 +157,46 @@ func (identity Identity) Matches(current Identity) bool {
 // warnings. Volatile telemetry such as kernel, memory, filesystem free space,
 // and transport timing is deliberately omitted from stale-plan protection.
 type ConvergenceSnapshot struct {
-	OS                  OS               `json:"os"`
-	Architecture        string           `json:"architecture"`
-	ArchitectureKnown   bool             `json:"architecture_known"`
-	PackageManager      string           `json:"package_manager"`
-	Systemd             bool             `json:"systemd"`
-	EffectiveUser       string           `json:"effective_user"`
-	SudoAvailable       bool             `json:"sudo_available"`
-	SSH                 SSH              `json:"ssh"`
-	Docker              Docker           `json:"docker"`
-	Services            []Service        `json:"services,omitempty"`
-	Tailscale           Tailscale        `json:"tailscale"`
-	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
-	Firewall            Firewall         `json:"firewall"`
-	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
-	DataRoot            Directory        `json:"data_root"`
+	OS                  OS                `json:"os"`
+	Architecture        string            `json:"architecture"`
+	ArchitectureKnown   bool              `json:"architecture_known"`
+	PackageManager      string            `json:"package_manager"`
+	Systemd             bool              `json:"systemd"`
+	EffectiveUser       string            `json:"effective_user"`
+	SudoAvailable       bool              `json:"sudo_available"`
+	SSH                 SSH               `json:"ssh"`
+	Docker              Docker            `json:"docker"`
+	Services            []ServiceSnapshot `json:"services,omitempty"`
+	Tailscale           Tailscale         `json:"tailscale"`
+	AutomaticUpdates    AutomaticUpdates  `json:"automatic_updates"`
+	Firewall            Firewall          `json:"firewall"`
+	UnconfiguredStorage []StorageDevice   `json:"unconfigured_storage,omitempty"`
+	DataRoot            Directory         `json:"data_root"`
+}
+
+// ServiceSnapshot adds the keyed secret fingerprint only to the internal
+// convergence hash. Status, doctor, inspect JSON, and artifacts never render
+// it, while a changed managed secret marker still invalidates a reviewed plan.
+type ServiceSnapshot struct {
+	Name              string `json:"name"`
+	Project           string `json:"project"`
+	DesiredState      string `json:"desired_state"`
+	DeploymentPresent bool   `json:"deployment_present"`
+	DeploymentUnsafe  bool   `json:"deployment_unsafe,omitempty"`
+	DeploymentDigest  string `json:"deployment_digest,omitempty"`
+	Runtime           string `json:"runtime"`
+	Health            string `json:"health"`
+	ContainerCount    int    `json:"container_count"`
+	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
 }
 
 func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	storage := append([]StorageDevice(nil), host.UnconfiguredStorage...)
 	sort.Slice(storage, func(i, j int) bool { return storage[i].Name < storage[j].Name })
-	services := append([]Service(nil), host.Services...)
+	services := make([]ServiceSnapshot, 0, len(host.Services))
+	for _, service := range host.Services {
+		services = append(services, ServiceSnapshot{Name: service.Name, Project: service.Project, DesiredState: service.DesiredState, DeploymentPresent: service.DeploymentPresent, DeploymentUnsafe: service.DeploymentUnsafe, DeploymentDigest: service.DeploymentDigest, Runtime: service.Runtime, Health: service.Health, ContainerCount: service.ContainerCount, SecretFingerprint: service.SecretFingerprint})
+	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	return ConvergenceSnapshot{
 		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,

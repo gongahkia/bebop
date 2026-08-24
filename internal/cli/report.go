@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"fmt"
+	"sort"
+
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/preflight"
@@ -26,8 +29,17 @@ type StatusReport struct {
 	Updates             string                `json:"updates"`
 	SSH                 string                `json:"ssh"`
 	DataRoot            string                `json:"data_root"`
+	Services            []ServiceStatus       `json:"services,omitempty"`
 	UnconfiguredStorage []facts.StorageDevice `json:"unconfigured_storage,omitempty"`
 	Overall             string                `json:"overall"`
+}
+
+type ServiceStatus struct {
+	Name       string `json:"name"`
+	Desired    string `json:"desired"`
+	Runtime    string `json:"runtime"`
+	Health     string `json:"health"`
+	Deployment string `json:"deployment"`
 }
 
 func statusReport(host facts.HostFacts) StatusReport {
@@ -41,7 +53,26 @@ func statusReport(host facts.HostFacts) StatusReport {
 	if host.DataRoot.Exists {
 		report.DataRoot = host.DataRoot.Path
 	}
-	if host.Docker.Responsive && host.Tailscale.Connected && report.Updates == "enabled" && report.SSH == "hardened" && host.DataRoot.Exists {
+	servicesHealthy := true
+	for _, service := range host.Services {
+		deployment := "missing"
+		if service.DeploymentUnsafe {
+			deployment = "unsafe"
+		} else if service.DeploymentPresent {
+			deployment = "managed"
+		}
+		report.Services = append(report.Services, ServiceStatus{Name: service.Name, Desired: service.DesiredState, Runtime: service.Runtime, Health: service.Health, Deployment: deployment})
+		switch service.DesiredState {
+		case "running":
+			servicesHealthy = servicesHealthy && service.DeploymentPresent && service.Runtime == "running" && (service.Health == "healthy" || service.Health == "no-healthcheck")
+		case "stopped":
+			servicesHealthy = servicesHealthy && service.DeploymentPresent && (service.Runtime == "stopped" || service.Runtime == "missing")
+		case "absent":
+			servicesHealthy = servicesHealthy && !service.DeploymentPresent && !service.DeploymentUnsafe && service.Runtime == "missing"
+		}
+	}
+	sort.Slice(report.Services, func(i, j int) bool { return report.Services[i].Name < report.Services[j].Name })
+	if host.Docker.Responsive && host.Tailscale.Connected && report.Updates == "enabled" && report.SSH == "hardened" && host.DataRoot.Exists && servicesHealthy {
 		report.Overall = "healthy"
 	}
 	return report
@@ -67,4 +98,21 @@ func tailscaleState(host facts.HostFacts) string {
 		return "connected"
 	}
 	return "installed, authentication required"
+}
+
+func servicesState(services []ServiceStatus) string {
+	if len(services) == 0 {
+		return "-"
+	}
+	ready := 0
+	for _, service := range services {
+		if service.Desired == "running" && service.Runtime == "running" && (service.Health == "healthy" || service.Health == "no-healthcheck") {
+			ready++
+		} else if service.Desired == "stopped" && (service.Runtime == "stopped" || service.Runtime == "missing") {
+			ready++
+		} else if service.Desired == "absent" && service.Runtime == "missing" && service.Deployment == "missing" {
+			ready++
+		}
+	}
+	return fmt.Sprintf("%d/%d ready", ready, len(services))
 }

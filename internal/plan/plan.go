@@ -19,9 +19,12 @@ const (
 )
 
 type Action struct {
-	Kind     string `json:"kind"`
-	Resource string `json:"resource,omitempty"`
-	Script   string `json:"script"`
+	Kind              string `json:"kind"`
+	Resource          string `json:"resource,omitempty"`
+	SourceDigest      string `json:"source_digest,omitempty"`
+	InputFingerprint  string `json:"input_fingerprint,omitempty"`
+	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
+	Script            string `json:"script"`
 }
 
 // Precondition is a narrow, module-defined check that is evaluated immediately
@@ -45,6 +48,7 @@ type Change struct {
 	Current       string         `json:"current"`
 	Desired       string         `json:"desired"`
 	Dependencies  []string       `json:"dependencies,omitempty"`
+	Requirements  []string       `json:"requirements,omitempty"`
 	Preconditions []Precondition `json:"preconditions,omitempty"`
 	Action        Action         `json:"action"`
 	Verification  string         `json:"verification"`

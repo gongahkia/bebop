@@ -30,11 +30,11 @@ func (Base) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan
 	return nil, nil, nil
 }
 
-func (Base) Apply(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Base) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "base.create-data-root", "base.set-data-root-permissions")
 }
 
-func (Base) Verify(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Base) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	root := transport.ShellQuote(change.Action.Resource)
 	return verify(ctx, tr, "test -d -- "+root+"\ntest \"$(stat -c '%a:%u:%g' -- "+root+")\" = '750:0:0'")
 }

@@ -130,6 +130,24 @@ func appendOperationalChecks(result *Result, host facts.HostFacts) {
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "docker.unhealthy", Message: "Docker is not healthy or not installed"})
 	}
+	if len(host.Services) > 0 {
+		if host.Docker.ComposeAvailable {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: "docker.compose", Message: "Docker Compose v2 available for configured services"})
+		} else if host.Docker.ComposePackageAvailable != "" {
+			result.Checks = append(result.Checks, Check{Status: Warn, Code: "docker.compose_missing", Message: "Docker Compose v2 missing; Bebop can install " + host.Docker.ComposePackageAvailable + " during a reviewed service plan"})
+		} else {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.compose_missing", Message: "Docker Compose v2 missing and no reviewed package is advertised by apt"})
+		}
+		for _, service := range host.Services {
+			if service.DesiredState == "running" && service.DeploymentPresent && service.Runtime == "running" && (service.Health == "healthy" || service.Health == "no-healthcheck") {
+				result.Checks = append(result.Checks, Check{Status: Pass, Code: "service." + service.Name, Message: "service " + service.Name + " running (" + service.Health + ")"})
+			} else if service.DesiredState == "absent" && !service.DeploymentPresent && service.Runtime == "missing" {
+				result.Checks = append(result.Checks, Check{Status: Pass, Code: "service." + service.Name, Message: "service " + service.Name + " absent"})
+			} else {
+				result.Checks = append(result.Checks, Check{Status: Warn, Code: "service." + service.Name, Message: "service " + service.Name + " requires convergence (runtime " + service.Runtime + ", health " + service.Health + ")"})
+			}
+		}
+	}
 	if host.Tailscale.Connected {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "tailscale.connected", Message: "Tailscale connected"})
 	} else if host.Tailscale.Installed {

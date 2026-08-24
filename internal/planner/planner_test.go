@@ -68,7 +68,7 @@ func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := &recordingTransport{}
-	result, err := apply.Execute(context.Background(), reviewed, tr, p.Modules(), func(context.Context) (plan.Plan, error) { transition(&host, reviewed); return p.Build(host, cfg) })
+	result, err := apply.Execute(context.Background(), reviewed, tr, cfg, p.Modules(), func(context.Context) (plan.Plan, error) { transition(&host, reviewed); return p.Build(host, cfg) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 		t.Fatalf("apply/verify mismatch: %#v mutations=%d", result, tr.mutations)
 	}
 	before := tr.mutations
-	if _, err := apply.Execute(context.Background(), result.Final, tr, p.Modules(), func(context.Context) (plan.Plan, error) { return result.Final, nil }); err != nil {
+	if _, err := apply.Execute(context.Background(), result.Final, tr, cfg, p.Modules(), func(context.Context) (plan.Plan, error) { return result.Final, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if tr.mutations != before {

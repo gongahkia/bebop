@@ -51,10 +51,10 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	return changes, warnings, nil
 }
 
-func (Tailscale) Apply(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "tailscale.install", "tailscale.enable-service")
 }
-func (Tailscale) Verify(ctx context.Context, tr transport.Transport, change plan.Change) error {
+func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed")
 	}

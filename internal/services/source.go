@@ -191,12 +191,31 @@ func InputsFingerprint(cfg config.Config) (string, []Input, error) {
 	for _, deployment := range deployments {
 		inputs = append(inputs, deployment.Input())
 	}
-	encoded, err := json.Marshal(inputs)
+	fingerprint, err := FingerprintInputs(inputs)
 	if err != nil {
 		return "", nil, err
 	}
+	return fingerprint, inputs, nil
+}
+
+// FingerprintInputs validates the persistent representation without reading
+// source files. Artifact decoding uses it to detect malformed/tampered input
+// metadata before any local or target action.
+func FingerprintInputs(inputs []Input) (string, error) {
+	copyInputs := make([]Input, len(inputs))
+	copy(copyInputs, inputs)
+	sort.Slice(copyInputs, func(i, j int) bool { return copyInputs[i].Name < copyInputs[j].Name })
+	for index, input := range copyInputs {
+		if input.Name == "" || (index > 0 && input.Name == copyInputs[index-1].Name) || input.Project == "" || input.State == "" {
+			return "", fmt.Errorf("invalid service input metadata")
+		}
+	}
+	encoded, err := json.Marshal(copyInputs)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), inputs, nil
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // ProjectName has no ambient hostname, target, or controller path input. The

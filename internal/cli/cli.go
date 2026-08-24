@@ -515,7 +515,7 @@ func (r *Runner) apply(arguments []string) error {
 			return nil
 		}
 	}
-	result, err := apply.Execute(ctx, reviewed, tr, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
+	result, err := apply.Execute(ctx, reviewed, tr, cfg, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
 		_, _, next, buildErr := r.Service.Plan(replanContext, resolution.Target, cfg)
 		return next, buildErr
 	})
@@ -612,7 +612,7 @@ func (r *Runner) applySaved(filename, requestedConfig string, configExplicit boo
 			return nil
 		}
 	}
-	result, err := apply.Execute(ctx, reviewed, prepared.Transport, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
+	result, err := apply.Execute(ctx, reviewed, prepared.Transport, cfg, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
 		_, _, next, buildErr := r.Service.Plan(replanContext, prepared.Target, cfg)
 		return next, buildErr
 	})
@@ -777,7 +777,14 @@ func (r *Runner) status(arguments []string) error {
 	if len(report.UnconfiguredStorage) > 0 {
 		storage = "unconfigured disks detected; Bebop M0 will not modify them"
 	}
-	fmt.Fprintf(r.Out, "Host        %s\nOS          %s (%s)\nDocker      %s\nTailscale   %s\nUpdates     %s\nSSH         %s\nData root   %s\nStorage     %s\nOverall     %s\n", report.Host, report.OS, report.Architecture, report.Docker, report.Tailscale, report.Updates, report.SSH, report.DataRoot, storage, report.Overall)
+	fmt.Fprintf(r.Out, "Host        %s\nOS          %s (%s)\nDocker      %s\nTailscale   %s\nUpdates     %s\nSSH         %s\nData root   %s\nStorage     %s\n", report.Host, report.OS, report.Architecture, report.Docker, report.Tailscale, report.Updates, report.SSH, report.DataRoot, storage)
+	if len(report.Services) > 0 {
+		fmt.Fprintln(r.Out, "Services")
+		for _, service := range report.Services {
+			fmt.Fprintf(r.Out, "  %s  %s  %s  %s\n", service.Name, service.Desired, service.Runtime, service.Health)
+		}
+	}
+	fmt.Fprintf(r.Out, "Overall     %s\n", report.Overall)
 	return nil
 }
 
@@ -836,13 +843,13 @@ func (r *Runner) statusAll(common *commonFlags, requestedConfig string, configEx
 		}
 	} else {
 		writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(writer, "HOST\tRESULT\tOS\tDOCKER\tTAILSCALE\tOVERALL")
+		fmt.Fprintln(writer, "HOST\tRESULT\tOS\tDOCKER\tTAILSCALE\tSERVICES\tOVERALL")
 		for _, result := range results {
 			if result.Error != "" {
-				fmt.Fprintf(writer, "%s\tFAIL\t-\t-\t-\t%s\n", result.Host, result.Error)
+				fmt.Fprintf(writer, "%s\tFAIL\t-\t-\t-\t-\t%s\n", result.Host, result.Error)
 				continue
 			}
-			fmt.Fprintf(writer, "%s\tPASS\t%s\t%s\t%s\t%s\n", result.Host, result.Status.OS, result.Status.Docker, result.Status.Tailscale, result.Status.Overall)
+			fmt.Fprintf(writer, "%s\tPASS\t%s\t%s\t%s\t%s\t%s\n", result.Host, result.Status.OS, result.Status.Docker, result.Status.Tailscale, servicesState(result.Status.Services), result.Status.Overall)
 		}
 		_ = writer.Flush()
 	}
@@ -968,6 +975,9 @@ func renderPlan(output io.Writer, result plan.Plan, showCommands bool) {
 		fmt.Fprintf(output, "\n%s %s\n  %s\n  Current: %s\n  Desired: %s\n  Risk: %s\n", marker, change.ID, change.Summary, change.Current, change.Desired, change.Risk)
 		if change.Blocked != "" {
 			fmt.Fprintf(output, "  Blocked: %s\n", change.Blocked)
+		}
+		if len(change.Requirements) > 0 {
+			fmt.Fprintf(output, "  Requires: %s\n", strings.Join(change.Requirements, ", "))
 		}
 		if showCommands && change.Action.Script != "" {
 			fmt.Fprintln(output, "  Planned script:")
