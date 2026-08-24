@@ -1,5 +1,55 @@
 # Architecture
 
+## M3 service resources
+
+M3 keeps one planner and adds user-defined service resources to its existing
+dependency DAG. A module is Bebop's built-in implementation capability; a
+service is one declared resource instance. `modules.Compose` is therefore one
+provider for every `[services.NAME]`, not a Go module per application.
+
+```text
+strict config + controller source ─> canonical service inputs ─┐
+                                                             │
+HostFacts <─ Inspector <─ Transport <─ resolver <─ CLI       +─> one Planner -> ordered Plan
+  │                   │                                      │                    │
+  │                   └─ Docker Compose/runtime state        │                    ├─ render/artifact
+  │                                                          │                    │
+  └─ relevant snapshot <─────────────────────────────────────┘                    ▼
+                                                                      apply lock -> staged deployment -> Compose -> verify
+```
+
+`internal/services` owns controller-local source resolution: constrained paths
+relative to the config declaration, sorted regular-file manifests, deterministic
+archive bytes, source SHA-256, small static Compose checks, project naming, and
+the optional keyed secret marker. It has no transport and cannot mutate a
+target. `modules.Compose` turns those inputs plus normalized `facts.Service`
+into ordinary `plan.Change` values. Its only dependencies are the existing base
+data root and Docker/Compose actions when those actions are needed.
+
+The source digest covers non-secret content. A secret environment file is
+separate controller input, transferred only as `.bebop-secret.env` with `0600`;
+its HMAC is never rendered in facts JSON but participates in the relevant-state
+hash and saved-plan input fingerprint. The artifact stores no file or secret
+content. See [SERVICES.md](SERVICES.md) for the contract.
+
+On the target, Compose sources live under
+`storage.data_root/services/<service>/releases/<source-digest>` and `current` is
+an atomic symlink to an active release. Deploy stages from standard input,
+validates every expected file digest/mode, asks Compose to validate the staged
+project under `env -i` and `--context default`, then atomically activates it.
+Service removal uses project-scoped `down --remove-orphans` without `-v` and
+removes only `current`; release trees and persistent volume/data boundaries are
+preserved. A non-symlink `current` path is blocked rather than treated as
+Bebop-owned.
+
+Inspector remains the normal observation boundary. It detects Docker Compose
+capability, hashes the active non-secret deployment tree, reads the protected
+secret marker only into the internal convergence snapshot, and aggregates
+Docker-labeled containers into missing/stopped/starting/running/unhealthy/
+unknown runtime plus health status. Module verification performs narrow
+immediate checks and a bounded readiness poll; its final reinspection still
+flows through the normal planner.
+
 Bebop's execution model is deliberately one-way. M2 adds only controller-side
 inventory and portable review artifacts; targets remain ordinary Linux machines
 with no Bebop daemon:

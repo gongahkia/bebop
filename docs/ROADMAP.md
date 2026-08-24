@@ -1,5 +1,16 @@
 # Roadmap
 
+## Implemented in M3: deterministic service runtime
+
+- Generic strict Compose service resources with deterministic source manifests,
+  staged deployment activation, project-scoped lifecycle states, Docker Compose
+  capability planning, and bounded health-aware verification.
+- Source/runtime/deployment drift correction, service input saved-plan guards,
+  target deployment metadata, status/doctor service visibility, and a narrow
+  HMAC-based secret environment reference boundary.
+- Opt-in nested-Docker Compose integration coverage for deploy/update/drift/
+  stop/volume-preserving removal, alongside M2's real SSH tier.
+
 ## Implemented in M2: remote control plane and portable plans
 
 - Versioned, strict, atomically written `bebop.hosts.toml` inventory with
@@ -29,9 +40,8 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M3: a generic deterministic service/Compose-project primitive, without an
-  application catalog.
-- M4: backups and state migration; M5: explicit storage workflows; M6: broader
+- M4: backup, restore, and host migration for explicit persistent-data
+  boundaries; M5: explicit storage workflows; M6: broader
   Linux distribution support; M7: macOS/Windows target adapters.
 - Docker Compose application catalog, notifications, and richer drift controls.
 - Explicit storage workflows with no implicit disk automation.

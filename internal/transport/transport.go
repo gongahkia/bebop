@@ -185,3 +185,11 @@ func exitCode(err error) int {
 	}
 	return 0
 }
+
+// POSIX shell test does not consistently accept GNU-style --. The path is
+// passed as one quoted shell word, and a relative leading-dash path is made
+// explicit with ./ so it cannot be interpreted as a test operand option.
+func fileExistsScript(path string) string {
+	quoted := ShellQuote(path)
+	return "path=" + quoted + "\ncase \"$path\" in -*) test -e \"./$path\";; *) test -e \"$path\";; esac"
+}

@@ -91,6 +91,61 @@ non-secret source manifest and keyed secret marker. Editing a Compose source or
 referenced secret after review makes `apply --plan` refuse before target
 mutation.
 
+## Compose workloads
+
+M3 adds one generic, built-in Compose service resource. It is not an
+application catalog: you provide the source directory and Compose file.
+
+```toml
+[services.hello]
+type = "compose"
+source = "services/hello"
+state = "running"
+health_timeout = "2m"
+```
+
+`source` is resolved relative to the declaring `bebop.toml`, never the
+controller's current directory. It must contain exactly one root-level
+`compose.yaml`, `compose.yml`, `docker-compose.yaml`, or
+`docker-compose.yml`. Bebop rejects source traversal, symlinks, special files,
+ambiguous Compose files, `.git`, `node_modules`, Compose `build`, profiles,
+`extends`, YAML aliases, and duplicate fixed host-port declarations before a
+target is contacted. Compose uses an explicit image; Bebop does not build
+images or pull them except when `docker compose up` itself needs a missing
+image.
+
+```sh
+mkdir -p services/hello
+# add services/hello/compose.yaml
+./bin/bebop plan pi --config bebop.toml --out .bebop/plans/pi.plan.json
+./bin/bebop apply --plan .bebop/plans/pi.plan.json
+./bin/bebop status pi
+```
+
+`running` stages the deployment and reconciles its Compose project. `stopped`
+keeps the deployment and stops its containers. `absent` runs `docker compose
+down --remove-orphans` without `-v`, removes only Bebop's active deployment
+link, and retains named volumes, bind-mounted data, and retained release trees.
+Each project name is deterministic and unique per `server.name` plus service
+name, so an update to one declared service cannot target another project's
+containers.
+
+Services need Docker Engine and Docker Compose v2. Bebop detects Compose; when
+the target apt repositories advertise `docker-compose-plugin` or
+`docker-compose-v2`, its existing Docker module can install it through a
+reviewed plan. Every Compose invocation receives an empty environment and
+`--context default`; controller `DOCKER_HOST` and `DOCKER_CONTEXT` are not
+used.
+
+For a small secret boundary, set `secret_env_file` to a controller-local file
+relative to the config and reference `.bebop-secret.env` from the Compose
+file's `env_file`. Bebop transfers that file with mode `0600`, never renders its
+contents, and tracks it with an HMAC keyed by a local
+`.bebop/cache/secret-hmac.key`. Secret rotation requires a new saved plan;
+controllers without that local key safely require re-planning. Never put secret
+values in TOML, inventory, service source files intended for review, plans, or
+logs. See [service documentation](docs/SERVICES.md).
+
 ## Current desired state
 
 The generated configuration is intentionally small:
@@ -139,9 +194,11 @@ Bebop validates a temporary candidate before replacing only its own drop-in;
 it verifies the effective `sshd -T` values, and it blocks root-only SSH sessions
 rather than disable their recovery path.
 
-M0/M2 does not partition, format, resize, mount, or erase disks; expose public
-services; alter routers, DNS, or firewall rules; rewrite Docker projects;
-install an OS; collect telemetry; or use AI/LLM APIs. See
+M0/M3 does not partition, format, resize, mount, or erase disks; alter routers,
+DNS, or firewall rules; install an OS; collect telemetry; or use AI/LLM APIs.
+M3 may manage only declared Compose projects under its target deployment root;
+it never removes Compose volumes, arbitrary persistent data, router state, or
+unrelated Docker projects. See
 [docs/SAFETY.md](docs/SAFETY.md) for the exact boundary.
 
 `doctor` and `status` report unmounted whole disks discovered through structured
@@ -158,6 +215,7 @@ make build
 make cross
 make test-integration
 make test-ssh-integration
+make test-compose-integration
 ```
 
 Integration tests are opt-in and need a running Docker daemon. `make
@@ -165,9 +223,14 @@ test-integration` runs local inspect in a disposable Debian container. `make
 test-ssh-integration` builds temporary Debian 12 and Ubuntu 24.04 SSH targets,
 adds a test-only known host/key configuration, and exercises the real SSH
 transport. Neither integration target runs systemd, so systemd-dependent apply
-is deliberately not claimed as container coverage.
+is deliberately not claimed as container coverage. `make
+test-compose-integration` uses an opt-in, privileged nested Docker daemon. It
+validates real staged transfer and Compose lifecycle behavior in a disposable
+runtime, but it does not claim systemd coverage; the target is Docker-in-Docker
+rather than a full Debian/Ubuntu systemd VM.
 
 Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
-[M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md), and
+[M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md),
+[M3 scope](docs/MILESTONE-3.md), [services](docs/SERVICES.md), and
 [roadmap](docs/ROADMAP.md) before
 extending Bebop.

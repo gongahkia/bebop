@@ -273,7 +273,7 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 		fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = 600\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretFingerprintName), transport.ShellQuote(deployment.SecretFingerprint))
 	}
 	fmt.Fprintf(&script, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
-	script.WriteString("if test -e -- \"$release\"; then rm -rf -- \"$release\"; fi\nmv -- \"$stage\" \"$release\"\nlink=$(mktemp \"$root/.current.XXXXXX\")\nrm -f -- \"$link\"\nln -s -- \"releases/")
+	script.WriteString("if test -e \"$release\"; then rm -rf -- \"$release\"; fi\nmv -- \"$stage\" \"$release\"\nlink=$(mktemp \"$root/.current.XXXXXX\")\nrm -f -- \"$link\"\nln -s -- \"releases/")
 	script.WriteString(deployment.SourceDigest)
 	script.WriteString("\" \"$link\"\nmv -Tf -- \"$link\" \"$root/current\"\ntrap - EXIT\n")
 	return script.String()

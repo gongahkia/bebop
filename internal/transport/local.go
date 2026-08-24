@@ -51,7 +51,7 @@ func (l *Local) ReadFile(ctx context.Context, path string) (string, error) {
 }
 
 func (l *Local) FileExists(ctx context.Context, path string) (bool, error) {
-	_, err := l.Run(ctx, Request{Script: "test -e -- " + ShellQuote(path)})
+	_, err := l.Run(ctx, Request{Script: fileExistsScript(path)})
 	if err == nil {
 		return true, nil
 	}

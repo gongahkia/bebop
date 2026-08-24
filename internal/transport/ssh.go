@@ -58,7 +58,7 @@ func (s *SSH) ReadFile(ctx context.Context, path string) (string, error) {
 }
 
 func (s *SSH) FileExists(ctx context.Context, path string) (bool, error) {
-	_, err := s.Run(ctx, Request{Script: "test -e -- " + ShellQuote(path)})
+	_, err := s.Run(ctx, Request{Script: fileExistsScript(path)})
 	if err == nil {
 		return true, nil
 	}

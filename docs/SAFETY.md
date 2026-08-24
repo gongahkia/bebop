@@ -32,6 +32,21 @@ Managed configuration uses temporary candidates and atomic `mv` where
 practical, and carries a `Managed by Bebop` header. Bebop does not claim
 ownership of `/etc/ssh/sshd_config`, arbitrary apt files, or Docker projects.
 
+M3 may manage a declared Compose project's replaceable deployment source below
+`storage.data_root/services/<service>`. It stages, validates, and atomically
+activates the `current` release before project-scoped Compose reconciliation.
+It can replace a known Bebop release tree, but refuses a `current` path that is
+not a symlink into that service's release directory. It never treats arbitrary
+directories as deployment state.
+
+M3 service absence runs `docker compose down --remove-orphans` **without**
+`-v`, removes only the active `current` link, and retains release trees. Bebop
+does not invoke `docker volume rm`, `docker compose down -v`, or recursive
+deletion of bind-mounted or application data. Relative bind mounts are still a
+user-controlled Compose behavior, so users should place persistent data in an
+explicit external path rather than rely on retained deployment files as a
+backup boundary.
+
 During a non-empty built-in apply, Bebop holds a target-side advisory flock at
 `/run/lock/bebop.lock` through the full apply/verify/replan window. A second
 Bebop apply fails before module execution while the lease is held. The lock is
@@ -53,6 +68,31 @@ Firewall discovery is informational only. Bebop never enables UFW, flushes
 rules, changes nftables/iptables/firewalld, changes router settings, opens ports,
 or configures public ingress.
 
+Compose may publish ports the user declares. Bebop statically blocks duplicate
+fixed host ports across its own declared services and labels those changes as
+network-sensitive, but it does not inspect or reconfigure router/NAT state and
+cannot reserve a port used by an unrelated Docker project. Docker Compose is
+always called with structured arguments, a fixed safe PATH, `env -i`, and
+`docker --context default`; no service, project, source, or port string is
+used as unquoted shell code or an unvalidated command-line option.
+
+## Service source and secret boundary
+
+Service source paths are controller-relative and contained within the config
+directory. Bebop rejects absolute/traversal paths, symlinks, special files,
+ambiguous Compose sources, and reserved secret filenames. It transfers only an
+archive it created from a validated sorted manifest, then verifies each staged
+file's digest and normalized mode before activation. It does not accept
+controller-provided tar archives or target-side Git checkouts.
+
+`secret_env_file` is a restricted reference, not a TOML secret field. Its value
+is transferred only into `.bebop-secret.env` at mode `0600`; it is excluded from
+human/JSON plans, artifacts, status, doctor, error messages, and normal logs.
+The controller stores a private local HMAC key in `.bebop/cache`; artifacts
+contain a keyed marker, not a direct secret digest. A changed source or secret
+marker makes a saved plan stale before Bebop connects. Losing that local key is
+safe: the user must re-plan rather than apply an old secret-bearing plan.
+
 ## Saved-plan boundary
 
 Saved plans are versioned, deterministic JSON artifacts with a SHA-256
@@ -68,6 +108,13 @@ hostname plus OS identity. If that fallback cannot match, safety takes priority
 and saved apply is refused. Neither this guard, the lock, nor preconditions can
 make arbitrary remote mutation transactional; another actor can still change a
 host between checks, and Bebop reports subsequent divergence through verification.
+
+For services, relevant state additionally includes configured service runtime,
+active non-secret deployment digest, and the hidden keyed secret marker. A
+manual container stop produces a semantic lifecycle correction; a manual edit
+to a Bebop-owned active Compose file produces a source restoration. These
+checks, target locking, and immediate deployment preconditions reduce TOCTOU
+risk but do not make Docker operations transactional or provide rollback.
 
 `status --all` and `doctor --all` are bounded-concurrency read operations. They
 do not imply authorization to apply across a fleet, and one failed host is shown

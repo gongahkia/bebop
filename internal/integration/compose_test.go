@@ -70,7 +70,7 @@ func TestComposeLifecycleAgainstDisposableDind(t *testing.T) {
 	// plan restores declared content before reconciling the still-isolated
 	// Compose project.
 	assertExec(t, target, "printf '\\n# external deployment drift\\n' >> /work/bebop/services/hello/current/compose.yaml")
-	host.Services[0] = facts.Service{Name: "hello", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: "externally-modified", Runtime: "running", Health: "healthy"}
+	host.Services[0] = facts.Service{Name: "hello", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: targetDeploymentDigest(t, target), Runtime: "running", Health: "healthy"}
 	deploymentDrift := buildPlan(t, planner, host, cfg)
 	if ids(deploymentDrift) != "service.hello.update,service.hello.start" {
 		t.Fatalf("deployment drift did not produce restore/reconcile: %#v", deploymentDrift.Changes)
@@ -225,6 +225,11 @@ func runServiceChanges(t *testing.T, provider modules.Compose, target *dockerExe
 		if err := provider.Apply(context.Background(), target, cfg, change); err != nil {
 			t.Fatalf("apply %s: %v", change.ID, err)
 		}
+		if change.Action.Kind == "service.deploy" {
+			if actual := targetDeploymentDigest(t, target); actual != change.Action.SourceDigest {
+				t.Fatalf("deploy %s activated digest %s, want %s; manifest:\n%s", change.ID, actual, change.Action.SourceDigest, targetDeploymentManifest(t, target))
+			}
+		}
 		if err := provider.Verify(context.Background(), target, cfg, change); err != nil {
 			t.Fatalf("verify %s: %v", change.ID, err)
 		}
@@ -244,6 +249,37 @@ func assertExec(t *testing.T, target *dockerExecTransport, script string) {
 	if _, err := target.Run(context.Background(), transport.Request{Script: script, Privileged: true}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func targetDeploymentDigest(t *testing.T, target *dockerExecTransport) string {
+	t.Helper()
+	script := `cd /work/bebop/services/hello/current
+find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+  test -n "$file" || continue
+  mode=$(stat -c '%a' -- "$file")
+  checksum=$(sha256sum -- "$file" | awk '{print $1}')
+  printf '%s\t%s\t%s\n' "$mode" "$checksum" "$file"
+done | sha256sum | awk '{print $1}'`
+	result, err := target.Run(context.Background(), transport.Request{Script: script, Privileged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(result.Stdout)
+}
+
+func targetDeploymentManifest(t *testing.T, target *dockerExecTransport) string {
+	t.Helper()
+	result, err := target.Run(context.Background(), transport.Request{Script: `cd /work/bebop/services/hello/current
+find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+  test -n "$file" || continue
+  mode=$(stat -c '%a' -- "$file")
+  checksum=$(sha256sum -- "$file" | awk '{print $1}')
+  printf '%s\t%s\t%s\n' "$mode" "$checksum" "$file"
+done`, Privileged: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.Stdout
 }
 
 type dockerExecTransport struct{ container string }

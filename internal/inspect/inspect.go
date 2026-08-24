@@ -321,7 +321,7 @@ func inspectUnconfiguredStorage(ctx context.Context, tr transport.Transport) []f
 
 func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) facts.Directory {
 	directory := facts.Directory{Path: root}
-	output := mustProbe(ctx, tr, "if test -d -- "+transport.ShellQuote(root)+"; then stat -c '%a %u %g' -- "+transport.ShellQuote(root)+"; fi")
+	output := mustProbe(ctx, tr, "if test -d "+transport.ShellQuote(root)+"; then stat -c '%a %u %g' -- "+transport.ShellQuote(root)+"; fi")
 	fields := strings.Fields(output)
 	if len(fields) != 3 {
 		return directory
@@ -330,7 +330,7 @@ func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) f
 	directory.Mode = fields[0]
 	directory.UID, _ = strconv.Atoi(fields[1])
 	directory.GID, _ = strconv.Atoi(fields[2])
-	directory.Writable = mustProbe(ctx, tr, "if test -w -- "+transport.ShellQuote(root)+"; then printf yes; else printf no; fi") == "yes"
+	directory.Writable = mustProbe(ctx, tr, "if test -w "+transport.ShellQuote(root)+"; then printf yes; else printf no; fi") == "yes"
 	return directory
 }
 
