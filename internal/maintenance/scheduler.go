@@ -50,9 +50,9 @@ type SchedulerJobStatus struct {
 // UnitChange is historical M7 naming retained for CLI compatibility. Unit is
 // the native filename for systemd and launchd; NativeID is a unit or label.
 type UnitChange struct {
-	Action  string `json:"action"`
-	Unit    string `json:"unit"`
-	Backend string `json:"backend,omitempty"`
+	Action   string `json:"action"`
+	Unit     string `json:"unit"`
+	Backend  string `json:"backend,omitempty"`
 	NativeID string `json:"native_id,omitempty"`
 }
 
@@ -71,6 +71,18 @@ type SchedulerContext struct {
 }
 
 func NewSchedulerContext(configPath, inventoryPath string) (SchedulerContext, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return SchedulerContext{}, fmt.Errorf("resolve Bebop executable: %w", err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return SchedulerContext{}, fmt.Errorf("resolve controller home directory: %w", err)
+	}
+	return newSchedulerContext(configPath, inventoryPath, executable, home, runtime.GOOS, os.Getuid())
+}
+
+func newSchedulerContext(configPath, inventoryPath, executable, home, platform string, uid int) (SchedulerContext, error) {
 	absConfig, err := filepath.Abs(configPath)
 	if err != nil {
 		return SchedulerContext{}, err
@@ -90,9 +102,19 @@ func NewSchedulerContext(configPath, inventoryPath string) (SchedulerContext, er
 	if err != nil {
 		return SchedulerContext{}, err
 	}
-	executable, err := os.Executable()
+	if resolved, resolveErr := filepath.EvalSymlinks(absInventory); resolveErr == nil {
+		absInventory = resolved
+	} else if !os.IsNotExist(resolveErr) {
+		return SchedulerContext{}, fmt.Errorf("resolve maintenance inventory path: %w", resolveErr)
+	}
+	if inventoryInfo, inventoryErr := os.Stat(absInventory); inventoryErr == nil && !inventoryInfo.Mode().IsRegular() {
+		return SchedulerContext{}, fmt.Errorf("maintenance inventory path must be a regular file")
+	} else if inventoryErr != nil && !os.IsNotExist(inventoryErr) {
+		return SchedulerContext{}, fmt.Errorf("inspect maintenance inventory path: %w", inventoryErr)
+	}
+	executable, err = filepath.Abs(executable)
 	if err != nil {
-		return SchedulerContext{}, fmt.Errorf("resolve Bebop executable: %w", err)
+		return SchedulerContext{}, fmt.Errorf("resolve Bebop executable path: %w", err)
 	}
 	executable, err = filepath.EvalSymlinks(executable)
 	if err != nil {
@@ -105,16 +127,31 @@ func NewSchedulerContext(configPath, inventoryPath string) (SchedulerContext, er
 	if !executableInfo.Mode().IsRegular() {
 		return SchedulerContext{}, fmt.Errorf("Bebop executable path must be a regular file")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return SchedulerContext{}, fmt.Errorf("resolve controller home directory: %w", err)
-	}
 	home, err = filepath.Abs(home)
 	if err != nil {
 		return SchedulerContext{}, err
 	}
+	home, err = filepath.EvalSymlinks(home)
+	if err != nil {
+		return SchedulerContext{}, fmt.Errorf("resolve controller home directory: %w", err)
+	}
+	homeInfo, err := os.Stat(home)
+	if err != nil {
+		return SchedulerContext{}, fmt.Errorf("inspect controller home directory: %w", err)
+	}
+	if !homeInfo.IsDir() {
+		return SchedulerContext{}, fmt.Errorf("controller home path must be a directory")
+	}
+	if isTransientSchedulerExecutable(executable) {
+		return SchedulerContext{}, fmt.Errorf("Bebop executable is in a temporary directory; install a stable binary before installing maintenance scheduling")
+	}
 	projectRoot := filepath.Dir(absConfig)
-	return SchedulerContext{Platform: runtime.GOOS, ProjectRoot: projectRoot, ProjectID: SchedulerProjectID(projectRoot), ConfigPath: absConfig, InventoryPath: absInventory, Executable: executable, Home: home, UID: os.Getuid()}, nil
+	return SchedulerContext{Platform: platform, ProjectRoot: projectRoot, ProjectID: SchedulerProjectID(projectRoot), ConfigPath: absConfig, InventoryPath: absInventory, Executable: executable, Home: home, UID: uid}, nil
+}
+
+func isTransientSchedulerExecutable(executable string) bool {
+	temporary, err := filepath.Abs(os.TempDir())
+	return err == nil && schedulerPathContains(temporary, executable)
 }
 
 // SchedulerProjectID isolates scheduler artifacts from different Bebop

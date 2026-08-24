@@ -126,12 +126,90 @@ func TestSystemdInstallReconcilesOnlyOwnedUnits(t *testing.T) {
 	if _, err := scheduler.Install(context.Background(), []config.MaintenanceJob{job}, false); err != nil {
 		t.Fatal(err)
 	}
-	changes, err = scheduler.Uninstall(context.Background())
+	changes, err = scheduler.Uninstall(context.Background(), []config.MaintenanceJob{job})
 	if err != nil || len(changes) != 2 {
 		t.Fatalf("uninstall = %#v, %v", changes, err)
 	}
 	if _, err := os.Stat(filepath.Join(scheduler.UnitDirectory, "unrelated.service")); err != nil {
 		t.Fatalf("uninstall deleted unrelated unit: %v", err)
+	}
+}
+
+func TestSystemdMigratesOnlyMatchingLegacyM7Units(t *testing.T) {
+	scheduler := testSystemd(t)
+	job := testScheduledJob(t)
+	service, err := scheduler.renderService(job, scheduler.legacyServiceName(job.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	timer, err := scheduler.renderTimer(job, scheduler.legacyServiceName(job.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scheduler.UnitDirectory, scheduler.legacyServiceName(job.Name)), []byte(service), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scheduler.UnitDirectory, scheduler.legacyTimerName(job.Name)), []byte(timer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := scheduler.Status(context.Background(), []config.MaintenanceJob{job})
+	if err != nil || len(statuses) != 1 || statuses[0].State != "stale" || !strings.Contains(statuses[0].Detail, "legacy M7") {
+		t.Fatalf("legacy status = %#v, %v", statuses, err)
+	}
+	changes, err := scheduler.Install(context.Background(), []config.MaintenanceJob{job}, false)
+	if err != nil || len(changes) != 4 {
+		t.Fatalf("legacy migration = %#v, %v", changes, err)
+	}
+	for _, filename := range []string{scheduler.legacyServiceName(job.Name), scheduler.legacyTimerName(job.Name)} {
+		if _, err := os.Stat(filepath.Join(scheduler.UnitDirectory, filename)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy unit survived migration: %s: %v", filename, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(scheduler.UnitDirectory, scheduler.ServiceName(job.Name))); err != nil {
+		t.Fatalf("project-scoped service missing: %v", err)
+	}
+
+	other := scheduler
+	other.ProjectRoot = filepath.Join(t.TempDir(), "other-project")
+	other.ProjectID = SchedulerProjectID(other.ProjectRoot)
+	other.ConfigPath = filepath.Join(other.ProjectRoot, "bebop.toml")
+	otherService, err := other.renderService(job, other.legacyServiceName(job.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scheduler.UnitDirectory, scheduler.legacyServiceName(job.Name)), []byte(otherService), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes, err = scheduler.Install(context.Background(), []config.MaintenanceJob{job}, true)
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("foreign legacy unit was claimed: %#v, %v", changes, err)
+	}
+	if _, err := os.Stat(filepath.Join(scheduler.UnitDirectory, scheduler.legacyServiceName(job.Name))); err != nil {
+		t.Fatalf("foreign legacy unit was changed: %v", err)
+	}
+}
+
+func TestSystemdProjectScopedArtifactsCoexist(t *testing.T) {
+	first := testSystemd(t)
+	second := first
+	second.ProjectRoot = filepath.Join(t.TempDir(), "second-project")
+	second.ProjectID = SchedulerProjectID(second.ProjectRoot)
+	second.ConfigPath = filepath.Join(second.ProjectRoot, "bebop.toml")
+	job := testScheduledJob(t)
+	if _, err := first.Install(context.Background(), []config.MaintenanceJob{job}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Install(context.Background(), []config.MaintenanceJob{job}, false); err != nil {
+		t.Fatal(err)
+	}
+	if first.TimerName(job.Name) == second.TimerName(job.Name) {
+		t.Fatal("separate projects received the same systemd timer identity")
+	}
+	if _, err := first.Install(context.Background(), nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(first.UnitDirectory, second.TimerName(job.Name))); err != nil {
+		t.Fatalf("first project reconciliation removed second project's timer: %v", err)
 	}
 }
 
@@ -154,7 +232,8 @@ func TestSystemdCapabilityExplainsUnavailableUserManager(t *testing.T) {
 func testSystemd(t *testing.T) SystemdUser {
 	t.Helper()
 	directory := t.TempDir()
-	scheduler := SystemdUser{UnitDirectory: directory, ProjectRoot: filepath.Join(directory, "project % path"), ConfigPath: filepath.Join(directory, "project % path", "bebop.toml"), InventoryPath: filepath.Join(directory, "inventory path", "hosts.toml"), Executable: filepath.Join(directory, "bebop % binary"), Platform: "linux", Systemctl: "fake-systemctl"}
+	project := filepath.Join(directory, "project % path")
+	scheduler := SystemdUser{UnitDirectory: directory, ProjectRoot: project, ProjectID: SchedulerProjectID(project), ConfigPath: filepath.Join(project, "bebop.toml"), InventoryPath: filepath.Join(directory, "inventory path", "hosts.toml"), Executable: filepath.Join(directory, "bebop % binary"), Platform: "linux", Systemctl: "fake-systemctl"}
 	scheduler.run = func(_ context.Context, _ string, arguments ...string) (string, error) {
 		for _, argument := range arguments {
 			if argument == "is-enabled" {

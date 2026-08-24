@@ -122,7 +122,7 @@ func (r *Runner) maintenanceShow(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	scheduler, schedulerErr := maintenance.NewSystemdUser(absoluteConfig, *inventoryPath)
+	scheduler, schedulerErr := maintenance.NewScheduler(absoluteConfig, *inventoryPath)
 	schedulerState := "unavailable"
 	schedulerDetail := ""
 	if schedulerErr == nil {
@@ -148,16 +148,17 @@ func (r *Runner) maintenanceShow(arguments []string) error {
 		last = &records[0]
 	}
 	response := struct {
-		Job             config.MaintenanceJob `json:"job"`
-		Fingerprint     string                `json:"fingerprint"`
-		SchedulerState  string                `json:"scheduler_state"`
-		SchedulerDetail string                `json:"scheduler_detail,omitempty"`
-		LastRun         *maintenance.Record   `json:"last_run,omitempty"`
-	}{Job: job, Fingerprint: fingerprint, SchedulerState: schedulerState, SchedulerDetail: schedulerDetail, LastRun: last}
+		Job              config.MaintenanceJob `json:"job"`
+		Fingerprint      string                `json:"fingerprint"`
+		SchedulerBackend string                `json:"scheduler_backend,omitempty"`
+		SchedulerState   string                `json:"scheduler_state"`
+		SchedulerDetail  string                `json:"scheduler_detail,omitempty"`
+		LastRun          *maintenance.Record   `json:"last_run,omitempty"`
+	}{Job: job, Fingerprint: fingerprint, SchedulerBackend: schedulerBackend(scheduler), SchedulerState: schedulerState, SchedulerDetail: schedulerDetail, LastRun: last}
 	if *jsonOutput {
 		return writeJSON(r.Out, response)
 	}
-	fmt.Fprintf(r.Out, "Job            %s\nType           %s\nTarget         %s\nSchedule       %s (controller local time)\nEnabled        %t\nFingerprint    %s\nScheduler      %s\n", job.Name, job.Type, job.Target, job.Schedule.String(), job.Enabled, fingerprint, schedulerState)
+	fmt.Fprintf(r.Out, "Job            %s\nType           %s\nTarget         %s\nSchedule       %s (controller local time)\nEnabled        %t\nFingerprint    %s\nScheduler      %s (%s)\n", job.Name, job.Type, job.Target, job.Schedule.String(), job.Enabled, fingerprint, schedulerBackend(scheduler), schedulerState)
 	if job.Service != "" {
 		fmt.Fprintf(r.Out, "Service        %s\n", job.Service)
 	}
@@ -187,7 +188,7 @@ func (r *Runner) maintenanceRun(arguments []string) error {
 	timeout := fs.Duration("timeout", 15*time.Minute, "maximum maintenance operation duration")
 	jsonOutput := fs.Bool("json", false, "write machine-readable JSON")
 	ignoreWindow := fs.Bool("ignore-window", false, "explicitly run a manual job outside its configured window")
-	scheduled := fs.Bool("scheduled", false, "internal marker used by generated scheduler units")
+	scheduled := fs.Bool("scheduled", false, "internal marker used by generated scheduler artifacts")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
@@ -267,7 +268,7 @@ func (r *Runner) maintenanceInstall(arguments []string) error {
 	fs.SetOutput(r.Err)
 	configPath := fs.String("config", "bebop.toml", "path to maintenance bebop.toml")
 	inventoryPath := fs.String("inventory", inventory.DefaultPath, "path to host inventory")
-	dryRun := fs.Bool("dry-run", false, "show scheduler changes without writing controller unit files")
+	dryRun := fs.Bool("dry-run", false, "show scheduler changes without writing controller scheduler artifacts")
 	jsonOutput := fs.Bool("json", false, "write machine-readable JSON")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
@@ -279,7 +280,7 @@ func (r *Runner) maintenanceInstall(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	scheduler, err := maintenance.NewSystemdUser(absoluteConfig, *inventoryPath)
+	scheduler, err := maintenance.NewScheduler(absoluteConfig, *inventoryPath)
 	if err != nil {
 		return err
 	}
@@ -294,16 +295,16 @@ func (r *Runner) maintenanceInstall(arguments []string) error {
 		}{DryRun: *dryRun, Changes: changes})
 	}
 	if len(changes) == 0 {
-		fmt.Fprintln(r.Out, "Maintenance scheduler units are current.")
+		fmt.Fprintln(r.Out, "Maintenance scheduler artifacts are current.")
 		return nil
 	}
 	for _, change := range changes {
 		fmt.Fprintf(r.Out, "%s %s\n", maintenanceChangeMarker(change.Action), change.Unit)
 	}
 	if *dryRun {
-		fmt.Fprintln(r.Out, "No scheduler units were changed.")
+		fmt.Fprintln(r.Out, "No scheduler artifacts were changed.")
 	} else {
-		fmt.Fprintln(r.Out, "Maintenance scheduler units installed.")
+		fmt.Fprintln(r.Out, "Maintenance scheduler artifacts installed.")
 	}
 	return nil
 }
@@ -313,7 +314,7 @@ func (r *Runner) maintenanceUninstall(arguments []string) error {
 	fs.SetOutput(r.Err)
 	configPath := fs.String("config", "bebop.toml", "path to maintenance bebop.toml")
 	inventoryPath := fs.String("inventory", inventory.DefaultPath, "path to host inventory")
-	yes := fs.Bool("yes", false, "remove only Bebop-owned controller scheduler units")
+	yes := fs.Bool("yes", false, "remove only Bebop-owned controller scheduler artifacts")
 	jsonOutput := fs.Bool("json", false, "write machine-readable JSON")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
@@ -322,17 +323,17 @@ func (r *Runner) maintenanceUninstall(arguments []string) error {
 		return fmt.Errorf("maintenance uninstall accepts no positional arguments")
 	}
 	if !*yes {
-		return fmt.Errorf("maintenance uninstall removes only Bebop-owned controller unit files; repeat with --yes to confirm")
+		return fmt.Errorf("maintenance uninstall removes only Bebop-owned controller scheduler artifacts; repeat with --yes to confirm")
 	}
-	_, absoluteConfig, err := maintenanceConfig(*configPath)
+	cfg, absoluteConfig, err := maintenanceConfig(*configPath)
 	if err != nil {
 		return err
 	}
-	scheduler, err := maintenance.NewSystemdUser(absoluteConfig, *inventoryPath)
+	scheduler, err := maintenance.NewScheduler(absoluteConfig, *inventoryPath)
 	if err != nil {
 		return err
 	}
-	changes, err := scheduler.Uninstall(context.Background())
+	changes, err := scheduler.Uninstall(context.Background(), cfg.Maintenance.Jobs)
 	if err != nil {
 		return err
 	}
@@ -342,13 +343,13 @@ func (r *Runner) maintenanceUninstall(arguments []string) error {
 		}{changes})
 	}
 	if len(changes) == 0 {
-		fmt.Fprintln(r.Out, "No Bebop-owned maintenance scheduler units were installed.")
+		fmt.Fprintln(r.Out, "No Bebop-owned maintenance scheduler artifacts were installed.")
 		return nil
 	}
 	for _, change := range changes {
 		fmt.Fprintf(r.Out, "- %s\n", change.Unit)
 	}
-	fmt.Fprintln(r.Out, "Maintenance scheduler units removed; policy, history, and backups were preserved.")
+	fmt.Fprintln(r.Out, "Maintenance scheduler artifacts removed; policy, history, and backups were preserved.")
 	return nil
 }
 
@@ -368,7 +369,7 @@ func (r *Runner) maintenanceStatus(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	scheduler, err := maintenance.NewSystemdUser(absoluteConfig, *inventoryPath)
+	scheduler, err := maintenance.NewScheduler(absoluteConfig, *inventoryPath)
 	if err != nil {
 		return err
 	}
@@ -376,9 +377,10 @@ func (r *Runner) maintenanceStatus(arguments []string) error {
 	if capability != maintenance.SchedulerAvailable {
 		if *jsonOutput {
 			return writeJSON(r.Out, struct {
+				Backend    string                          `json:"backend"`
 				Capability maintenance.SchedulerCapability `json:"capability"`
 				Detail     string                          `json:"detail"`
-			}{capability, detail})
+			}{scheduler.Backend(), capability, detail})
 		}
 		fmt.Fprintf(r.Out, "Scheduler: %s (%s)\n", capability, detail)
 		return nil
@@ -389,9 +391,10 @@ func (r *Runner) maintenanceStatus(arguments []string) error {
 	}
 	if *jsonOutput {
 		return writeJSON(r.Out, struct {
-			Capability maintenance.SchedulerCapability `json:"capability"`
-			Jobs       []maintenance.SystemdStatus     `json:"jobs"`
-		}{capability, statuses})
+			Backend    string                           `json:"backend"`
+			Capability maintenance.SchedulerCapability  `json:"capability"`
+			Jobs       []maintenance.SchedulerJobStatus `json:"jobs"`
+		}{scheduler.Backend(), capability, statuses})
 	}
 	history, historyErr := maintenance.ExistingHistory(cfg)
 	last := map[string]maintenance.Record{}
@@ -478,6 +481,13 @@ func maintenanceJob(jobs []config.MaintenanceJob, name string) (config.Maintenan
 		}
 	}
 	return config.MaintenanceJob{}, false
+}
+
+func schedulerBackend(scheduler maintenance.SchedulerAdapter) string {
+	if scheduler == nil {
+		return "unavailable"
+	}
+	return scheduler.Backend()
 }
 
 func maintenanceChangeMarker(action string) string {

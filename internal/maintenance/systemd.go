@@ -34,6 +34,7 @@ type commandRunner func(context.Context, string, ...string) (string, error)
 type SystemdUser struct {
 	UnitDirectory string
 	ProjectRoot   string
+	ProjectID     string
 	ConfigPath    string
 	InventoryPath string
 	Executable    string
@@ -55,7 +56,7 @@ func NewSystemdUserWithContext(install SchedulerContext) (SystemdUser, error) {
 	if err != nil {
 		return SystemdUser{}, fmt.Errorf("resolve controller user configuration directory: %w", err)
 	}
-	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: install.ProjectRoot, ConfigPath: install.ConfigPath, InventoryPath: install.InventoryPath, Executable: install.Executable, Platform: install.Platform, Systemctl: "systemctl", run: runCommand}, nil
+	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: install.ProjectRoot, ProjectID: install.ProjectID, ConfigPath: install.ConfigPath, InventoryPath: install.InventoryPath, Executable: install.Executable, Platform: install.Platform, Systemctl: "systemctl", run: runCommand}, nil
 }
 
 func (scheduler SystemdUser) Backend() string { return "systemd-user" }
@@ -71,14 +72,12 @@ func (scheduler SystemdUser) Capability(ctx context.Context) (SchedulerCapabilit
 	if program == "" {
 		program = "systemctl"
 	}
-	runner := scheduler.run
-	if runner == nil {
+	if scheduler.run == nil {
 		if _, err := exec.LookPath(program); err != nil {
 			return SchedulerUnavailable, "systemctl is not available on this controller"
 		}
-		runner = runCommand
 	}
-	if _, err := runner(ctx, program, "--user", "show-environment"); err != nil {
+	if _, err := scheduler.systemctl(ctx, "--user", "show-environment"); err != nil {
 		return SchedulerUnavailable, "systemd user manager is unavailable: " + conciseError(err)
 	}
 	return SchedulerAvailable, "systemd user manager available"
@@ -87,6 +86,9 @@ func (scheduler SystemdUser) Capability(ctx context.Context) (SchedulerCapabilit
 // DesiredUnits compiles portable job policy to deterministic systemd user
 // unit text. Disabled jobs deliberately have no installed timer.
 func (scheduler SystemdUser) DesiredUnits(jobs []config.MaintenanceJob) (map[string]string, error) {
+	if len(scheduler.ProjectID) != 12 || !isLowerHex(scheduler.ProjectID) {
+		return nil, fmt.Errorf("invalid scheduler project identity")
+	}
 	result := map[string]string{}
 	for _, job := range jobs {
 		if !validSchedulerJobName(job.Name) {
@@ -130,10 +132,18 @@ func validSchedulerJobName(value string) bool {
 }
 
 func (scheduler SystemdUser) ServiceName(job string) string {
-	return "bebop-maintenance-" + job + ".service"
+	return "bebop-maintenance-" + scheduler.ProjectID + "-" + job + ".service"
 }
 
 func (scheduler SystemdUser) TimerName(job string) string {
+	return "bebop-maintenance-" + scheduler.ProjectID + "-" + job + ".timer"
+}
+
+func (scheduler SystemdUser) legacyServiceName(job string) string {
+	return "bebop-maintenance-" + job + ".service"
+}
+
+func (scheduler SystemdUser) legacyTimerName(job string) string {
 	return "bebop-maintenance-" + job + ".timer"
 }
 
@@ -240,13 +250,18 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 		if !serviceOK || !timerOK {
 			return nil, fmt.Errorf("missing generated scheduler unit for %s", job.Name)
 		}
-		actualService, serviceErr := os.ReadFile(filepath.Join(scheduler.UnitDirectory, status.Service))
-		actualTimer, timerErr := os.ReadFile(filepath.Join(scheduler.UnitDirectory, status.Timer))
+		actualService, serviceErr := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, status.Service))
+		actualTimer, timerErr := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, status.Timer))
 		status.UnitFingerprint = UnitFingerprint(service)
 		status.TimerFingerprint = UnitFingerprint(timer)
 		status.DesiredFingerprint = schedulerArtifactFingerprint(service, timer)
 		if os.IsNotExist(serviceErr) || os.IsNotExist(timerErr) {
-			status.State = "missing"
+			if scheduler.legacyOwnedForJob(job) {
+				status.State = "stale"
+				status.Detail = "legacy M7 scheduler units are installed; run maintenance install to migrate them"
+			} else {
+				status.State = "missing"
+			}
 			statuses = append(statuses, status)
 			continue
 		}
@@ -257,8 +272,8 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 			continue
 		}
 		status.Installed = true
-		status.ActualFingerprint = schedulerArtifactFingerprint(string(actualService), string(actualTimer))
-		if string(actualService) != service || string(actualTimer) != timer {
+		status.ActualFingerprint = schedulerArtifactFingerprint(actualService, actualTimer)
+		if actualService != service || actualTimer != timer {
 			status.State = "stale"
 			status.Detail = "unit content differs from current maintenance policy"
 			statuses = append(statuses, status)
@@ -286,7 +301,7 @@ func (scheduler SystemdUser) Install(ctx context.Context, jobs []config.Maintena
 	if err != nil {
 		return nil, err
 	}
-	changes, err := scheduler.changes(desired)
+	changes, err := scheduler.changes(jobs, desired)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +349,7 @@ func (scheduler SystemdUser) Install(ctx context.Context, jobs []config.Maintena
 	return changes, nil
 }
 
-func (scheduler SystemdUser) Uninstall(ctx context.Context, _ []config.MaintenanceJob) ([]UnitChange, error) {
+func (scheduler SystemdUser) Uninstall(ctx context.Context, jobs []config.MaintenanceJob) ([]UnitChange, error) {
 	if capability, detail := scheduler.Capability(ctx); capability != SchedulerAvailable {
 		return nil, fmt.Errorf("scheduler %s: %s", capability, detail)
 	}
@@ -342,6 +357,8 @@ func (scheduler SystemdUser) Uninstall(ctx context.Context, _ []config.Maintenan
 	if err != nil {
 		return nil, err
 	}
+	owned = append(owned, scheduler.legacyOwnedUnits(jobs)...)
+	owned = uniqueSortedStrings(owned)
 	changes := make([]UnitChange, 0, len(owned))
 	for _, filename := range owned {
 		if strings.HasSuffix(filename, ".timer") {
@@ -362,13 +379,16 @@ func (scheduler SystemdUser) Uninstall(ctx context.Context, _ []config.Maintenan
 	return changes, nil
 }
 
-func (scheduler SystemdUser) changes(desired map[string]string) ([]UnitChange, error) {
+func (scheduler SystemdUser) changes(jobs []config.MaintenanceJob, desired map[string]string) ([]UnitChange, error) {
 	owned, err := scheduler.ownedUnits()
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	ownedSet := map[string]bool{}
 	for _, filename := range owned {
+		ownedSet[filename] = true
+	}
+	for _, filename := range scheduler.legacyOwnedUnits(jobs) {
 		ownedSet[filename] = true
 	}
 	changes := make([]UnitChange, 0)
@@ -404,16 +424,61 @@ func (scheduler SystemdUser) ownedUnits() ([]string, error) {
 	result := make([]string, 0)
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasPrefix(name, "bebop-maintenance-") || !(strings.HasSuffix(name, ".service") || strings.HasSuffix(name, ".timer")) {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasPrefix(name, "bebop-maintenance-"+scheduler.ProjectID+"-") || !(strings.HasSuffix(name, ".service") || strings.HasSuffix(name, ".timer")) {
 			continue
 		}
-		contents, readErr := os.ReadFile(filepath.Join(scheduler.UnitDirectory, name))
-		if readErr == nil && strings.HasPrefix(string(contents), unitHeader) {
+		contents, readErr := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, name))
+		if readErr == nil && strings.HasPrefix(contents, unitHeader) {
 			result = append(result, name)
 		}
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// legacyOwnedUnits recognizes only old M7 artifacts that bind to this exact
+// project/configuration. A generic old `bebop-maintenance-NAME` marker alone is
+// not sufficient to claim another project's timer.
+func (scheduler SystemdUser) legacyOwnedUnits(jobs []config.MaintenanceJob) []string {
+	result := []string{}
+	for _, job := range jobs {
+		if !scheduler.legacyOwnedForJob(job) {
+			continue
+		}
+		service := scheduler.legacyServiceName(job.Name)
+		timer := scheduler.legacyTimerName(job.Name)
+		result = append(result, service)
+		if contents, err := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, timer)); err == nil && strings.HasPrefix(contents, unitHeader) {
+			result = append(result, timer)
+		}
+	}
+	return uniqueSortedStrings(result)
+}
+
+func (scheduler SystemdUser) legacyOwnedForJob(job config.MaintenanceJob) bool {
+	contents, err := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, scheduler.legacyServiceName(job.Name)))
+	if err != nil || !strings.HasPrefix(contents, unitHeader) {
+		return false
+	}
+	project, projectErr := escapeSystemdArgument(scheduler.ProjectRoot)
+	configPath, configErr := escapeSystemdArgument(scheduler.ConfigPath)
+	if projectErr != nil || configErr != nil {
+		return false
+	}
+	return strings.Contains(contents, "WorkingDirectory="+project) && strings.Contains(contents, "\"--config\" "+configPath)
+}
+
+func uniqueSortedStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (scheduler SystemdUser) systemctl(ctx context.Context, arguments ...string) (string, error) {
@@ -425,11 +490,21 @@ func (scheduler SystemdUser) systemctl(ctx context.Context, arguments ...string)
 	if runner == nil {
 		runner = runCommand
 	}
-	return runner(ctx, program, arguments...)
+	limited, cancel := schedulerContext(ctx)
+	defer cancel()
+	return runner(limited, program, arguments...)
 }
 
 func writeUnitAtomic(filename, contents string) error {
 	directory := filepath.Dir(filename)
+	if !schedulerPathContains(directory, filename) || filepath.Dir(filename) != directory {
+		return fmt.Errorf("scheduler unit path escapes its directory")
+	}
+	if info, err := os.Lstat(filename); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return fmt.Errorf("refuse to replace non-regular scheduler unit")
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
