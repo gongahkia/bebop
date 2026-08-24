@@ -130,7 +130,7 @@ func TestStoragePlacementMigrationAgainstDisposableDind(t *testing.T) {
 
 func prepareStorageImage(t *testing.T, target *dockerExecTransport, image, mount string) string {
 	t.Helper()
-	if _, err := target.Run(context.Background(), transportRequest("apk add --no-cache e2fsprogs util-linux >/dev/null && truncate -s 64M "+shellQuote(image)+" && mkfs.ext4 -F "+shellQuote(image)+" >/dev/null && mkdir -p "+shellQuote(mount)+" && mount -o loop "+shellQuote(image)+" "+shellQuote(mount))); err != nil {
+	if _, err := target.Run(context.Background(), transportRequest("apk add --no-cache e2fsprogs util-linux >/dev/null && truncate -s 128M "+shellQuote(image)+" && mkfs.ext4 -F "+shellQuote(image)+" >/dev/null && mkdir -p "+shellQuote(mount)+" && mount -o loop "+shellQuote(image)+" "+shellQuote(mount))); err != nil {
 		t.Skipf("disposable target cannot prepare loop-backed storage image: %v", err)
 	}
 	result, err := target.Run(context.Background(), transportRequest("blkid -s UUID -o value "+shellQuote(image)))
@@ -192,6 +192,6 @@ consistency = "stop"
 func storageDindHost(cfg config.Config, deployment services.Deployment, machineID, mount, uuid string) facts.HostFacts {
 	host := dindHost(cfg, facts.Service{Name: deployment.Name, Project: deployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
 	host.MachineID = machineID
-	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: mount, UUID: uuid, Filesystem: "ext4", SizeBytes: 64 << 20, AvailableBytes: 48 << 20}}}
+	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: mount, UUID: uuid, Filesystem: "ext4", SizeBytes: 128 << 20, AvailableBytes: 96 << 20}}}
 	return host
 }
