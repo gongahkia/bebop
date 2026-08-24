@@ -4,6 +4,7 @@ bin/
 .bebop/history/
 .bebop/backups/
 .bebop/maintenance/
+.bebop/notifications/
 secrets/*.env
 !secrets/*.env.example
 coverage.out

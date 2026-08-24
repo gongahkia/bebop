@@ -275,6 +275,50 @@ job/target/service scope. Manual snapshots and another job's snapshots carry no
 matching scope and cannot be selected. A corrupt candidate is retained and
 reported rather than automatically removed.
 
+## M8 events and notifications
+
+M8 is strictly downstream from operation semantics. `backup.Create`,
+`preflight.Run`, Apt simulation, storage assessment, and Compose health do not
+know about sinks or providers. Maintenance first writes its normal immutable
+record, projects its safe typed outcome into `internal/notification.Operation`,
+then derives event candidates and evaluates controller-local policy while the
+same selected-job lease remains held.
+
+```text
+typed maintenance outcome
+          |
+          +--> immutable M7 history
+          |
+          v
+  EventFactory -> normalized Event (ID + issue fingerprint)
+          |
+          v
+notification state lease -> active issue/dedupe/cooldown/recovery -> routes -> sinks
+          |                                                       |              |
+          +-> atomic state.json + delivery records                +-> file / HTTPS POST
+```
+
+Events have a unique occurrence ID and a separate SHA-256 issue fingerprint.
+The latter contains only stable logical domain/target/job/service/resource/
+category data, allowing repeat suppression across controller restarts without
+including timestamps, raw messages, machine IDs, paths, or secrets. Recovery
+is a state transition: a successful observation removes a matching active
+issue; a recovery is sent only to a route that successfully received its active
+failure.
+
+`internal/notification` owns policy routing, state, delivery history, safe
+file append, and generic webhook delivery. It has no target transport and no
+provider-specific operation code. Webhook secrets resolve at delivery from the
+controller environment and never enter systemd units, events, history, local
+state, or error output. A delivery result is returned separately from the
+maintenance operation result, so delivery failures do not retry or invalidate
+the operation.
+
+The shared `internal/lease` implementation uses process-held OS locks. Unix
+uses `flock`; Windows uses `LockFileEx`. A pathname can remain after a crash,
+but kernel lock ownership is released, so future maintenance/state writers can
+reacquire it. This is controller-local coordination, not a distributed lock.
+
 ## M5 deterministic recipe authoring
 
 M5 deliberately sits **before** normal configuration and source resolution; it

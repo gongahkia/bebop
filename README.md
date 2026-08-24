@@ -7,7 +7,7 @@ your existing OpenSSH setup, compares each with a small declarative
 is a CLI, not a dashboard, app store, cloud service, or bespoke operating
 system.
 
-M0–M7 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
+M0–M8 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
 Debian 12/13 as targets. The controller cross-builds for Linux, macOS, and
 Windows remote-SSH workflows; macOS and Windows targets are deliberately
 unsupported.
@@ -252,8 +252,9 @@ refuses to overwrite non-empty data. See [backup documentation](docs/BACKUPS.md)
 
 M7 makes a small set of existing safe operations repeatable from the
 **controller**. It does not add a Bebop daemon, a target agent, arbitrary cron
-commands, scheduled apply/restore, package upgrades, or notifications. An
-optional strict policy declares typed jobs:
+commands, scheduled apply/restore, or package upgrades. M8 later adds its
+strictly downstream notification layer. An optional strict policy declares typed
+jobs:
 
 ```toml
 [maintenance]
@@ -310,9 +311,57 @@ On Linux controllers, explicit installation writes deterministic systemd
 paths. `maintenance status` detects stale project/binary/policy/unit content.
 macOS and Windows retain manual `maintenance run` where underlying operations
 work and the local crash-safe lock is available. Windows remains cross-build
-supported but has neither a native scheduler adapter nor a crash-safe local job
-lock in M7. See
+supported with an OS-backed local job lease, but has no native scheduler adapter.
+See
 [MAINTENANCE.md](docs/MAINTENANCE.md).
+
+## Local-first notifications (M8)
+
+M8 turns structured maintenance outcomes into local operational events. It has
+no daemon, cloud relay, inbound listener, provider-specific integration, or
+arbitrary-command hook: evaluation happens only at the end of a maintenance
+invocation. A failed webhook never changes the result of a backup, doctor, or
+update check.
+
+```toml
+[notifications]
+version = 1
+enabled = true
+state_dir = ".bebop/notifications"
+
+[[notifications.sinks]]
+name = "ops"
+type = "webhook"
+url_env = "BEBOP_OPS_WEBHOOK_URL"
+
+[[notifications.sinks]]
+name = "events"
+type = "file"
+path = ".bebop/notifications/events.jsonl"
+
+[[notifications.routes]]
+name = "failures"
+sink = "ops"
+events = ["backup.failed", "doctor.failed", "storage.failed", "service.unhealthy"]
+recoveries = true
+cooldown = "12h"
+```
+
+Webhook endpoints and optional authorization values are environment-variable
+references, never TOML values. HTTPS is required except for loopback HTTP used
+for local self-hosting/testing. M8 sends one failure per route, suppresses
+repeats until its optional cooldown, and sends a recovery only to routes that
+previously delivered that issue.
+
+```sh
+./bin/bebop notification list
+./bin/bebop notification status
+./bin/bebop notification test events
+./bin/bebop notification history --json
+```
+
+See [NOTIFICATIONS.md](docs/NOTIFICATIONS.md) for event types, payloads, and
+delivery semantics.
 
 ## Current desired state
 
@@ -362,12 +411,13 @@ Bebop validates a temporary candidate before replacing only its own drop-in;
 it verifies the effective `sshd -T` values, and it blocks root-only SSH sessions
 rather than disable their recovery path.
 
-M0–M7 does not partition, format, resize, mount, or erase disks; alter routers,
+M0–M8 does not partition, format, resize, mount, or erase disks; alter routers,
 DNS, or firewall rules; install an OS; collect telemetry; or use AI/LLM APIs.
 M3+ may manage only declared Compose projects under its target deployment root;
 it never removes Compose volumes, arbitrary persistent data, router state, or
 unrelated Docker projects. M7 never schedules arbitrary commands, restore,
-apply, or package upgrades. See
+apply, or package upgrades. M8 never exposes an inbound control API, emits
+secrets, or changes infrastructure from notification delivery. See
 [docs/SAFETY.md](docs/SAFETY.md) for the exact boundary.
 
 `doctor` and `status` report unmounted whole disks discovered through structured
@@ -392,6 +442,8 @@ make test-storage
 make test-storage-integration
 make test-maintenance
 make test-maintenance-integration
+make test-notifications
+make test-notification-integration
 make recipe-validate
 ```
 
@@ -412,5 +464,6 @@ Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
 [M5 scope](docs/MILESTONE-5.md), [M6 scope](docs/MILESTONE-6.md),
 [M7 scope](docs/MILESTONE-7.md), [services](docs/SERVICES.md),
 [backups](docs/BACKUPS.md), [recipes](docs/RECIPES.md),
-[maintenance](docs/MAINTENANCE.md), and [roadmap](docs/ROADMAP.md) before
+[maintenance](docs/MAINTENANCE.md), [notifications](docs/NOTIFICATIONS.md),
+[M8 scope](docs/MILESTONE-8.md), and [roadmap](docs/ROADMAP.md) before
 extending Bebop.

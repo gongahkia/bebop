@@ -1,5 +1,16 @@
 # Roadmap
 
+## Implemented in M8: local-first notifications and operational events
+
+- Strict controller-local notification policy with secret-reference-only file
+  and generic webhook sinks, exact event routes, recovery controls, cooldowns,
+  and no target desired-state/saved-plan coupling.
+- Versioned secret-safe operational events, persistent atomic active-issue
+  dedupe/recovery state, bounded delivery history, local status/test commands,
+  and limited TLS-verified outbound webhook retry behavior.
+- Separate operation and delivery results, plus shared crash-safe OS local
+  leases (`flock`/Windows `LockFileEx`) for maintenance and notification state.
+
 ## Implemented in M7: scheduled operations and unattended maintenance
 
 - Strict controller-side typed maintenance policy for backup, doctor, and
@@ -80,8 +91,8 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M8: local-first notification integrations over M7's structured operation
-  results and history, without adding arbitrary command hooks or cloud accounts.
+- M9: broader native controller scheduler adapters, beginning with macOS
+  launchd, while preserving typed jobs and no-daemon operation semantics.
 - Broader Linux distribution support, then macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, and richer
   drift controls.

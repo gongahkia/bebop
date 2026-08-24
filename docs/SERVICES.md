@@ -188,3 +188,12 @@ consistency policy, M4 target lock, and health verification described above.
 M7 does not schedule Compose apply, recipe upgrades, generic restarts, image
 updates, or arbitrary service commands. A service selected by a maintenance
 backup must still be declared in the target's resolved config.
+
+## Operational events (M8)
+
+Scheduled doctor checks map an existing unhealthy/running-service finding to
+`service.unhealthy` and a later healthy finding to `service.recovered`. A
+container without a healthcheck remains subject to M3's existing
+`no-healthcheck` semantics; M8 does not invent a healthy claim or restart a
+service. Events identify the logical service, never container IDs, deployment
+paths, Compose logs, or secret environment content.

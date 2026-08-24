@@ -144,3 +144,10 @@ authoring is complete. It never names a recipe ID, materializes a recipe,
 checks a registry, upgrades a recipe, or changes a pinned image. A stateful
 recipe's existing logical M4 data declarations remain the only backup
 authorization boundary.
+
+## Notifications (M8)
+
+Recipe materialization and upgrade do not emit notifications. A materialized
+service can appear in ordinary scheduled doctor/backup events only after it has
+entered the existing M3/M4/M7 operational path; M8 never treats recipe metadata
+or a notification as authority to upgrade, restart, or change a pinned image.

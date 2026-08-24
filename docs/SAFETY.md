@@ -222,6 +222,35 @@ pretending maintenance fully succeeded.
 lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
 timer cannot wait for an SSH host-key/password or sudo password prompt.
 
+## M8 notification boundary
+
+M8 is outbound-only controller behavior after an authoritative maintenance
+record exists. It cannot run commands, receive network requests, change target
+state, invoke apply/restore/restart, or affect the result of the operation that
+produced an event. A successful verified backup remains successful when every
+notification delivery fails.
+
+Event payloads are constructed from bounded typed identifiers/counts and
+Bebop-controlled summaries before serialization. They never include raw stderr,
+command output, secret env values, secret HMAC material, webhook URL/header
+values, controller absolute paths, SSH command lines, or target machine IDs.
+The same boundary applies to state, delivery history, file JSONL, webhook JSON,
+and delivery errors. Webhook URLs/authentication are environment references;
+normal TLS certificate verification remains enabled, redirects are not
+followed, and response bodies are discarded.
+
+Notification state is private controller-local generated data. Atomic state
+updates and OS-backed leases coordinate concurrent invocations, while per-route
+delivery history is bounded. Deleting state affects only future dedupe/recovery
+memory, never host/service/backup correctness. Corrupt state fails notification
+evaluation safely without changing maintenance operation history or replaying
+old M7 failures. Repeated active issues suppress until cooldown/escalation;
+recovery requires a fresh healthy observation.
+
+M8 contains no daemon, cloud relay, telemetry, desktop/control listener,
+inbound webhook, vendor chat integration, arbitrary command sink, shell hook,
+or automatic remediation path.
+
 ## M5 recipe authoring boundary
 
 Recipes are embedded reviewed data, not arbitrary executable extensions. Bebop

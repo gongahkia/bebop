@@ -82,3 +82,14 @@ not selected. Another maintenance job, target, or service has a different
 scope. Staging directories, malformed entries, and corrupt snapshots are not
 retention candidates; a detected corrupt job snapshot is retained and produces
 a maintenance warning. Failed backups never invoke retention.
+
+## Operational events (M8)
+
+When a backup is run through M7 maintenance and notifications are configured,
+M8 emits `backup.failed` for capture failure and `backup.retention_failed` when
+the new verified snapshot exists but retention fails. The latter does not
+reinterpret or delete the valid snapshot. A later successful backup clears the
+remembered backup issue and can emit a route-selected recovery. Notification
+delivery remains downstream: a webhook failure never invalidates the manifest,
+snapshot verification, target lock behavior, or retention safety. Snapshot
+contents and controller secret inputs are not notification payloads.

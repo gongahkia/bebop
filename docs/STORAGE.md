@@ -90,3 +90,12 @@ policy. A scheduled snapshot refuses missing mounts, root spill, UUID/type
 mismatch, read-only storage, and capacity/free-space policy failure before
 retention can run. A maintenance window is only a controller timing rule, never
 authorization to bypass placement safety.
+
+## Operational events (M8)
+
+Doctor's normalized storage finding codes become `storage.failed` or
+`storage.recovered` observations when maintenance notifications are enabled.
+Their fingerprints use logical target/job/storage identity and stable state
+code, not free-space counters, device paths, mount output, or controller paths.
+This is notification only: M8 neither mounts, repairs, formats, selects, nor
+migrates storage.

@@ -2,8 +2,10 @@
 
 M7 lets a controller repeat a narrow set of existing Bebop operations over
 time. It is not a Bebop daemon, target agent, cron-command runner, automatic
-convergence engine, backup product, or notification service. Targets remain
-ordinary agentless Linux machines reached through the existing OpenSSH transport.
+convergence engine, backup product, or persistent notification service. M8
+later adds one bounded, downstream notification evaluation per invocation.
+Targets remain ordinary agentless Linux machines reached through the existing
+OpenSSH transport.
 
 ## Policy
 
@@ -125,10 +127,9 @@ install. `uninstall --yes` disables/removes only marked Bebop units and leaves
 policy, history, snapshots, and unrelated user units intact.
 
 macOS and Windows scheduler installation/status/uninstall report the adapter as
-unsupported in M7. Controller cross-builds remain supported; manual maintenance
-execution is available on Unix controllers where the underlying operation and
-local crash-safe lease are available. M7 does not claim a Windows scheduler
-adapter.
+unsupported. Controller cross-builds remain supported; manual maintenance uses
+an OS-backed crash-safe local lease on Unix and Windows, although M8 does not
+add a Windows scheduler adapter.
 
 ## Typed operations
 
@@ -175,8 +176,24 @@ The history directory must be a real controller directory that is not group- or
 world-writable; new directories are created with restrictive user permissions.
 
 History is provenance, not truth: deleting it does not affect targets,
-snapshots, eligibility, locks, or recovery. Per-job controller advisory leases
-under `.bebop/maintenance/locks` prevent duplicate manual/timer runs and are
-released by the kernel if a process exits. Different jobs are not globally
-serialized. Existing target flock ownership remains authoritative whenever a
-backup or explicit metadata refresh mutates target state.
+snapshots, eligibility, locks, or recovery. Per-job controller leases under
+`.bebop/maintenance/locks` prevent duplicate manual/timer runs. They are OS
+locks (`flock` on Unix and `LockFileEx` on Windows), so a stale pathname is
+harmless after process death. Different jobs are not globally serialized.
+Existing target flock ownership remains authoritative whenever a backup or
+explicit metadata refresh mutates target state.
+
+## Events and notifications (M8)
+
+When `[notifications]` is enabled, `maintenance run` writes its normal M7
+record first, then derives secret-safe operational events and evaluates the
+local M8 policy before releasing the selected job lease. A delivery failure is
+reported separately and does not change the underlying maintenance result,
+maintenance history result, snapshot validity, or scheduler exit behavior. A
+systemd unit still contains only the normal `maintenance run --scheduled`
+arguments; it never embeds webhook URLs, headers, or notification secrets.
+
+Scheduled runs are eligible for notification policy by default. Manual runs are
+quiet unless `notifications.notify_manual = true`. See
+[NOTIFICATIONS.md](NOTIFICATIONS.md) for routes, recovery, cooldowns, sinks,
+and delivery history.
