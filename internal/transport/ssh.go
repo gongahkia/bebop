@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -28,6 +29,29 @@ func (s *SSH) Run(ctx context.Context, request Request) (Result, error) {
 	command.Stderr = &stderr
 	err := command.Run()
 	result := Result{Stdout: stdout.String(), Stderr: strings.TrimSpace(stderr.String())}
+	if err == nil {
+		return result, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		result.ExitCode = exitErr.ExitCode()
+		return result, &ExitError{Code: result.ExitCode, Stderr: result.Stderr}
+	}
+	return result, err
+}
+
+func (s *SSH) RunStream(ctx context.Context, request StreamRequest, output io.Writer) (Result, error) {
+	args := s.commandArgs(Request{Script: request.Script, Privileged: request.Privileged})
+	command := exec.CommandContext(ctx, "ssh", args...)
+	command.Stdin = request.Stdin
+	if output == nil {
+		output = io.Discard
+	}
+	command.Stdout = output
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	err := command.Run()
+	result := Result{Stderr: strings.TrimSpace(stderr.String())}
 	if err == nil {
 		return result, nil
 	}

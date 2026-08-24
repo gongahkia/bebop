@@ -212,10 +212,10 @@ func (Compose) Apply(ctx context.Context, tr transport.Transport, cfg config.Con
 		_, err := tr.Run(ctx, transport.Request{Script: deployScript(cfg.Storage.DataRoot, deployment), Stdin: deployment.Payload, Privileged: true})
 		return err
 	case "service.start":
-		_, err := tr.Run(ctx, transport.Request{Script: composeCommand(cfg.Storage.DataRoot, deployment, "up -d --remove-orphans"), Privileged: true})
+		_, err := tr.Run(ctx, transport.Request{Script: ComposeCommand(cfg.Storage.DataRoot, deployment, "up -d --remove-orphans"), Privileged: true})
 		return err
 	case "service.stop":
-		_, err := tr.Run(ctx, transport.Request{Script: composeCommand(cfg.Storage.DataRoot, deployment, "stop"), Privileged: true})
+		_, err := tr.Run(ctx, transport.Request{Script: ComposeCommand(cfg.Storage.DataRoot, deployment, "stop"), Privileged: true})
 		return err
 	case "service.remove":
 		_, err := tr.Run(ctx, transport.Request{Script: removeScript(cfg.Storage.DataRoot, deployment), Privileged: true})
@@ -279,7 +279,10 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 	return script.String()
 }
 
-func composeCommand(dataRoot string, deployment services.Deployment, command string) string {
+// ComposeCommand renders a structured operation against an already-validated,
+// Bebop-managed service deployment. Backup/restore use it to preserve the
+// same project identity and controller-environment boundary as normal apply.
+func ComposeCommand(dataRoot string, deployment services.Deployment, command string) string {
 	current := path.Join(dataRoot, "services", deployment.Name, "current")
 	return "current=" + transport.ShellQuote(current) + "\ntest -L \"$current\"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name " + transport.ShellQuote(deployment.Project) + " --project-directory \"$current\" -f \"$current\"/" + transport.ShellQuote(deployment.ComposeFile) + " " + command
 }

@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,7 +63,32 @@ type Deployment struct {
 	InputFingerprint  string
 	SecretConfigured  bool
 	Ports             []Port
+	Data              []PersistentResource
+	BackupConsistency string
 	Payload           []byte
+}
+
+// PersistentResource is the target-side resolution of one explicitly
+// authorized data declaration. Name is portable logical identity; runtime
+// volume names are implementation details and may differ between hosts.
+type PersistentResource struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	VolumeKey     string `json:"volume_key,omitempty"`
+	RuntimeVolume string `json:"runtime_volume,omitempty"`
+	External      bool   `json:"external,omitempty"`
+	Path          string `json:"path,omitempty"`
+}
+
+type composeVolume struct {
+	Runtime  string
+	Used     bool
+	External bool
+}
+
+type composeValidation struct {
+	Ports   []Port
+	Volumes map[string]composeVolume
 }
 
 // Input is the persistent, non-secret portion of a resolved deployment. A
@@ -126,8 +152,11 @@ func ResolveOne(cfg config.Config, name string) (Deployment, error) {
 }
 
 func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
-	deployment := Deployment{Name: service.Name, Project: ProjectName(cfg.Server.Name, service.Name), State: service.State}
+	deployment := Deployment{Name: service.Name, Project: ProjectName(cfg.Server.Name, service.Name), State: service.State, BackupConsistency: service.Backup.Consistency}
 	if service.State == "absent" {
+		for _, resource := range service.Data {
+			deployment.Data = append(deployment.Data, PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resource.Path})
+		}
 		return deployment, nil
 	}
 	base, err := configurationDirectory(cfg)
@@ -142,13 +171,17 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" source is unsafe", err)
 	}
-	ports, err := validateCompose(filepath.Join(source, filepath.FromSlash(composeFile)), files, service.SecretEnvFile != "")
+	validation, err := validateCompose(filepath.Join(source, filepath.FromSlash(composeFile)), files, service.SecretEnvFile != "", deployment.Project)
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" Compose source is unsupported", err)
 	}
 	deployment.SourceDirectory, deployment.Files, deployment.ComposeFile = source, files, composeFile
 	deployment.SourceDigest = sourceDigest
-	deployment.Ports = ports
+	deployment.Ports = validation.Ports
+	deployment.Data, err = resolvePersistentResources(service.Data, validation.Volumes)
+	if err != nil {
+		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" persistent data is invalid", err)
+	}
 	secret := []byte(nil)
 	if service.SecretEnvFile != "" {
 		secretPath, pathErr := containedPath(base, service.SecretEnvFile)
@@ -474,59 +507,128 @@ func writeArchiveFile(writer *tar.Writer, name string, mode int64, contents []by
 	return err
 }
 
-func validateCompose(filename string, files []File, secretConfigured bool) ([]Port, error) {
+func validateCompose(filename string, files []File, secretConfigured bool, project string) (composeValidation, error) {
 	contents, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		return composeValidation{}, err
 	}
 	var document yaml.Node
 	if err := yaml.Unmarshal(contents, &document); err != nil {
-		return nil, err
+		return composeValidation{}, err
 	}
 	if containsAlias(&document) {
-		return nil, fmt.Errorf("YAML aliases are not supported in managed Compose files")
+		return composeValidation{}, fmt.Errorf("YAML aliases are not supported in managed Compose files")
 	}
 	root := document.Content
 	if len(root) != 1 || root[0].Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("Compose document must be a mapping")
+		return composeValidation{}, fmt.Errorf("Compose document must be a mapping")
 	}
 	servicesNode := mappingValue(root[0], "services")
 	if servicesNode == nil || servicesNode.Kind != yaml.MappingNode || len(servicesNode.Content) == 0 {
-		return nil, fmt.Errorf("Compose document must declare at least one service")
+		return composeValidation{}, fmt.Errorf("Compose document must declare at least one service")
 	}
 	fileSet := make(map[string]bool, len(files))
 	for _, file := range files {
 		fileSet[file.Path] = true
 	}
 	ports := make([]Port, 0)
+	usedVolumes := map[string]bool{}
 	for index := 0; index < len(servicesNode.Content); index += 2 {
 		serviceName, definition := servicesNode.Content[index], servicesNode.Content[index+1]
 		if serviceName.Kind != yaml.ScalarNode || definition.Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("Compose services must be named mappings")
+			return composeValidation{}, fmt.Errorf("Compose services must be named mappings")
 		}
 		if mappingValue(definition, "build") != nil {
-			return nil, fmt.Errorf("service %q uses unsupported build; use an explicit image", serviceName.Value)
+			return composeValidation{}, fmt.Errorf("service %q uses unsupported build; use an explicit image", serviceName.Value)
 		}
 		if mappingValue(definition, "profiles") != nil {
-			return nil, fmt.Errorf("service %q uses unsupported profiles", serviceName.Value)
+			return composeValidation{}, fmt.Errorf("service %q uses unsupported profiles", serviceName.Value)
 		}
 		if mappingValue(definition, "extends") != nil {
-			return nil, fmt.Errorf("service %q uses unsupported extends", serviceName.Value)
+			return composeValidation{}, fmt.Errorf("service %q uses unsupported extends", serviceName.Value)
 		}
 		if err := validateEnvFiles(mappingValue(definition, "env_file"), fileSet, secretConfigured); err != nil {
-			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
+			return composeValidation{}, fmt.Errorf("service %q: %w", serviceName.Value, err)
 		}
-		if err := validateVolumes(mappingValue(definition, "volumes")); err != nil {
-			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
+		volumeKeys, err := validateVolumes(mappingValue(definition, "volumes"))
+		if err != nil {
+			return composeValidation{}, fmt.Errorf("service %q: %w", serviceName.Value, err)
+		}
+		for _, key := range volumeKeys {
+			usedVolumes[key] = true
 		}
 		parsed, err := parsePorts(mappingValue(definition, "ports"))
 		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
+			return composeValidation{}, fmt.Errorf("service %q: %w", serviceName.Value, err)
 		}
 		ports = append(ports, parsed...)
 	}
 	sort.Slice(ports, func(i, j int) bool { return ports[i].Binding < ports[j].Binding })
-	return ports, nil
+	volumes, err := parseComposeVolumes(mappingValue(root[0], "volumes"), project, usedVolumes)
+	if err != nil {
+		return composeValidation{}, err
+	}
+	return composeValidation{Ports: ports, Volumes: volumes}, nil
+}
+
+func parseComposeVolumes(node *yaml.Node, project string, used map[string]bool) (map[string]composeVolume, error) {
+	volumes := map[string]composeVolume{}
+	if node == nil {
+		return volumes, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("top-level volumes must be a mapping")
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		key, definition := node.Content[index], node.Content[index+1]
+		if key.Kind != yaml.ScalarNode || !volumeNamePattern.MatchString(key.Value) {
+			return nil, fmt.Errorf("Compose volume names must be safe identifiers")
+		}
+		runtime, external := project+"_"+key.Value, false
+		if definition.Kind != yaml.ScalarNode || definition.Tag != "!!null" {
+			if definition.Kind != yaml.MappingNode {
+				return nil, fmt.Errorf("Compose volume %q must be a mapping or null", key.Value)
+			}
+			if externalNode := mappingValue(definition, "external"); externalNode != nil {
+				if externalNode.Kind != yaml.ScalarNode || (externalNode.Value != "true" && externalNode.Value != "false") {
+					return nil, fmt.Errorf("Compose volume %q external must be true or false", key.Value)
+				}
+				external = externalNode.Value == "true"
+			}
+			if name := mappingValue(definition, "name"); name != nil {
+				if name.Kind != yaml.ScalarNode || !volumeNamePattern.MatchString(name.Value) || strings.Contains(name.Value, "$") {
+					return nil, fmt.Errorf("Compose volume %q name must be a fixed safe value", key.Value)
+				}
+				runtime = name.Value
+			}
+		}
+		if external && runtime == project+"_"+key.Value {
+			runtime = key.Value
+		}
+		volumes[key.Value] = composeVolume{Runtime: runtime, Used: used[key.Value], External: external}
+	}
+	return volumes, nil
+}
+
+var volumeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+func resolvePersistentResources(declared []config.DataResource, volumes map[string]composeVolume) ([]PersistentResource, error) {
+	resources := make([]PersistentResource, 0, len(declared))
+	for _, resource := range declared {
+		resolved := PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resource.Path}
+		if resource.Type == "volume" {
+			volume, found := volumes[resource.Volume]
+			if !found {
+				return nil, fmt.Errorf("declared volume key %q does not exist in the Compose file", resource.Volume)
+			}
+			if !volume.Used {
+				return nil, fmt.Errorf("declared volume key %q is not mounted by the Compose service", resource.Volume)
+			}
+			resolved.RuntimeVolume, resolved.External = volume.Runtime, volume.External
+		}
+		resources = append(resources, resolved)
+	}
+	return resources, nil
 }
 
 func containsAlias(node *yaml.Node) bool {
@@ -582,34 +684,46 @@ func validateEnvFiles(node *yaml.Node, sourceFiles map[string]bool, secretConfig
 // Releases are replaceable deployment content. A relative bind mount would
 // make a service write persistent data below that replaceable tree, so M3
 // requires named volumes or deliberate absolute target paths instead.
-func validateVolumes(node *yaml.Node) error {
+func validateVolumes(node *yaml.Node) ([]string, error) {
 	if node == nil {
-		return nil
+		return nil, nil
 	}
 	if node.Kind != yaml.SequenceNode {
-		return fmt.Errorf("volumes must be a sequence")
+		return nil, fmt.Errorf("volumes must be a sequence")
 	}
+	keys := make([]string, 0)
 	for _, value := range node.Content {
 		switch value.Kind {
 		case yaml.ScalarNode:
 			source, _, found := strings.Cut(value.Value, ":")
 			if found && (source == "." || source == ".." || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")) {
-				return fmt.Errorf("relative bind mount %q is unsafe; use a named volume or absolute target path", value.Value)
+				return nil, fmt.Errorf("relative bind mount %q is unsafe; use a named volume or absolute target path", value.Value)
+			}
+			if found && source != "" && !strings.HasPrefix(source, "/") {
+				keys = append(keys, source)
 			}
 		case yaml.MappingNode:
 			typeNode := mappingValue(value, "type")
-			if typeNode == nil || typeNode.Kind != yaml.ScalarNode || typeNode.Value != "bind" {
+			if typeNode != nil && (typeNode.Kind != yaml.ScalarNode || (typeNode.Value != "bind" && typeNode.Value != "volume")) {
+				return nil, fmt.Errorf("volume type must be bind or volume")
+			}
+			if typeNode == nil || typeNode.Value == "volume" {
+				sourceNode := mappingValue(value, "source")
+				if sourceNode == nil || sourceNode.Kind != yaml.ScalarNode || sourceNode.Value == "" {
+					return nil, fmt.Errorf("volume mounts require a scalar source")
+				}
+				keys = append(keys, sourceNode.Value)
 				continue
 			}
 			sourceNode := mappingValue(value, "source")
 			if sourceNode == nil || sourceNode.Kind != yaml.ScalarNode || !strings.HasPrefix(sourceNode.Value, "/") {
-				return fmt.Errorf("bind mounts require an absolute target source path")
+				return nil, fmt.Errorf("bind mounts require an absolute target source path")
 			}
 		default:
-			return fmt.Errorf("volume must use string or long mapping syntax")
+			return nil, fmt.Errorf("volume must use string or long mapping syntax")
 		}
 	}
-	return nil
+	return keys, nil
 }
 
 func parsePorts(node *yaml.Node) ([]Port, error) {

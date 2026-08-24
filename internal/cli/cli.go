@@ -64,6 +64,8 @@ func (r *Runner) Run(arguments []string) int {
 		err = r.plan(arguments[1:])
 	case "apply":
 		err = r.apply(arguments[1:])
+	case "backup":
+		err = r.backup(arguments[1:])
 	case "doctor":
 		err = r.doctor(arguments[1:])
 	case "status":

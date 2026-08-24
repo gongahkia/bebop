@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"io"
 	"os/exec"
 	"strings"
 )
@@ -34,6 +35,34 @@ func (l *Local) Run(ctx context.Context, request Request) (Result, error) {
 	command.Stderr = &stderr
 	err := command.Run()
 	result := Result{Stdout: stdout.String(), Stderr: strings.TrimSpace(stderr.String())}
+	if err == nil {
+		return result, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		result.ExitCode = exitErr.ExitCode()
+		return result, &ExitError{Code: result.ExitCode, Stderr: result.Stderr}
+	}
+	return result, err
+}
+
+func (l *Local) RunStream(ctx context.Context, request StreamRequest, output io.Writer) (Result, error) {
+	args := []string{"-ceu", request.Script}
+	program := "sh"
+	if request.Privileged && requiresLocalSudo() {
+		program = "sudo"
+		args = append([]string{"-n", "sh"}, args...)
+	}
+	command := exec.CommandContext(ctx, program, args...)
+	command.Stdin = request.Stdin
+	if output == nil {
+		output = io.Discard
+	}
+	command.Stdout = output
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	err := command.Run()
+	result := Result{Stderr: strings.TrimSpace(stderr.String())}
 	if err == nil {
 		return result, nil
 	}

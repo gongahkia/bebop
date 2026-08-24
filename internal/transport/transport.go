@@ -20,6 +20,15 @@ type Request struct {
 	Privileged bool
 }
 
+// StreamRequest is the bounded-memory counterpart to Request. It is an
+// optional transport extension used for backup archives: neither controller
+// nor target should need to buffer a volume in memory.
+type StreamRequest struct {
+	Script     string
+	Stdin      io.Reader
+	Privileged bool
+}
+
 type Result struct {
 	Stdout   string
 	Stderr   string
@@ -33,6 +42,13 @@ type Transport interface {
 	ReadFile(context.Context, string) (string, error)
 	FileExists(context.Context, string) (bool, error)
 	Description() string
+}
+
+// StreamTransport is deliberately optional so existing embedding transports
+// remain source-compatible. Backup and restore require it rather than falling
+// back to an unsafe whole-archive byte slice.
+type StreamTransport interface {
+	RunStream(context.Context, StreamRequest, io.Writer) (Result, error)
 }
 
 // ApplyLocker is optional so existing test and third-party transports remain
