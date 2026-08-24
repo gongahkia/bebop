@@ -157,31 +157,45 @@ func CheckDrift(source string, provenance Provenance) error {
 	return nil
 }
 
+// ValidateUpgrade performs the non-mutating checks shared by upgrade preview
+// and publication. Keeping this boundary explicit means a dry run cannot claim
+// an upgrade is ready when the real write would reject provenance drift.
+func ValidateUpgrade(configPath string, current config.Config, source string, previous Provenance, next Materialization) error {
+	if previous.Source != next.Source || previous.RecipeID != next.Recipe.ID {
+		return fmt.Errorf("recipe upgrade provenance does not match requested service")
+	}
+	root, _, err := configRoot(configPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureContained(root, source); err != nil {
+		return err
+	}
+	if err := CheckDrift(source, previous); err != nil {
+		return err
+	}
+	service, found := configuredService(current, next.Source)
+	if !found {
+		return fmt.Errorf("recipe provenance source is not declared by the configuration")
+	}
+	if !sameServiceContract(service, next.Service) {
+		return fmt.Errorf("recipe upgrade changes service secret or persistent-data declarations; no automatic data migration is available")
+	}
+	if !sameStrings(previous.SecretParameters, next.Provenance.SecretParameters) || previous.SecretFile != next.Provenance.SecretFile {
+		return fmt.Errorf("recipe upgrade changes secret requirements; update the secret reference explicitly before upgrading")
+	}
+	return nil
+}
+
 // Upgrade re-materializes a provenance-validated source in place. It does not
 // edit a target or config declaration; incompatible persistent state and secret
 // requirements are blocked before any controller file changes.
 func Upgrade(configPath string, current config.Config, source string, previous Provenance, next Materialization) (WriteResult, error) {
-	if previous.Source != next.Source || previous.RecipeID != next.Recipe.ID {
-		return WriteResult{}, fmt.Errorf("recipe upgrade provenance does not match requested service")
-	}
-	if err := CheckDrift(source, previous); err != nil {
+	if err := ValidateUpgrade(configPath, current, source, previous, next); err != nil {
 		return WriteResult{}, err
 	}
-	service, found := configuredService(current, next.Source)
-	if !found {
-		return WriteResult{}, fmt.Errorf("recipe provenance source is not declared by the configuration")
-	}
-	if !sameServiceContract(service, next.Service) {
-		return WriteResult{}, fmt.Errorf("recipe upgrade changes service secret or persistent-data declarations; no automatic data migration is available")
-	}
-	if !sameStrings(previous.SecretParameters, next.Provenance.SecretParameters) || previous.SecretFile != next.Provenance.SecretFile {
-		return WriteResult{}, fmt.Errorf("recipe upgrade changes secret requirements; update the secret reference explicitly before upgrading")
-	}
-	root, absoluteConfig, err := configRoot(configPath)
+	_, absoluteConfig, err := configRoot(configPath)
 	if err != nil {
-		return WriteResult{}, err
-	}
-	if err := ensureContained(root, source); err != nil {
 		return WriteResult{}, err
 	}
 	stage, err := os.MkdirTemp(filepath.Dir(source), ".bebop-recipe-upgrade-")
@@ -388,7 +402,7 @@ func atomicWrite(filename string, contents []byte, mode os.FileMode) error {
 }
 
 func tomlString(value string) string {
-	return `"` + strings.NewReplacer(`\\`, `\\\\`, `"`, `\\"`).Replace(value) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 }
 
 func bytesTrimRight(value []byte, cutset string) []byte {

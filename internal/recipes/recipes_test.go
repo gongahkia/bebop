@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/services"
@@ -48,6 +49,36 @@ func TestBuiltinCorpusIsStrictAndDeterministic(t *testing.T) {
 	}
 	if !strings.Contains(string(one.Compose), "8181:80") || !strings.Contains(string(one.Compose), "Generated from Bebop recipe whoami@1.0.0") {
 		t.Fatalf("typed port was not rendered into ordinary Compose source: %s", one.Compose)
+	}
+}
+
+func TestCorpusRejectsUnknownFieldsAndUnpinnedImages(t *testing.T) {
+	metadata, err := builtinFiles.ReadFile("builtin/whoami/1.0.0/recipe.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose, err := builtinFiles.ReadFile("builtin/whoami/1.0.0/compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load(fstest.MapFS{
+		"whoami/1.0.0/recipe.toml":  &fstest.MapFile{Data: append(metadata, []byte("\nunexpected = true\n")...)},
+		"whoami/1.0.0/compose.yaml": &fstest.MapFile{Data: compose},
+	})
+	if err == nil || !strings.Contains(err.Error(), "strict") {
+		t.Fatalf("unknown recipe field was accepted: %v", err)
+	}
+	catalog, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, err := catalog.Find("whoami", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe.Images = []string{"traefik/whoami"}
+	if err := recipe.validate(); err == nil || !strings.Contains(err.Error(), "explicit non-latest") {
+		t.Fatalf("untagged image was accepted: %v", err)
 	}
 }
 
@@ -172,6 +203,7 @@ func TestUpgradeRejectsIncompatibleStoredParametersAndPersistentData(t *testing.
 		t.Fatal(err)
 	}
 	next := v1
+	next.Parameters = append([]Parameter(nil), v1.Parameters...)
 	next.Parameters[0].Type = "boolean"
 	if _, err := next.Reuse(input.Values, nil, ""); err == nil || !strings.Contains(err.Error(), "boolean") {
 		t.Fatalf("incompatible parameter type was reused: %v", err)
@@ -220,6 +252,49 @@ func TestSecretInitializationWritesOnlyTemplateReference(t *testing.T) {
 	provenance, err := os.ReadFile(filepath.Join(root, "services", "passwords", ProvenanceFilename))
 	if err != nil || strings.Contains(string(provenance), "ADMIN_TOKEN=") {
 		t.Fatalf("recipe provenance leaked secret content: %s %v", provenance, err)
+	}
+}
+
+func TestTamperedProvenanceAndUnsupportedArchitectureAreRejected(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "bebop.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, err := catalog.Find("whoami", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialization, err := recipe.Materialize(Request{Service: "echo", Source: "services/echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Initialize(configPath, current, materialization); err != nil {
+		t.Fatal(err)
+	}
+	provenancePath := filepath.Join(root, "services", "echo", ProvenanceFilename)
+	contents, err := os.ReadFile(provenancePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents = []byte(strings.Replace(string(contents), `"recipe_version": "1.0.0"`, `"recipe_version": "1.1.0"`, 1))
+	if err := os.WriteFile(provenancePath, contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadProvenance(provenancePath); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+		t.Fatalf("tampered provenance was accepted: %v", err)
+	}
+	managed := []ManagedService{{Service: materialization.Service, Recipe: Recipe{ID: "amd64-only", Architectures: []string{"amd64"}}}}
+	if got := incompatible(managed, "arm64"); len(got) != 1 || got[0].Service.Name != "echo" {
+		t.Fatalf("unsupported architecture was not classified: %#v", got)
 	}
 }
 

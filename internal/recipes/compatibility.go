@@ -52,11 +52,15 @@ func Incompatible(cfg config.Config, architecture string) ([]ManagedService, err
 	if err != nil {
 		return nil, err
 	}
+	return incompatible(managed, architecture), nil
+}
+
+func incompatible(managed []ManagedService, architecture string) []ManagedService {
 	result := make([]ManagedService, 0)
 	for _, service := range managed {
 		if !service.Recipe.SupportsArchitecture(architecture) {
 			result = append(result, service)
 		}
 	}
-	return result, nil
+	return result
 }

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/pelletier/go-toml/v2"
@@ -331,15 +332,15 @@ func (recipe Recipe) validate() error {
 		previous = architecture
 	}
 	for _, image := range recipe.Images {
-		if image == "" || strings.HasSuffix(image, ":latest") || strings.ContainsAny(image, " \t\r\n") {
+		if !pinnedImage(image) {
 			return fmt.Errorf("recipe images must use explicit non-latest tags")
 		}
 	}
 	if recipe.Health != "running-only" && recipe.Health != "healthcheck" {
 		return fmt.Errorf("health must be running-only or healthcheck")
 	}
-	if _, err := strconv.ParseInt(strings.TrimSuffix(recipe.HealthTimeout, "s"), 10, 64); err != nil && recipe.HealthTimeout == "" {
-		return fmt.Errorf("health_timeout must not be empty")
+	if duration, err := time.ParseDuration(recipe.HealthTimeout); err != nil || duration <= 0 {
+		return fmt.Errorf("health_timeout must be a positive Go duration")
 	}
 	previous = ""
 	for _, parameter := range recipe.Parameters {
@@ -403,6 +404,17 @@ func (recipe Recipe) validate() error {
 	}
 	_, err = recipe.render(values)
 	return err
+}
+
+func pinnedImage(image string) bool {
+	if image == "" || strings.HasSuffix(image, ":latest") || strings.ContainsAny(image, " \t\r\n") {
+		return false
+	}
+	if strings.Contains(image, "@sha256:") {
+		return true
+	}
+	last := image[strings.LastIndex(image, "/")+1:]
+	return strings.Contains(last, ":")
 }
 
 func validParameterType(value string) bool {

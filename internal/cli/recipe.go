@@ -243,6 +243,9 @@ func (r *Runner) recipeUpgrade(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	if err := recipes.ValidateUpgrade(*configPath, current, source, provenance, materialization); err != nil {
+		return err
+	}
 	if *dryRun {
 		return r.renderRecipeUpgrade(previous, materialization, recipes.WriteResult{ConfigPath: *configPath}, true, *jsonOutput)
 	}
