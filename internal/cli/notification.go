@@ -159,6 +159,10 @@ func (r *Runner) notificationStatus(arguments []string) error {
 		if sink.Type == "webhook" {
 			if _, found := os.LookupEnv(sink.URLEnv); !found {
 				status.Status = "secret-unavailable"
+			} else if sink.AuthorizationEnv != "" {
+				if _, found := os.LookupEnv(sink.AuthorizationEnv); !found {
+					status.Status = "secret-unavailable"
+				}
 			}
 		}
 		response.Sinks = append(response.Sinks, status)
@@ -251,7 +255,13 @@ func (r *Runner) notificationTest(arguments []string) error {
 	} else {
 		fmt.Fprintf(r.Out, "Test notification failed for %s (%s).\n", result.Sink, nonEmptyText(result.Category, "unavailable"))
 	}
-	return testErr
+	if testErr != nil {
+		return testErr
+	}
+	if result.Result != "delivered" {
+		return fmt.Errorf("notification test delivery failed")
+	}
+	return nil
 }
 
 func newNotificationFlags(r *Runner, name string) *flag.FlagSet {

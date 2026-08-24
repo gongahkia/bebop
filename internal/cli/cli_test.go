@@ -180,6 +180,44 @@ recoveries = true
 	}
 }
 
+func TestNotificationTestReportsUnavailableSinkWithoutLeakingReference(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "bebop.toml")
+	contents := `version = 1
+
+[notifications]
+version = 1
+
+[[notifications.sinks]]
+name = "ops"
+type = "webhook"
+url_env = "BEBOP_TEST_MISSING_NOTIFICATION_URL"
+authorization_env = "BEBOP_TEST_MISSING_NOTIFICATION_AUTHORIZATION"
+
+[[notifications.routes]]
+name = "failures"
+sink = "ops"
+events = ["backup.failed"]
+`
+	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BEBOP_TEST_MISSING_NOTIFICATION_URL", "http://127.0.0.1:1/hook")
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: bebop.NewService(), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"notification", "status", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"status": "secret-unavailable"`) {
+		t.Fatalf("notification status did not report missing authorization reference: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"notification", "test", "ops", "--config", configPath}); code == 0 {
+		t.Fatalf("notification test unexpectedly succeeded: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Test notification failed") || strings.Contains(stdout.String(), "BEBOP_TEST_MISSING_NOTIFICATION_URL") {
+		t.Fatalf("unsafe notification test output: %s", stdout.String())
+	}
+}
+
 func TestStorageAdoptRecordsObservedMountedFilesystemWithoutTargetMutation(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "bebop.toml")
 	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {
