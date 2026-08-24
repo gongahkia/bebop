@@ -474,7 +474,7 @@ func assertExec(t *testing.T, target *dockerExecTransport, script string) {
 func targetDeploymentDigest(t *testing.T, target *dockerExecTransport, service string) string {
 	t.Helper()
 	script := `cd /work/bebop/services/` + transport.ShellQuote(service) + `/current
-find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' ! -path './.bebop-placement-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
   test -n "$file" || continue
   mode=$(stat -c '%a' -- "$file")
   checksum=$(sha256sum -- "$file" | awk '{print $1}')
@@ -490,7 +490,7 @@ done | sha256sum | awk '{print $1}'`
 func targetDeploymentManifest(t *testing.T, target *dockerExecTransport, service string) string {
 	t.Helper()
 	result, err := target.Run(context.Background(), transport.Request{Script: `cd /work/bebop/services/` + transport.ShellQuote(service) + `/current
-find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+find . -type f ! -path './.bebop-secret.env' ! -path './.bebop-secret-fingerprint' ! -path './.bebop-placement-fingerprint' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
   test -n "$file" || continue
   mode=$(stat -c '%a' -- "$file")
   checksum=$(sha256sum -- "$file" | awk '{print $1}')
