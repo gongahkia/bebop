@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -10,7 +11,7 @@ func TestDecodeDefaultsAndStrictValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actual != Defaults() {
+	if !reflect.DeepEqual(actual, Defaults()) {
 		t.Fatalf("defaults mismatch: %#v", actual)
 	}
 	for _, contents := range []string{
@@ -31,7 +32,7 @@ func TestStarterRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actual != Defaults() {
+	if !reflect.DeepEqual(actual, Defaults()) {
 		t.Fatalf("starter does not round trip: %#v", actual)
 	}
 }

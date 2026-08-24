@@ -9,8 +9,11 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/pelletier/go-toml/v2"
@@ -18,13 +21,20 @@ import (
 
 const CurrentVersion = 1
 const DefaultDataRoot = "/srv/bebop"
+const DefaultServiceHealthTimeout = "2m"
 
 type Config struct {
-	Version  int      `toml:"version" json:"version"`
-	Server   Server   `toml:"server" json:"server"`
-	Features Features `toml:"features" json:"features"`
-	Network  Network  `toml:"network" json:"network"`
-	Storage  Storage  `toml:"storage" json:"storage"`
+	Version  int       `toml:"version" json:"version"`
+	Server   Server    `toml:"server" json:"server"`
+	Features Features  `toml:"features" json:"features"`
+	Network  Network   `toml:"network" json:"network"`
+	Storage  Storage   `toml:"storage" json:"storage"`
+	Services []Service `toml:"-" json:"services,omitempty"`
+
+	// sourceDirectory is controller-local context, never desired state. It is
+	// populated by LoadFile so service source paths resolve beside the config
+	// declaration rather than relative to the controller's current directory.
+	sourceDirectory string
 }
 
 type Server struct {
@@ -41,6 +51,17 @@ type Network struct {
 }
 type Storage struct {
 	DataRoot string `toml:"data_root" json:"data_root"`
+}
+
+// Service is one user-defined workload resource. M3 supports only the built-in
+// Compose provider; a service is intentionally not an application recipe.
+type Service struct {
+	Name          string `toml:"-" json:"name"`
+	Type          string `toml:"type" json:"type"`
+	Source        string `toml:"source" json:"source"`
+	State         string `toml:"state" json:"state"`
+	SecretEnvFile string `toml:"secret_env_file,omitempty" json:"secret_env_file,omitempty"`
+	HealthTimeout string `toml:"health_timeout,omitempty" json:"health_timeout,omitempty"`
 }
 
 type rawConfig struct {
@@ -60,6 +81,13 @@ type rawConfig struct {
 	Storage struct {
 		DataRoot *string `toml:"data_root"`
 	} `toml:"storage"`
+	Services map[string]struct {
+		Type          *string `toml:"type"`
+		Source        *string `toml:"source"`
+		State         *string `toml:"state"`
+		SecretEnvFile *string `toml:"secret_env_file"`
+		HealthTimeout *string `toml:"health_timeout"`
+	} `toml:"services"`
 }
 
 func Defaults() Config {
@@ -67,12 +95,21 @@ func Defaults() Config {
 }
 
 func LoadFile(filename string) (Config, error) {
-	file, err := os.Open(filename)
+	absFilename, err := filepath.Abs(filename)
+	if err != nil {
+		return Config{}, errs.New(errs.ConfigInvalid, "resolve configuration path", err)
+	}
+	file, err := os.Open(absFilename)
 	if err != nil {
 		return Config{}, errs.New(errs.ConfigInvalid, "cannot read configuration", err)
 	}
 	defer file.Close()
-	return Decode(file)
+	result, err := Decode(file)
+	if err != nil {
+		return Config{}, err
+	}
+	result.sourceDirectory = filepath.Dir(absFilename)
+	return result, nil
 }
 
 func Decode(reader io.Reader) (Config, error) {
@@ -105,6 +142,31 @@ func Decode(reader io.Reader) (Config, error) {
 	if raw.Storage.DataRoot != nil {
 		config.Storage.DataRoot = *raw.Storage.DataRoot
 	}
+	serviceNames := make([]string, 0, len(raw.Services))
+	for name := range raw.Services {
+		serviceNames = append(serviceNames, name)
+	}
+	sort.Strings(serviceNames)
+	for _, name := range serviceNames {
+		rawService := raw.Services[name]
+		service := Service{Name: name, State: "running", HealthTimeout: DefaultServiceHealthTimeout}
+		if rawService.Type != nil {
+			service.Type = *rawService.Type
+		}
+		if rawService.Source != nil {
+			service.Source = *rawService.Source
+		}
+		if rawService.State != nil {
+			service.State = *rawService.State
+		}
+		if rawService.SecretEnvFile != nil {
+			service.SecretEnvFile = *rawService.SecretEnvFile
+		}
+		if rawService.HealthTimeout != nil {
+			service.HealthTimeout = *rawService.HealthTimeout
+		}
+		config.Services = append(config.Services, service)
+	}
 	if err := Validate(config); err != nil {
 		return Config{}, err
 	}
@@ -112,6 +174,7 @@ func Decode(reader io.Reader) (Config, error) {
 }
 
 var namePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+var serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 func Validate(config Config) error {
 	if config.Version != CurrentVersion {
@@ -125,6 +188,37 @@ func Validate(config Config) error {
 	}
 	if err := ValidateDataRoot(config.Storage.DataRoot); err != nil {
 		return errs.New(errs.ConfigInvalid, err.Error(), nil)
+	}
+	previousName := ""
+	for _, service := range config.Services {
+		if !serviceNamePattern.MatchString(service.Name) {
+			return errs.New(errs.ConfigInvalid, "service name must be 1-63 lowercase letters, numbers, or hyphens and start with a letter", nil)
+		}
+		if previousName != "" && service.Name <= previousName {
+			return errs.New(errs.ConfigInvalid, "services must have unique names in lexical order", nil)
+		}
+		previousName = service.Name
+		if service.Type != "compose" {
+			return errs.New(errs.ConfigInvalid, "service."+service.Name+".type currently supports only \"compose\"", nil)
+		}
+		if err := ValidateControllerRelativePath(service.Source, false); err != nil {
+			return errs.New(errs.ConfigInvalid, "service."+service.Name+".source "+err.Error(), nil)
+		}
+		if service.State != "running" && service.State != "stopped" && service.State != "absent" {
+			return errs.New(errs.ConfigInvalid, "service."+service.Name+".state must be \"running\", \"stopped\", or \"absent\"", nil)
+		}
+		if service.SecretEnvFile != "" {
+			if err := ValidateControllerRelativePath(service.SecretEnvFile, true); err != nil {
+				return errs.New(errs.ConfigInvalid, "service."+service.Name+".secret_env_file "+err.Error(), nil)
+			}
+		}
+		if service.HealthTimeout == "" {
+			return errs.New(errs.ConfigInvalid, "service."+service.Name+".health_timeout must not be empty", nil)
+		}
+		timeout, err := time.ParseDuration(service.HealthTimeout)
+		if err != nil || timeout < time.Second || timeout > 30*time.Minute {
+			return errs.New(errs.ConfigInvalid, "service."+service.Name+".health_timeout must be between 1s and 30m", nil)
+		}
 	}
 	return nil
 }
@@ -140,6 +234,39 @@ func ValidateDataRoot(root string) error {
 		return fmt.Errorf("storage.data_root is too long")
 	}
 	return nil
+}
+
+// ValidateControllerRelativePath applies controller filesystem semantics. It
+// intentionally rejects both slash styles so a checked-in config has the same
+// containment boundary on Unix and Windows controllers.
+func ValidateControllerRelativePath(value string, file bool) error {
+	if value == "" || strings.ContainsRune(value, '\x00') || filepath.IsAbs(value) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, "\\") {
+		return fmt.Errorf("must be a non-empty relative path")
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("must not contain control characters")
+		}
+	}
+	converted := filepath.FromSlash(strings.ReplaceAll(value, "\\", "/"))
+	cleaned := filepath.Clean(converted)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("must stay within the configuration directory")
+	}
+	if file && cleaned == "." {
+		return fmt.Errorf("must name a file")
+	}
+	return nil
+}
+
+// SourceDirectory is controller-only information established by LoadFile.
+// Decode callers without a file may set it with WithSourceDirectory in tests
+// or embedding code.
+func (config Config) SourceDirectory() string { return config.sourceDirectory }
+
+func WithSourceDirectory(config Config, directory string) Config {
+	config.sourceDirectory = directory
+	return config
 }
 
 func Starter() string {
@@ -171,7 +298,10 @@ func Fingerprint(config Config) (string, error) {
 	if err := Validate(config); err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(config)
+	normalized := config
+	normalized.Services = append([]Service(nil), config.Services...)
+	sort.Slice(normalized.Services, func(i, j int) bool { return normalized.Services[i].Name < normalized.Services[j].Name })
+	encoded, err := json.Marshal(normalized)
 	if err != nil {
 		return "", err
 	}
