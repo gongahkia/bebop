@@ -1,6 +1,9 @@
 package modules
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +41,20 @@ func TestManagedMountScriptsAreMarkerScopedAndIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(mountpointSafeScript(resource.Mount), "find") || !strings.Contains(mountpointSafeScript(resource.Mount), "test ! -L") {
 		t.Fatalf("mountpoint safety precondition is incomplete")
+	}
+}
+
+func TestMountpointOccupancyPreconditionRefusesSentinel(t *testing.T) {
+	mount := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mount, "sentinel"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("sh", "-c", mountpointSafeScript(mount)).Run(); err == nil {
+		t.Fatal("occupied mountpoint safety precondition succeeded")
+	}
+	contents, err := os.ReadFile(filepath.Join(mount, "sentinel"))
+	if err != nil || string(contents) != "keep" {
+		t.Fatalf("sentinel was modified: %q %v", contents, err)
 	}
 }
 
