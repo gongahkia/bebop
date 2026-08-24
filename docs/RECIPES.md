@@ -102,8 +102,8 @@ bebop recipe upgrade echo --config bebop.toml --to 1.1.0
 Bebop first validates the provenance self-fingerprint, checks that the source
 contains only its expected generated files and still matches the recorded
 Compose hash, re-validates retained typed parameter values against the next
-version, and requires identical logical persistent-resource and secret-file
-contracts. It stages and atomically replaces the local generated source only
+newer version, and requires identical service state/verification, logical
+persistent-resource, and secret-file contracts. It stages and atomically replaces the local generated source only
 after those checks. It does not edit the target or silently rewrite the service
 declaration. A dry run performs the same readiness checks.
 

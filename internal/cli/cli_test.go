@@ -103,7 +103,7 @@ func TestRecipeCommandsMaterializeAndUpgradeWithoutTargetAccess(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := runner.Run([]string{"recipe", "init", "whoami", "--service", "echo", "--param", "port=8181", "--config", configPath, "--json"}); code != 0 {
+	if code := runner.Run([]string{"recipe", "init", "whoami", "--version", "1.0.0", "--service", "echo", "--param", "port=8181", "--config", configPath, "--json"}); code != 0 {
 		t.Fatalf("recipe init failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "services", "echo", "compose.yaml")); err != nil {

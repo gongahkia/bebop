@@ -174,6 +174,9 @@ func ValidateUpgrade(configPath string, current config.Config, source string, pr
 	if err := CheckDrift(source, previous); err != nil {
 		return err
 	}
+	if compareVersion(next.Recipe.Version, previous.RecipeVersion) <= 0 {
+		return fmt.Errorf("recipe upgrade version %s must be newer than %s", next.Recipe.Version, previous.RecipeVersion)
+	}
 	service, found := configuredService(current, next.Source)
 	if !found {
 		return fmt.Errorf("recipe provenance source is not declared by the configuration")
@@ -235,7 +238,7 @@ func configuredService(current config.Config, source string) (config.Service, bo
 }
 
 func sameServiceContract(current, next config.Service) bool {
-	if current.Name != next.Name || current.Source != next.Source || current.Type != next.Type || current.SecretEnvFile != next.SecretEnvFile || len(current.Data) != len(next.Data) {
+	if current.Name != next.Name || current.Source != next.Source || current.Type != next.Type || current.State != next.State || current.HealthTimeout != next.HealthTimeout || current.SecretEnvFile != next.SecretEnvFile || current.Backup != next.Backup || len(current.Data) != len(next.Data) {
 		return false
 	}
 	for index := range current.Data {

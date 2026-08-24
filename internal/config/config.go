@@ -61,7 +61,7 @@ type Backup struct {
 }
 
 // Service is one user-defined workload resource. M3 supports only the built-in
-// Compose provider; a service is intentionally not an application recipe.
+// Compose provider; M5 recipes materialize into this same generic model.
 type Service struct {
 	Name          string         `toml:"-" json:"name"`
 	Type          string         `toml:"type" json:"type"`

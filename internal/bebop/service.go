@@ -60,14 +60,21 @@ func (s *Service) Plan(ctx context.Context, t target.Target, cfg config.Config) 
 	if err != nil {
 		return facts.HostFacts{}, nil, plan.Plan{}, err
 	}
-	incompatible, err := recipes.Incompatible(cfg, host.Architecture)
-	if err != nil {
+	if err := recipeArchitectureError(cfg, host.Architecture); err != nil {
 		return facts.HostFacts{}, nil, plan.Plan{}, err
-	}
-	if len(incompatible) > 0 {
-		entry := incompatible[0]
-		return facts.HostFacts{}, nil, plan.Plan{}, errs.New(errs.PlanBlocked, "recipe "+entry.Recipe.ID+" for service "+entry.Service.Name+" does not support target architecture "+host.Architecture+" (supported: "+strings.Join(entry.Recipe.Architectures, ", ")+")", nil)
 	}
 	result, err := s.Planner.Build(host, cfg)
 	return host, tr, result, err
+}
+
+func recipeArchitectureError(cfg config.Config, architecture string) error {
+	incompatible, err := recipes.Incompatible(cfg, architecture)
+	if err != nil {
+		return err
+	}
+	if len(incompatible) > 0 {
+		entry := incompatible[0]
+		return errs.New(errs.PlanBlocked, "recipe "+entry.Recipe.ID+" for service "+entry.Service.Name+" does not support target architecture "+architecture+" (supported: "+strings.Join(entry.Recipe.Architectures, ", ")+")", nil)
+	}
+	return nil
 }

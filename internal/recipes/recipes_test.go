@@ -50,6 +50,11 @@ func TestBuiltinCorpusIsStrictAndDeterministic(t *testing.T) {
 	if !strings.Contains(string(one.Compose), "8181:80") || !strings.Contains(string(one.Compose), "Generated from Bebop recipe whoami@1.0.0") {
 		t.Fatalf("typed port was not rendered into ordinary Compose source: %s", one.Compose)
 	}
+	first.Parameters[0].Type = "boolean"
+	fresh, err := catalog.Find("whoami", "1.0.0")
+	if err != nil || fresh.Parameters[0].Type != "port" {
+		t.Fatalf("recipe lookup exposed mutable cached metadata: %#v %v", fresh.Parameters, err)
+	}
 }
 
 func TestCorpusRejectsUnknownFieldsAndUnpinnedImages(t *testing.T) {
@@ -149,6 +154,9 @@ func TestInitializeUpgradeAndEjectionBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := ValidateUpgrade(configPath, current, source, provenance, initial); err == nil || !strings.Contains(err.Error(), "must be newer") {
+		t.Fatalf("same-version recipe rewrite was accepted: %v", err)
+	}
 	v2, err := catalog.Find("whoami", "1.1.0")
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +222,11 @@ func TestUpgradeRejectsIncompatibleStoredParametersAndPersistentData(t *testing.
 	changed.Data[0].Name = "database-data"
 	if sameServiceContract(current, changed) {
 		t.Fatal("persistent logical-resource identity change was considered compatible")
+	}
+	changed = current
+	changed.HealthTimeout = "3m"
+	if sameServiceContract(current, changed) {
+		t.Fatal("service verification behavior change was considered compatible")
 	}
 }
 
