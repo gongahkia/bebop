@@ -73,9 +73,18 @@ func TestServiceSecretMarkerParticipatesOnlyInConvergenceFingerprint(t *testing.
 
 func TestStorageThresholdPolicyParticipatesWithoutFreeSpaceChurn(t *testing.T) {
 	host := HostFacts{Storage: Storage{Available: true, Mounts: []StorageMount{{Target: "/mnt/bulk", UUID: "11111111", AvailableBytes: 100}}, Policy: []StoragePolicy{{Name: "bulk", State: "ready"}}}}
-	first, err := host.ConvergenceFingerprint(); if err != nil { t.Fatal(err) }
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	host.Storage.Mounts[0].AvailableBytes = 99
-	second, err := host.ConvergenceFingerprint(); if err != nil || first != second { t.Fatalf("minor free-space telemetry changed fingerprint: %v", err) }
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("minor free-space telemetry changed fingerprint: %v", err)
+	}
 	host.Storage.Policy[0].State = "free-space-low"
-	third, err := host.ConvergenceFingerprint(); if err != nil || first == third { t.Fatalf("threshold classification did not change fingerprint: %v", err) }
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || first == third {
+		t.Fatalf("threshold classification did not change fingerprint: %v", err)
+	}
 }
