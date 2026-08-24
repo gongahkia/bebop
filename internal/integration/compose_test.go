@@ -22,6 +22,7 @@ import (
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/planner"
+	"github.com/bebop-home/bebop/internal/recipes"
 	"github.com/bebop-home/bebop/internal/services"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -195,6 +196,127 @@ func TestBackupRestoreMigrationAgainstDisposableDind(t *testing.T) {
 	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M4_PORTABLE_STATE"))
 	runServiceChanges(t, provider, destination, destinationConfig, buildPlan(t, planner.New(provider), destinationHost, destinationConfig))
 	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M4_PORTABLE_STATE"))
+}
+
+// TestRecipeMaterializeApplyAndNoopAgainstDisposableDind proves M5 stops at
+// ordinary controller-side source/config materialization. The unchanged M3
+// Compose provider performs every target mutation and re-plans to no-op.
+func TestRecipeMaterializeApplyAndNoopAgainstDisposableDind(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	target := startDind(t)
+	root := t.TempDir()
+	cfg := materializeRecipeFixture(t, root, "recipe-home", "whoami", "echo", nil)
+	provider := modules.Compose{PollInterval: 50 * time.Millisecond}
+	deployment, err := services.ResolveOne(cfg, "echo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := dindHost(cfg, facts.Service{Name: "echo", Project: deployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
+	first := buildPlan(t, planner.New(provider), host, cfg)
+	if ids(first) != "service.echo.deploy,service.echo.start" {
+		t.Fatalf("unexpected recipe materialization plan: %#v", first.Changes)
+	}
+	runServiceChanges(t, provider, target, cfg, first)
+	assertExec(t, target, "docker --context default ps --quiet --filter label=com.docker.compose.project="+transport.ShellQuote(deployment.Project)+" --filter status=running | grep -q .")
+	host.Services[0] = facts.Service{Name: "echo", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: deployment.SourceDigest, Runtime: "running", Health: "no-healthcheck"}
+	second := buildPlan(t, planner.New(provider), host, cfg)
+	if len(second.Changes) != 0 {
+		t.Fatalf("materialized recipe did not converge through ordinary M3 planning: %#v", second.Changes)
+	}
+}
+
+// TestRecipeStatefulBackupRestoreAgainstDisposableDind proves a first-party
+// stateful recipe's ordinary M4 resource declaration survives migration. No
+// recipe-specific backup/restore code is involved.
+func TestRecipeStatefulBackupRestoreAgainstDisposableDind(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	source, destination := startDind(t), startDind(t)
+	sourceRoot, destinationRoot := t.TempDir(), t.TempDir()
+	sourceConfig := materializeRecipeFixture(t, sourceRoot, "recipe-source", "uptime-kuma", "monitor", nil)
+	destinationConfig := materializeRecipeFixture(t, destinationRoot, "recipe-destination", "uptime-kuma", "monitor", nil)
+	sourceConfig.Backup.Destination = filepath.Join(t.TempDir(), "backups")
+	provider := modules.Compose{PollInterval: 50 * time.Millisecond}
+	sourceDeployment, err := services.ResolveOne(sourceConfig, "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationDeployment, err := services.ResolveOne(destinationConfig, "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceDeployment.Data[0].RuntimeVolume == destinationDeployment.Data[0].RuntimeVolume {
+		t.Fatal("recipe migration fixture did not create distinct runtime volume names")
+	}
+	sourceHost := dindHost(sourceConfig, facts.Service{Name: "monitor", Project: sourceDeployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
+	runServiceChanges(t, provider, source, sourceConfig, buildPlan(t, planner.New(provider), sourceHost, sourceConfig))
+	assertExec(t, source, dockerVolumeWriteScript(sourceDeployment.Data[0].RuntimeVolume, "BEBOP_M5_RECIPE_PORTABLE_STATE"))
+	sourceHost.MachineID = "m5-source"
+	sourceHost.Services[0] = facts.Service{Name: "monitor", Project: sourceDeployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: sourceDeployment.SourceDigest, Runtime: "running", Health: "no-healthcheck"}
+	repository, err := backup.Open(sourceConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(repository.Root(), func(filename string, info os.FileInfo, err error) error {
+			if err == nil {
+				_ = os.Chmod(filename, 0o700)
+			}
+			return nil
+		})
+	})
+	snapshot, err := backup.Create(context.Background(), repository, backup.CreateRequest{HostAlias: "source", Target: "recipe-source", Host: sourceHost, Config: sourceConfig, Service: "monitor", Transport: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationHost := dindHost(destinationConfig, facts.Service{Name: "monitor", Project: destinationDeployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
+	destinationHost.MachineID = "m5-destination"
+	restoreRequest := backup.RestoreRequest{SnapshotID: snapshot.Snapshot.SnapshotID, HostAlias: "destination", Target: "recipe-destination", Config: destinationConfig, Host: destinationHost, Service: "monitor", Transport: destination}
+	restorePlan, err := backup.BuildRestorePlan(context.Background(), repository, restoreRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backup.ApplyRestore(context.Background(), repository, restorePlan, restoreRequest); err != nil {
+		t.Fatal(err)
+	}
+	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M5_RECIPE_PORTABLE_STATE"))
+	runServiceChanges(t, provider, destination, destinationConfig, buildPlan(t, planner.New(provider), destinationHost, destinationConfig))
+	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M5_RECIPE_PORTABLE_STATE"))
+}
+
+func materializeRecipeFixture(t *testing.T, root, server, recipeID, serviceName string, parameters []string) config.Config {
+	t.Helper()
+	configPath := filepath.Join(root, "bebop.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\n[server]\nname = \""+server+"\"\n[storage]\ndata_root = \"/work/bebop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := recipes.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipe, err := catalog.Find(recipeID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialization, err := recipe.Materialize(recipes.Request{Service: serviceName, Source: "services/" + serviceName, Parameters: parameters})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := recipes.Initialize(configPath, cfg, materialization); err != nil {
+		t.Fatal(err)
+	}
+	result, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func startDind(t *testing.T) *dockerExecTransport {

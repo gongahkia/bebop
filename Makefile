@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration format check run cross
 
 build:
 	@mkdir -p bin
@@ -38,6 +38,13 @@ test-backup-integration test-migration-integration:
 		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestBackupRestoreMigrationAgainstDisposableDind$$' ./internal/integration; \
 	else \
 		echo "Docker daemon unavailable; skipping backup/migration integration tests."; \
+	fi
+
+test-recipe-integration:
+	@if docker info >/dev/null 2>&1; then \
+		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestRecipe(MaterializeApplyAndNoop|StatefulBackupRestore)AgainstDisposableDind$$' ./internal/integration; \
+	else \
+		echo "Docker daemon unavailable; skipping recipe integration tests."; \
 	fi
 
 format:

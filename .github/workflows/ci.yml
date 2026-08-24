@@ -45,3 +45,5 @@ jobs:
         run: make test-compose-integration
       - name: Disposable backup and migration integration
         run: make test-backup-integration
+      - name: Disposable recipe integration
+        run: make test-recipe-integration
