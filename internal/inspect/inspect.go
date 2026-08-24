@@ -422,7 +422,7 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 	var collect func(rawMount)
 	collect = func(raw rawMount) {
 		if raw.Target != "" {
-			mount := facts.StorageMount{Target: raw.Target, Source: raw.Source, Filesystem: raw.FSType, SizeBytes: raw.Size, AvailableBytes: raw.Avail, ReadOnly: mountReadOnly(raw.Options)}
+			mount := facts.StorageMount{Target: raw.Target, Source: raw.Source, Filesystem: raw.FSType, Options: mountOptions(raw.Options), SizeBytes: raw.Size, AvailableBytes: raw.Avail, ReadOnly: mountReadOnly(raw.Options)}
 			if block, ok := byPath[raw.Source]; ok {
 				mount.UUID = block.UUID
 				if mount.Filesystem == "" {
@@ -454,6 +454,18 @@ func mountReadOnly(options string) bool {
 		}
 	}
 	return false
+}
+
+func mountOptions(options string) []string {
+	result := make([]string, 0)
+	for _, option := range strings.Split(options, ",") {
+		option = strings.TrimSpace(option)
+		if option != "" {
+			result = append(result, option)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) facts.Directory {

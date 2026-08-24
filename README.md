@@ -64,8 +64,9 @@ path = "media"
 ```
 
 Use `bebop storage inspect pi` to inspect normalized topology, `storage list
-pi` to assess declarations, and `storage adopt bulk pi --mount /mnt/bulk
---filesystem-uuid UUID` to add verified local config metadata. Bebop never
+pi` to assess declarations, and `storage adopt bulk pi --mount /mnt/bulk`
+to record the UUID/type observed at that mount as verified local config
+metadata. `--filesystem-uuid` can assert an expected identity. Bebop never
 formats, partitions, auto-selects disks, changes `/var/lib/docker`, or moves
 live application data.
 

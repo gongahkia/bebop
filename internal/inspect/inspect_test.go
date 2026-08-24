@@ -26,7 +26,7 @@ func TestInspectStorageNormalizesDevicesMountsAndFallback(t *testing.T) {
 	if !storage.Available || len(storage.Devices) != 3 || len(storage.Mounts) != 2 {
 		t.Fatalf("unexpected normalized storage: %#v", storage)
 	}
-	if storage.Mounts[1].UUID != "11111111-2222-3333-4444-555555555555" || storage.Mounts[1].AvailableBytes != 600 {
+	if storage.Mounts[1].UUID != "11111111-2222-3333-4444-555555555555" || storage.Mounts[1].AvailableBytes != 600 || strings.Join(storage.Mounts[1].Options, ",") != "noatime,rw" {
 		t.Fatalf("mount identity/capacity was not joined: %#v", storage.Mounts[1])
 	}
 	tr.findmnt = ""

@@ -90,6 +90,28 @@ func TestInitWritesLocalStarterWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
+func TestStorageAdoptRecordsObservedMountedFilesystemWithoutTargetMutation(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bebop.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &storageAdoptTransport{}
+	service := bebop.NewService()
+	service.TransportFactory = func(target.Target) (transport.Transport, error) { return fake, nil }
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"storage", "adopt", "bulk", "local", "--config", configPath, "--mount", "/mnt/bulk"}); code != 0 {
+		t.Fatalf("storage adopt failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "[storage.resources.bulk]") || !strings.Contains(string(contents), `filesystem_uuid = "11111111-2222-3333-4444-555555555555"`) || fake.privileged {
+		t.Fatalf("adoption did not safely record observed storage: contents=%s privileged=%t", contents, fake.privileged)
+	}
+}
+
 func TestRecipeCommandsMaterializeAndUpgradeWithoutTargetAccess(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "bebop.toml")
@@ -288,6 +310,18 @@ func TestHumanPlanRenderingUsesShortFingerprint(t *testing.T) {
 }
 
 type cliFakeTransport struct{ privileged bool }
+
+type storageAdoptTransport struct{ cliFakeTransport }
+
+func (f *storageAdoptTransport) Run(ctx context.Context, request transport.Request) (transport.Result, error) {
+	if strings.Contains(request.Script, "lsblk --json") {
+		return transport.Result{Stdout: `{"blockdevices":[{"name":"vdb","path":"/dev/vdb","type":"disk","size":8388608,"children":[{"name":"vdb1","path":"/dev/vdb1","type":"part","size":8388608,"fstype":"ext4","uuid":"11111111-2222-3333-4444-555555555555","mountpoints":["/mnt/bulk"]}]}]}`}, nil
+	}
+	if strings.Contains(request.Script, "findmnt --json") {
+		return transport.Result{Stdout: `{"filesystems":[{"target":"/","source":"/dev/root","fstype":"ext4","options":"rw","size":8388608,"avail":4194304},{"target":"/mnt/bulk","source":"/dev/vdb1","fstype":"ext4","options":"rw","size":8388608,"avail":4194304}]}`}, nil
+	}
+	return f.cliFakeTransport.Run(ctx, request)
+}
 
 func (f *cliFakeTransport) Description() string                              { return "fake" }
 func (f *cliFakeTransport) FileExists(context.Context, string) (bool, error) { return false, nil }

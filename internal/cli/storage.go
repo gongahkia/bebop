@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/bebop-home/bebop/internal/config"
@@ -93,7 +94,7 @@ func (r *Runner) storageShow(arguments []string) error {
 	if jsonOutput {
 		return writeJSON(r.Out, assessment)
 	}
-	fmt.Fprintf(r.Out, "Storage     %s\nMount       %s\nExpected UUID %s\nObserved UUID %s\nFilesystem  %s\nDevice       %s\nCapacity     %d bytes\nFree         %d bytes\nManaged mount %t\nState       %s\nDetail      %s\n", resource.Name, resource.Mount, resource.FilesystemUUID, assessment.Mount.UUID, assessment.Mount.Filesystem, assessment.Mount.Source, assessment.Mount.SizeBytes, assessment.Mount.AvailableBytes, resource.ManagedMount, assessment.State, assessment.Detail)
+	fmt.Fprintf(r.Out, "Storage     %s\nMount       %s\nExpected UUID %s\nObserved UUID %s\nFilesystem  %s\nDevice       %s\nOptions     %s\nCapacity     %d bytes\nFree         %d bytes\nManaged mount %t\nState       %s\nDetail      %s\n", resource.Name, resource.Mount, resource.FilesystemUUID, assessment.Mount.UUID, assessment.Mount.Filesystem, assessment.Mount.Source, strings.Join(assessment.Mount.Options, ","), assessment.Mount.SizeBytes, assessment.Mount.AvailableBytes, resource.ManagedMount, assessment.State, assessment.Detail)
 	return nil
 }
 
@@ -138,8 +139,8 @@ func (r *Runner) storageAdopt(arguments []string) error {
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
 	mount := fs.String("mount", "", "existing target mount point")
-	uuid := fs.String("filesystem-uuid", "", "filesystem UUID observed on the target")
-	filesystemType := fs.String("filesystem-type", "", "optional filesystem type")
+	uuid := fs.String("filesystem-uuid", "", "optional expected filesystem UUID; defaults to the observed mount UUID")
+	filesystemType := fs.String("filesystem-type", "", "optional expected filesystem type; defaults to the observed mount type")
 	managed := fs.Bool("managed-mount", false, "authorize Bebop to persist/mount this existing filesystem")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
@@ -154,11 +155,8 @@ func (r *Runner) storageAdopt(arguments []string) error {
 	if fs.NArg() == 2 {
 		reference = fs.Arg(1)
 	}
-	resource := config.StorageResource{Name: name, Mount: *mount, FilesystemUUID: *uuid, FilesystemType: *filesystemType, ManagedMount: *managed}
-	probe := config.Defaults()
-	probe.Storage.Resources = []config.StorageResource{resource}
-	if err := config.Validate(probe); err != nil {
-		return err
+	if err := config.ValidateStorageMount(*mount); err != nil {
+		return fmt.Errorf("invalid storage mount: %w", err)
 	}
 	resolution, err := resolve.Resolve(reference, common.target, common.inventory)
 	if err != nil {
@@ -175,6 +173,31 @@ func (r *Runner) storageAdopt(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	var observed facts.StorageMount
+	for _, candidate := range host.Storage.Mounts {
+		if candidate.Target == *mount {
+			observed = candidate
+			break
+		}
+	}
+	if observed.Target == "" {
+		return fmt.Errorf("storage adoption refused: no filesystem is mounted at %s", *mount)
+	}
+	if observed.UUID == "" || observed.Filesystem == "" {
+		return fmt.Errorf("storage adoption refused: target did not report a filesystem UUID and type for %s", *mount)
+	}
+	if *uuid != "" && *uuid != observed.UUID {
+		return fmt.Errorf("storage adoption refused: expected UUID %s does not match observed UUID %s", *uuid, observed.UUID)
+	}
+	if *filesystemType != "" && *filesystemType != observed.Filesystem {
+		return fmt.Errorf("storage adoption refused: expected filesystem type %s does not match observed type %s", *filesystemType, observed.Filesystem)
+	}
+	resource := config.StorageResource{Name: name, Mount: *mount, FilesystemUUID: observed.UUID, FilesystemType: observed.Filesystem, ManagedMount: *managed}
+	probe := config.Defaults()
+	probe.Storage.Resources = []config.StorageResource{resource}
+	if err := config.Validate(probe); err != nil {
+		return err
+	}
 	assessment := storagepolicy.Assess(resource, host.Storage)
 	if assessment.State != storagepolicy.Ready {
 		return fmt.Errorf("storage adoption refused: observed target state is %s: %s", assessment.State, assessment.Detail)
@@ -182,6 +205,6 @@ func (r *Runner) storageAdopt(arguments []string) error {
 	if err := config.AdoptStorageResource(path, resource); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.Out, "Adopted storage %s: UUID %s mounted at %s\n", resource.Name, resource.FilesystemUUID, resource.Mount)
+	fmt.Fprintf(r.Out, "Adopted storage %s: UUID %s (%s), %d bytes mounted at %s\n", resource.Name, resource.FilesystemUUID, resource.FilesystemType, observed.SizeBytes, resource.Mount)
 	return nil
 }

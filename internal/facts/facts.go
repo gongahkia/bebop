@@ -169,13 +169,14 @@ type BlockDevice struct {
 }
 
 type StorageMount struct {
-	Target         string `json:"target"`
-	Source         string `json:"source"`
-	Filesystem     string `json:"filesystem,omitempty"`
-	UUID           string `json:"uuid,omitempty"`
-	SizeBytes      int64  `json:"size_bytes,omitempty"`
-	AvailableBytes int64  `json:"available_bytes,omitempty"`
-	ReadOnly       bool   `json:"read_only,omitempty"`
+	Target         string   `json:"target"`
+	Source         string   `json:"source"`
+	Filesystem     string   `json:"filesystem,omitempty"`
+	UUID           string   `json:"uuid,omitempty"`
+	Options        []string `json:"options,omitempty"`
+	SizeBytes      int64    `json:"size_bytes,omitempty"`
+	AvailableBytes int64    `json:"available_bytes,omitempty"`
+	ReadOnly       bool     `json:"read_only,omitempty"`
 }
 
 type Directory struct {

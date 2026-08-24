@@ -35,8 +35,9 @@ placeable in M6: Docker's data root is out of scope.
 `bebop storage inspect HOST` renders normalized `lsblk --json` and
 `findmnt --json` facts. `storage list`, `storage show NAME`, and `storage
 doctor` render declared resource assessment. `storage adopt NAME HOST --mount
-PATH --filesystem-uuid UUID` confirms an existing ready mount and atomically
-appends only local config metadata; adoption has no target-side mutation.
+PATH` confirms an existing ready mount, records its observed UUID/type, and
+atomically appends only local config metadata; `--filesystem-uuid` may assert
+an expected identity. Adoption has no target-side mutation.
 
 An assessment distinguishes ready, missing, root-spill (the desired directory
 is really served by `/`), wrong UUID, wrong filesystem type, read-only,
