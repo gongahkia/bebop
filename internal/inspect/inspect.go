@@ -65,6 +65,7 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
+	f.Storage = inspectStorage(ctx, tr)
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
 }
@@ -317,6 +318,105 @@ func inspectUnconfiguredStorage(ctx context.Context, tr transport.Transport) []f
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+// inspectStorage consumes stable machine-readable util-linux output. It never
+// probes decorative tables or follows a controller-provided device path. A
+// missing lsblk/findmnt capability is explicit state; storage placement then
+// blocks rather than guessing from a partial topology.
+func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
+	type rawDevice struct {
+		Name        string      `json:"name"`
+		Path        string      `json:"path"`
+		Type        string      `json:"type"`
+		Size        int64       `json:"size"`
+		FSType      string      `json:"fstype"`
+		UUID        string      `json:"uuid"`
+		ReadOnly    bool        `json:"ro"`
+		Removable   bool        `json:"rm"`
+		Transport   string      `json:"tran"`
+		Mountpoints []*string   `json:"mountpoints"`
+		Children    []rawDevice `json:"children"`
+	}
+	var blocks struct {
+		Devices []rawDevice `json:"blockdevices"`
+	}
+	blockOutput := mustProbe(ctx, tr, "lsblk --json --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,UUID,RO,RM,TRAN,MOUNTPOINTS 2>/dev/null || true")
+	if json.Unmarshal([]byte(blockOutput), &blocks) != nil {
+		return facts.Storage{}
+	}
+	devices := make([]facts.BlockDevice, 0)
+	byPath := map[string]facts.BlockDevice{}
+	var flatten func(rawDevice)
+	flatten = func(raw rawDevice) {
+		device := facts.BlockDevice{Path: raw.Path, Name: raw.Name, Type: raw.Type, SizeBytes: raw.Size, Filesystem: raw.FSType, UUID: raw.UUID, ReadOnly: raw.ReadOnly, Removable: raw.Removable, Transport: raw.Transport}
+		for _, mount := range raw.Mountpoints {
+			if mount != nil && *mount != "" {
+				device.Mounts = append(device.Mounts, *mount)
+			}
+		}
+		sort.Strings(device.Mounts)
+		devices = append(devices, device)
+		if device.Path != "" {
+			byPath[device.Path] = device
+		}
+		for _, child := range raw.Children {
+			flatten(child)
+		}
+	}
+	for _, device := range blocks.Devices {
+		flatten(device)
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].Path < devices[j].Path })
+
+	type rawMount struct {
+		Target   string     `json:"target"`
+		Source   string     `json:"source"`
+		FSType   string     `json:"fstype"`
+		Options  string     `json:"options"`
+		Size     int64      `json:"size"`
+		Avail    int64      `json:"avail"`
+		Children []rawMount `json:"children"`
+	}
+	var found struct {
+		Filesystems []rawMount `json:"filesystems"`
+	}
+	mountOutput := mustProbe(ctx, tr, "findmnt --json --bytes --output TARGET,SOURCE,FSTYPE,OPTIONS,SIZE,AVAIL 2>/dev/null || true")
+	if json.Unmarshal([]byte(mountOutput), &found) != nil {
+		return facts.Storage{Devices: devices}
+	}
+	mounts := make([]facts.StorageMount, 0)
+	var collect func(rawMount)
+	collect = func(raw rawMount) {
+		if raw.Target != "" {
+			mount := facts.StorageMount{Target: raw.Target, Source: raw.Source, Filesystem: raw.FSType, SizeBytes: raw.Size, AvailableBytes: raw.Avail, ReadOnly: mountReadOnly(raw.Options)}
+			if block, ok := byPath[raw.Source]; ok {
+				mount.UUID = block.UUID
+				if mount.Filesystem == "" {
+					mount.Filesystem = block.Filesystem
+				}
+				mount.ReadOnly = mount.ReadOnly || block.ReadOnly
+			}
+			mounts = append(mounts, mount)
+		}
+		for _, child := range raw.Children {
+			collect(child)
+		}
+	}
+	for _, mount := range found.Filesystems {
+		collect(mount)
+	}
+	sort.Slice(mounts, func(i, j int) bool { return mounts[i].Target < mounts[j].Target })
+	return facts.Storage{Available: true, Devices: devices, Mounts: mounts}
+}
+
+func mountReadOnly(options string) bool {
+	for _, option := range strings.Split(options, ",") {
+		if strings.TrimSpace(option) == "ro" {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectDataRoot(ctx context.Context, tr transport.Transport, root string) facts.Directory {

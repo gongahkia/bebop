@@ -30,6 +30,7 @@ type HostFacts struct {
 	MemoryKiB           int64            `json:"memory_kib"`
 	RootFilesystem      Filesystem       `json:"root_filesystem"`
 	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
+	Storage             Storage          `json:"storage"`
 	DataRoot            Directory        `json:"data_root"`
 }
 
@@ -123,6 +124,39 @@ type StorageDevice struct {
 	Transport string `json:"transport,omitempty"`
 }
 
+// Storage is a normalized Linux storage topology. It is deliberately factual:
+// desired mount names and placement policy belong to config/storage, not to
+// inspection. Capacity values are shown to operators but only policy outcomes
+// participate in stale-plan protection.
+type Storage struct {
+	Available bool           `json:"available"`
+	Devices   []BlockDevice  `json:"devices,omitempty"`
+	Mounts    []StorageMount `json:"mounts,omitempty"`
+}
+
+type BlockDevice struct {
+	Path       string   `json:"path"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	SizeBytes  int64    `json:"size_bytes,omitempty"`
+	Filesystem string   `json:"filesystem,omitempty"`
+	UUID       string   `json:"uuid,omitempty"`
+	ReadOnly   bool     `json:"read_only,omitempty"`
+	Removable  bool     `json:"removable,omitempty"`
+	Transport  string   `json:"transport,omitempty"`
+	Mounts     []string `json:"mounts,omitempty"`
+}
+
+type StorageMount struct {
+	Target         string `json:"target"`
+	Source         string `json:"source"`
+	Filesystem     string `json:"filesystem,omitempty"`
+	UUID           string `json:"uuid,omitempty"`
+	SizeBytes      int64  `json:"size_bytes,omitempty"`
+	AvailableBytes int64  `json:"available_bytes,omitempty"`
+	ReadOnly       bool   `json:"read_only,omitempty"`
+}
+
 type Directory struct {
 	Path     string `json:"path"`
 	Exists   bool   `json:"exists"`
@@ -171,7 +205,24 @@ type ConvergenceSnapshot struct {
 	AutomaticUpdates    AutomaticUpdates  `json:"automatic_updates"`
 	Firewall            Firewall          `json:"firewall"`
 	UnconfiguredStorage []StorageDevice   `json:"unconfigured_storage,omitempty"`
+	Storage             StorageSnapshot   `json:"storage"`
 	DataRoot            Directory         `json:"data_root"`
+}
+
+// StorageSnapshot intentionally records only topology and mount state. Exact
+// free space is volatile; configured threshold outcomes are calculated by the
+// storage module and placed in plan actions/preconditions instead.
+type StorageSnapshot struct {
+	Available bool                 `json:"available"`
+	Mounts    []StorageMountStable `json:"mounts,omitempty"`
+}
+
+type StorageMountStable struct {
+	Target     string `json:"target"`
+	Source     string `json:"source"`
+	Filesystem string `json:"filesystem,omitempty"`
+	UUID       string `json:"uuid,omitempty"`
+	ReadOnly   bool   `json:"read_only,omitempty"`
 }
 
 // ServiceSnapshot adds the keyed secret fingerprint only to the internal
@@ -198,12 +249,17 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 		services = append(services, ServiceSnapshot{Name: service.Name, Project: service.Project, DesiredState: service.DesiredState, DeploymentPresent: service.DeploymentPresent, DeploymentUnsafe: service.DeploymentUnsafe, DeploymentDigest: service.DeploymentDigest, Runtime: service.Runtime, Health: service.Health, ContainerCount: service.ContainerCount, SecretFingerprint: service.SecretFingerprint})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
+	mounts := make([]StorageMountStable, 0, len(host.Storage.Mounts))
+	for _, mount := range host.Storage.Mounts {
+		mounts = append(mounts, StorageMountStable{Target: mount.Target, Source: mount.Source, Filesystem: mount.Filesystem, UUID: mount.UUID, ReadOnly: mount.ReadOnly})
+	}
+	sort.Slice(mounts, func(i, j int) bool { return mounts[i].Target < mounts[j].Target })
 	return ConvergenceSnapshot{
 		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
 		PackageManager: host.PackageManager, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, Firewall: host.Firewall,
-		UnconfiguredStorage: storage, DataRoot: host.DataRoot, Services: services,
+		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, Mounts: mounts}, DataRoot: host.DataRoot, Services: services,
 	}
 }
 
