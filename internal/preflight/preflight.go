@@ -15,6 +15,7 @@ import (
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/recipes"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -65,9 +66,25 @@ func Run(ctx context.Context, service *bebop.Service, current target.Target, cfg
 	}
 	result = FromFacts(current, host)
 	appendBackupChecks(&result, cfg)
+	appendStorageChecks(&result, cfg, host)
 	appendRecipeChecks(&result, cfg, host.Architecture)
 	result.Ready = !hasFailure(result.Checks)
 	return result
+}
+
+func appendStorageChecks(result *Result, cfg config.Config, host facts.HostFacts) {
+	for _, assessment := range storagepolicy.AssessAll(cfg.Storage, host.Storage) {
+		code := "storage." + assessment.Resource.Name
+		if assessment.State == storagepolicy.Ready {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: code, Message: "storage " + assessment.Resource.Name + " ready at " + assessment.Resource.Mount})
+			continue
+		}
+		status := Fail
+		if assessment.Resource.ManagedMount && (assessment.State == storagepolicy.Missing || assessment.State == storagepolicy.RootSpill) {
+			status = Warn
+		}
+		result.Checks = append(result.Checks, Check{Status: status, Code: code, Message: "storage " + assessment.Resource.Name + " is " + string(assessment.State) + ": " + assessment.Detail})
+	}
 }
 
 // FromFacts is deterministic and exists both for focused tests and callers

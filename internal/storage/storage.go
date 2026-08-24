@@ -128,6 +128,25 @@ func Placement(cfg config.Config, host facts.HostFacts, resource config.DataReso
 	return resolved, assessment, nil
 }
 
+// ValidateResolvedPlacement is the target-side half of Placement for callers
+// that already hold a services.PersistentResource. The resolved path must stay
+// below the configured mount; no caller may turn an arbitrary absolute path
+// into a storage-managed path by merely attaching a storage name.
+func ValidateResolvedPlacement(cfg config.Storage, host facts.HostFacts, name, resolvedPath string) (Assessment, error) {
+	resource, found := Find(cfg, name)
+	if !found {
+		return Assessment{}, fmt.Errorf("declared storage %q does not exist", name)
+	}
+	assessment := Assess(resource, host.Storage)
+	if assessment.State != Ready {
+		return assessment, fmt.Errorf("storage %s is %s: %s", resource.Name, assessment.State, assessment.Detail)
+	}
+	if resolvedPath == resource.Mount || !strings.HasPrefix(resolvedPath, resource.Mount+"/") || path.Clean(resolvedPath) != resolvedPath {
+		return assessment, fmt.Errorf("storage-relative path escapes its declared mount")
+	}
+	return assessment, nil
+}
+
 // ReadyPrecondition narrows target fact inspection to mutation races. It
 // checks the stable mount target/UUID/type and writeability, not volatile free
 // space. Threshold capacity is rechecked by callers that make allocations.

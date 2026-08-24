@@ -17,6 +17,7 @@ import (
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/services"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
@@ -92,6 +93,11 @@ func Create(ctx context.Context, repository Repository, request CreateRequest) (
 			return result, errs.New(errs.PlanBlocked, "cannot back up absent service "+deployment.Name, nil)
 		}
 		for _, resource := range deployment.Data {
+			if resource.Type == "path" && resource.Storage != "" {
+				if _, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, resource.Storage, resource.Path); err != nil {
+					return result, errs.New(errs.PlanBlocked, "backup resource "+deployment.Name+"/"+resource.Name+" storage placement is not ready", err)
+				}
+			}
 			if err := validateSourceResource(ctx, request.Transport, deployment, resource); err != nil {
 				return result, errs.New(errs.PlanBlocked, "backup resource "+deployment.Name+"/"+resource.Name+" is not ready", err)
 			}
@@ -272,6 +278,7 @@ func ServiceConfigurationDigest(deployment services.Deployment) (string, error) 
 	for index := range semantic.Data {
 		semantic.Data[index].RuntimeVolume = ""
 		semantic.Data[index].Path = "" // resource path is target-local, logical name/type is portable.
+		semantic.Data[index].Storage = ""
 	}
 	encoded, err := json.Marshal(semantic)
 	if err != nil {

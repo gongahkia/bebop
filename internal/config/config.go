@@ -531,6 +531,72 @@ func WithSourceDirectory(config Config, directory string) Config {
 	return config
 }
 
+// AdoptStorageResource appends one narrowly-scoped storage declaration while
+// preserving all user-authored TOML bytes outside that new table. Adoption is
+// controller-side inventory/configuration work only; it never contacts or
+// mutates a target. The caller is responsible for proving observed topology.
+func AdoptStorageResource(filename string, resource StorageResource) error {
+	cfg, err := LoadFile(filename)
+	if err != nil {
+		return err
+	}
+	probe := cfg.Storage
+	probe.Resources = append(probe.Resources, resource)
+	sort.Slice(probe.Resources, func(i, j int) bool { return probe.Resources[i].Name < probe.Resources[j].Name })
+	if err := validateStorageResources(probe); err != nil {
+		return errs.New(errs.ConfigInvalid, err.Error(), nil)
+	}
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		return errs.New(errs.ConfigInvalid, "read configuration for storage adoption", err)
+	}
+	// A decoded duplicate is rejected above. This extra exact-header check keeps
+	// an unusual duplicate TOML layout from being silently shadowed by append.
+	header := "[storage.resources." + resource.Name + "]"
+	if strings.Contains(string(contents), header) {
+		return errs.New(errs.ConfigInvalid, "storage resource "+resource.Name+" already exists", nil)
+	}
+	var addition strings.Builder
+	fmt.Fprintf(&addition, "\n%s\nmount = %q\nfilesystem_uuid = %q\n", header, resource.Mount, resource.FilesystemUUID)
+	if resource.FilesystemType != "" {
+		fmt.Fprintf(&addition, "filesystem_type = %q\n", resource.FilesystemType)
+	}
+	if resource.MinimumCapacityBytes > 0 {
+		fmt.Fprintf(&addition, "minimum_capacity_bytes = %d\n", resource.MinimumCapacityBytes)
+	}
+	if resource.MinimumFreeBytes > 0 {
+		fmt.Fprintf(&addition, "minimum_free_bytes = %d\n", resource.MinimumFreeBytes)
+	}
+	if resource.ManagedMount {
+		addition.WriteString("managed_mount = true\n")
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		return errs.New(errs.ConfigInvalid, "stat configuration for storage adoption", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(filename), ".bebop-config-*")
+	if err != nil {
+		return errs.New(errs.ConfigInvalid, "create temporary configuration", err)
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if _, err := temporary.Write(append(contents, []byte(addition.String())...)); err != nil {
+		_ = temporary.Close()
+		return errs.New(errs.ConfigInvalid, "write adopted storage configuration", err)
+	}
+	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
+		_ = temporary.Close()
+		return errs.New(errs.ConfigInvalid, "set adopted configuration permissions", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return errs.New(errs.ConfigInvalid, "close adopted configuration", err)
+	}
+	if err := os.Rename(temporaryName, filename); err != nil {
+		return errs.New(errs.ConfigInvalid, "atomically write adopted storage configuration", err)
+	}
+	return nil
+}
+
 func Starter() string {
 	config := Defaults()
 	// The fixed template is intentionally timestamp-free and reproducible.

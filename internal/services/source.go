@@ -78,6 +78,7 @@ type PersistentResource struct {
 	RuntimeVolume string `json:"runtime_volume,omitempty"`
 	External      bool   `json:"external,omitempty"`
 	Path          string `json:"path,omitempty"`
+	Storage       string `json:"storage,omitempty"`
 }
 
 type composeVolume struct {
@@ -156,7 +157,11 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	deployment := Deployment{Name: service.Name, Project: ProjectName(cfg.Server.Name, service.Name), State: service.State, BackupConsistency: service.Backup.Consistency}
 	if service.State == "absent" {
 		for _, resource := range service.Data {
-			deployment.Data = append(deployment.Data, PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resource.Path})
+			resolvedPath, err := config.ResolveDataPath(cfg.Storage, resource)
+			if err != nil && resource.Type == "path" {
+				return Deployment{}, err
+			}
+			deployment.Data = append(deployment.Data, PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resolvedPath, Storage: resource.Storage})
 		}
 		return deployment, nil
 	}
@@ -179,7 +184,7 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	deployment.SourceDirectory, deployment.Files, deployment.ComposeFile = source, files, composeFile
 	deployment.SourceDigest = sourceDigest
 	deployment.Ports = validation.Ports
-	deployment.Data, err = resolvePersistentResources(service.Data, validation.Volumes, validation.Paths)
+	deployment.Data, err = resolvePersistentResources(cfg.Storage, service.Data, validation.Volumes, validation.Paths)
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" persistent data is invalid", err)
 	}
@@ -617,10 +622,18 @@ func parseComposeVolumes(node *yaml.Node, project string, used map[string]bool) 
 
 var volumeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-func resolvePersistentResources(declared []config.DataResource, volumes map[string]composeVolume, paths map[string]bool) ([]PersistentResource, error) {
+func resolvePersistentResources(storage config.Storage, declared []config.DataResource, volumes map[string]composeVolume, paths map[string]bool) ([]PersistentResource, error) {
 	resources := make([]PersistentResource, 0, len(declared))
 	for _, resource := range declared {
-		resolved := PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resource.Path}
+		resolvedPath := resource.Path
+		if resource.Type == "path" {
+			var err error
+			resolvedPath, err = config.ResolveDataPath(storage, resource)
+			if err != nil {
+				return nil, err
+			}
+		}
+		resolved := PersistentResource{Name: resource.Name, Type: resource.Type, VolumeKey: resource.Volume, Path: resolvedPath, Storage: resource.Storage}
 		if resource.Type == "volume" {
 			volume, found := volumes[resource.Volume]
 			if !found {
@@ -630,8 +643,8 @@ func resolvePersistentResources(declared []config.DataResource, volumes map[stri
 				return nil, fmt.Errorf("declared volume key %q is not mounted by the Compose service", resource.Volume)
 			}
 			resolved.RuntimeVolume, resolved.External = volume.Runtime, volume.External
-		} else if !paths[resource.Path] {
-			return nil, fmt.Errorf("declared bind path %q is not mounted by the Compose service", resource.Path)
+		} else if !paths[resolvedPath] {
+			return nil, fmt.Errorf("declared bind path %q is not mounted by the Compose service", resolvedPath)
 		}
 		resources = append(resources, resolved)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/services"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
@@ -109,6 +110,11 @@ func BuildRestorePlan(ctx context.Context, repository Repository, request Restor
 			destination, found := persistentResource(selectedService.deployment, sourceResource.Name)
 			if !found || destination.Type != sourceResource.Type {
 				return RestorePlan{}, errs.New(errs.PlanBlocked, "destination service "+selectedService.deployment.Name+" does not declare compatible resource "+sourceResource.Name, nil)
+			}
+			if destination.Type == "path" && destination.Storage != "" {
+				if _, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, destination.Storage, destination.Path); err != nil {
+					return RestorePlan{}, errs.New(errs.PlanBlocked, "destination storage placement for "+selectedService.deployment.Name+"/"+destination.Name+" is not ready", err)
+				}
 			}
 			state, err := destinationState(ctx, request.Transport, selectedService.deployment, destination)
 			if err != nil {
@@ -419,6 +425,13 @@ func ApplyRestore(ctx context.Context, repository Repository, reviewed RestorePl
 	for _, selectedService := range selected {
 		fact := serviceFact(request.Host, selectedService.deployment.Name)
 		stopped := false
+		for _, resource := range selectedService.deployment.Data {
+			if resource.Type == "path" && resource.Storage != "" {
+				if _, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, resource.Storage, resource.Path); err != nil {
+					return result, errs.New(errs.PlanStale, "destination storage placement changed after restore review", err)
+				}
+			}
+		}
 		if serviceIsRunning(fact) {
 			if _, err := request.Transport.Run(ctx, transport.Request{Script: modules.ComposeCommand(request.Config.Storage.DataRoot, selectedService.deployment, "stop"), Privileged: true}); err != nil {
 				return result, fmt.Errorf("stop service %s for restore: %w", selectedService.deployment.Name, err)

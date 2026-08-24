@@ -12,6 +12,7 @@ import (
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/services"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
@@ -34,6 +35,11 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		current := serviceFact(host, deployment.Name)
 		dependencies := serviceDependencies(host, deployment.State)
 		blocked := serviceBlocked(host, current, deployment.State)
+		storageDependencies, storagePreconditions, storageBlocked := serviceStoragePolicy(host, cfg, deployment)
+		dependencies = append(dependencies, storageDependencies...)
+		if blocked == "" {
+			blocked = storageBlocked
+		}
 		requirements := []string{"docker.engine", "docker.compose"}
 		if deployment.State == "absent" {
 			if current.DeploymentPresent || current.DeploymentUnsafe || current.Runtime != "missing" {
@@ -66,7 +72,7 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 			}
 			change := serviceChange(deployment, kind, summary, reason, serviceCurrent(current), "source sha256:"+deployment.SourceDigest, risk, dependencies, requirements)
 			change.Action = plan.Action{Kind: "service.deploy", Resource: deployment.Name, SourceDigest: deployment.SourceDigest, InputFingerprint: deployment.InputFingerprint, SecretFingerprint: deployment.SecretFingerprint}
-			change.Preconditions = deploymentPreconditions(cfg.Storage.DataRoot, deployment, current)
+			change.Preconditions = append(deploymentPreconditions(cfg.Storage.DataRoot, deployment, current), storagePreconditions...)
 			change.Blocked = blocked
 			if current.DeploymentUnsafe {
 				change.Blocked = "the managed deployment path is not a Bebop current-release symlink; Bebop will not replace an unknown path"
@@ -85,6 +91,7 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 				}
 				change := serviceChange(deployment, "start", "start and reconcile Compose project", "desired state is running", current.Runtime, "running (healthy when a healthcheck exists)", risk, appendDependency(dependencies, deployID), requirements)
 				change.Action = plan.Action{Kind: "service.start", Resource: deployment.Name, SourceDigest: deployment.SourceDigest, InputFingerprint: deployment.InputFingerprint, SecretFingerprint: deployment.SecretFingerprint}
+				change.Preconditions = append([]plan.Precondition(nil), storagePreconditions...)
 				change.Blocked = blocked
 				rootBlocked(&change, host.SudoAvailable)
 				changes = append(changes, change)
@@ -100,6 +107,41 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		}
 	}
 	return changes, nil, nil
+}
+
+// serviceStoragePolicy makes a declared storage-relative path an operational
+// dependency, not just a controller-side string. Missing managed mounts can be
+// prepared in the same ordered plan; all other ambiguous topology blocks
+// deployment/start before Docker can create a bind path on the root filesystem.
+func serviceStoragePolicy(host facts.HostFacts, cfg config.Config, deployment services.Deployment) ([]string, []plan.Precondition, string) {
+	dependencies := []string{}
+	preconditions := []plan.Precondition{}
+	seen := map[string]bool{}
+	for _, data := range deployment.Data {
+		if data.Type != "path" || data.Storage == "" || seen[data.Storage] {
+			continue
+		}
+		seen[data.Storage] = true
+		resource, found := storagepolicy.Find(cfg.Storage, data.Storage)
+		if !found {
+			return dependencies, preconditions, "declared storage " + data.Storage + " is unavailable in the current configuration"
+		}
+		assessment := storagepolicy.Assess(resource, host.Storage)
+		switch assessment.State {
+		case storagepolicy.Ready:
+			preconditions = append(preconditions, plan.Precondition{ID: "service." + deployment.Name + ".storage." + resource.Name, Description: "declared storage remains mounted with the expected filesystem identity", Script: storagepolicy.ReadyPrecondition(resource)})
+		case storagepolicy.Missing, storagepolicy.RootSpill:
+			if resource.ManagedMount {
+				dependencies = append(dependencies, "storage."+resource.Name+".mount")
+				preconditions = append(preconditions, plan.Precondition{ID: "service." + deployment.Name + ".storage." + resource.Name, Description: "declared storage was mounted by the reviewed storage actions", Script: storagepolicy.ReadyPrecondition(resource)})
+			} else {
+				return dependencies, preconditions, "storage " + resource.Name + " is " + string(assessment.State) + "; mount the declared filesystem manually or enable managed_mount after review"
+			}
+		default:
+			return dependencies, preconditions, "storage " + resource.Name + " is " + string(assessment.State) + "; Bebop will not deploy persistent data there"
+		}
+	}
+	return dependencies, preconditions, ""
 }
 
 func serviceChange(deployment services.Deployment, suffix, summary, reason, current, desired string, risk plan.Risk, dependencies, requirements []string) plan.Change {
@@ -209,7 +251,7 @@ func (Compose) Apply(ctx context.Context, tr transport.Transport, cfg config.Con
 		if change.Action.SourceDigest != deployment.SourceDigest || change.Action.SecretFingerprint != deployment.SecretFingerprint {
 			return fmt.Errorf("service deployment input does not match reviewed action")
 		}
-		_, err := tr.Run(ctx, transport.Request{Script: deployScript(cfg.Storage.DataRoot, deployment), Stdin: deployment.Payload, Privileged: true})
+		_, err := tr.Run(ctx, transport.Request{Script: prepareStoragePathsScript(cfg, deployment) + "\n" + deployScript(cfg.Storage.DataRoot, deployment), Stdin: deployment.Payload, Privileged: true})
 		return err
 	case "service.start":
 		_, err := tr.Run(ctx, transport.Request{Script: ComposeCommand(cfg.Storage.DataRoot, deployment, "up -d --remove-orphans"), Privileged: true})
@@ -223,6 +265,23 @@ func (Compose) Apply(ctx context.Context, tr transport.Transport, cfg config.Con
 	default:
 		return fmt.Errorf("services module refuses unexpected action %q", change.Action.Kind)
 	}
+}
+
+func prepareStoragePathsScript(cfg config.Config, deployment services.Deployment) string {
+	var script strings.Builder
+	for _, resource := range deployment.Data {
+		if resource.Type != "path" || resource.Storage == "" {
+			continue
+		}
+		storageResource, found := storagepolicy.Find(cfg.Storage, resource.Storage)
+		if !found {
+			continue
+		}
+		// Preconditions have already checked the mount identity. This creates only
+		// the declared child directory and refuses a symlink at that exact path.
+		fmt.Fprintf(&script, "%s\ntest ! -L %s\ninstall -d -m 0750 -o root -g root -- %s\n", storagepolicy.ReadyPrecondition(storageResource), transport.ShellQuote(resource.Path), transport.ShellQuote(resource.Path))
+	}
+	return script.String()
 }
 
 func (provider Compose) Verify(ctx context.Context, tr transport.Transport, cfg config.Config, change plan.Change) error {
