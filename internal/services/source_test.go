@@ -247,9 +247,13 @@ type = "volume"
 volume = "external-data"
 `)
 	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	deployment, err := ResolveOne(cfg, "hello")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(deployment.Data) != 2 || deployment.Data[0].RuntimeVolume != deployment.Project+"_data" || !deployment.Data[1].External || deployment.Data[1].RuntimeVolume != "shared_hello_data" {
 		t.Fatalf("logical volumes did not resolve safely: %#v", deployment.Data)
 	}
@@ -263,7 +267,9 @@ type = "volume"
 volume = "not-mounted"
 `)
 	cfg, err = config.LoadFile(filepath.Join(root, "bebop.toml"))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ResolveOne(cfg, "hello"); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("undeclared Compose volume was accepted: %v", err)
 	}
