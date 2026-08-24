@@ -1,6 +1,10 @@
 package facts
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestConvergenceFingerprintExcludesVolatileFactsAndIncludesPlannedState(t *testing.T) {
 	host := HostFacts{
@@ -47,5 +51,22 @@ func TestIdentityPrefersMachineIDAndFallsBackConservatively(t *testing.T) {
 	fallback := Identity{Hostname: "pi", OSID: "debian", OSVersion: "12"}
 	if !fallback.Matches(Identity{Hostname: "pi", OSID: "debian", OSVersion: "12"}) || fallback.Matches(Identity{Hostname: "pi", OSID: "ubuntu", OSVersion: "24.04"}) {
 		t.Fatal("fallback identity matching is not conservative")
+	}
+}
+
+func TestServiceSecretMarkerParticipatesOnlyInConvergenceFingerprint(t *testing.T) {
+	host := HostFacts{Services: []Service{{Name: "hello", Project: "bebop-hello", DesiredState: "running", DeploymentPresent: true, DeploymentDigest: "source", Runtime: "running", Health: "healthy", SecretFingerprint: "BEBOP_TEST_SECRET_DO_NOT_LEAK"}}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(host)
+	if err != nil || strings.Contains(string(encoded), "BEBOP_TEST_SECRET_DO_NOT_LEAK") {
+		t.Fatalf("service secret marker leaked through inspect/status JSON: %v %s", err, encoded)
+	}
+	host.Services[0].SecretFingerprint = "rotated-marker"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first == second {
+		t.Fatalf("service secret marker did not affect internal stale-state fingerprint: %q %q %v", first, second, err)
 	}
 }

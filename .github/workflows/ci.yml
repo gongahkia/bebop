@@ -41,3 +41,5 @@ jobs:
         run: make test-integration
       - name: Disposable Debian and Ubuntu SSH integration
         run: make test-ssh-integration
+      - name: Disposable Docker Compose lifecycle integration
+        run: make test-compose-integration

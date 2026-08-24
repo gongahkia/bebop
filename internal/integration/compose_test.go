@@ -66,6 +66,18 @@ func TestComposeLifecycleAgainstDisposableDind(t *testing.T) {
 	}
 	runServiceChanges(t, provider, target, cfg, drift)
 
+	// A manual edit inside Bebop's active deployment is source drift. The next
+	// plan restores declared content before reconciling the still-isolated
+	// Compose project.
+	assertExec(t, target, "printf '\\n# external deployment drift\\n' >> /work/bebop/services/hello/current/compose.yaml")
+	host.Services[0] = facts.Service{Name: "hello", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: "externally-modified", Runtime: "running", Health: "healthy"}
+	deploymentDrift := buildPlan(t, planner, host, cfg)
+	if ids(deploymentDrift) != "service.hello.update,service.hello.start" {
+		t.Fatalf("deployment drift did not produce restore/reconcile: %#v", deploymentDrift.Changes)
+	}
+	runServiceChanges(t, provider, target, cfg, deploymentDrift)
+	assertExec(t, target, "! grep -Fq 'external deployment drift' /work/bebop/services/hello/current/compose.yaml")
+
 	// A changed source must create a semantic deployment update, then reconcile
 	// only this deterministic Compose project.
 	writeComposeFixture(t, root, "running", "two")
@@ -80,7 +92,7 @@ func TestComposeLifecycleAgainstDisposableDind(t *testing.T) {
 		t.Fatalf("source change did not produce deploy/start update: %#v", update.Changes)
 	}
 	runServiceChanges(t, provider, target, cfg, update)
-	assertExec(t, target, "grep -Fqx 'bebop.integration.version=two' /work/bebop/services/hello/current/compose.yaml")
+	assertExec(t, target, "grep -Fq 'bebop.integration.version=two' /work/bebop/services/hello/current/compose.yaml")
 
 	writeComposeFixture(t, root, "stopped", "two")
 	cfg = loadComposeFixture(t, root)

@@ -7,7 +7,7 @@ your existing OpenSSH setup, compares each with a small declarative
 is a CLI, not a dashboard, app store, cloud service, or bespoke operating
 system.
 
-M0/M2 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
+M0/M3 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
 Debian 12/13 as targets. The controller cross-builds for Linux, macOS, and
 Windows remote-SSH workflows; macOS and Windows targets are deliberately
 unsupported.
@@ -85,7 +85,11 @@ that output instead of treating JSON scripts as authority. Memory, kernel, and
 filesystem-free-space changes do not stale a plan because no module uses them.
 
 Plan files can be committed wherever a review workflow needs them; `.bebop/`
-is reserved for local generated state but plans are not ignored by default.
+is reserved for local generated state but plans are not ignored by default. M3
+also records a deterministic service-input fingerprint made from each
+non-secret source manifest and keyed secret marker. Editing a Compose source or
+referenced secret after review makes `apply --plan` refuse before target
+mutation.
 
 ## Current desired state
 

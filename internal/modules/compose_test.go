@@ -104,6 +104,60 @@ func TestComposeScriptsPreserveVolumesAndDoNotLeakSecret(t *testing.T) {
 	}
 }
 
+func TestComposeServiceProjectsAreIsolated(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"alpha", "beta"} {
+		if err := os.MkdirAll(filepath.Join(root, "services", name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "services", name, "compose.yaml"), []byte("services:\n  "+name+":\n    image: alpine:3.20\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contents := `version = 1
+
+[server]
+name = "isolation"
+
+[services.alpha]
+type = "compose"
+source = "services/alpha"
+
+[services.beta]
+type = "compose"
+source = "services/beta"
+`
+	if err := os.WriteFile(filepath.Join(root, "bebop.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := services.ResolveAll(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial[0].Project == initial[1].Project {
+		t.Fatalf("services received the same Compose project: %#v", initial)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "alpha", "compose.yaml"), []byte("services:\n  alpha:\n    image: alpine:3.21\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := composeHost(after,
+		facts.Service{Name: "alpha", Project: initial[0].Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: initial[0].SourceDigest, Runtime: "running", Health: "no-healthcheck"},
+	)
+	host.Services = append(host.Services, facts.Service{Name: "beta", Project: initial[1].Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: initial[1].SourceDigest, Runtime: "running", Health: "no-healthcheck"})
+	result, err := planner.New(Compose{}).Build(host, after)
+	if err != nil || changeIDs(result) != "service.alpha.update,service.alpha.start" {
+		t.Fatalf("alpha update touched another project: %#v %v", result.Changes, err)
+	}
+}
+
 func TestAggregateComposeRuntimeDistinguishesHealth(t *testing.T) {
 	healthy := &struct {
 		Status string `json:"Status"`
