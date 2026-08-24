@@ -52,7 +52,23 @@ type Network struct {
 	Firewall string `toml:"firewall" json:"firewall"`
 }
 type Storage struct {
-	DataRoot string `toml:"data_root" json:"data_root"`
+	DataRoot  string            `toml:"data_root" json:"data_root"`
+	Resources []StorageResource `toml:"-" json:"resources,omitempty"`
+}
+
+// StorageResource is an explicit, already-formatted target filesystem that
+// Bebop may use for declared persistent bind paths. It deliberately contains
+// no block-device selector: Bebop M6 never formats, partitions, or chooses a
+// disk. UUID is the stable filesystem identity; a Linux device path is only
+// inspection detail and is never desired state.
+type StorageResource struct {
+	Name                 string `toml:"-" json:"name"`
+	Mount                string `toml:"mount" json:"mount"`
+	FilesystemUUID       string `toml:"filesystem_uuid" json:"filesystem_uuid"`
+	FilesystemType       string `toml:"filesystem_type,omitempty" json:"filesystem_type,omitempty"`
+	MinimumCapacityBytes int64  `toml:"minimum_capacity_bytes,omitempty" json:"minimum_capacity_bytes,omitempty"`
+	MinimumFreeBytes     int64  `toml:"minimum_free_bytes,omitempty" json:"minimum_free_bytes,omitempty"`
+	ManagedMount         bool   `toml:"managed_mount,omitempty" json:"managed_mount,omitempty"`
 }
 type Backup struct {
 	// Destination is a controller filesystem directory. A relative value is
@@ -76,10 +92,11 @@ type Service struct {
 // DataResource is an explicit authorization boundary. Bebop never infers
 // backup ownership from Docker volumes or bind mounts found on a target.
 type DataResource struct {
-	Name   string `toml:"name" json:"name"`
-	Type   string `toml:"type" json:"type"`
-	Volume string `toml:"volume,omitempty" json:"volume,omitempty"`
-	Path   string `toml:"path,omitempty" json:"path,omitempty"`
+	Name    string `toml:"name" json:"name"`
+	Type    string `toml:"type" json:"type"`
+	Volume  string `toml:"volume,omitempty" json:"volume,omitempty"`
+	Path    string `toml:"path,omitempty" json:"path,omitempty"`
+	Storage string `toml:"storage,omitempty" json:"storage,omitempty"`
 }
 
 // ServiceBackup intentionally offers only generic consistency choices. It is
@@ -103,7 +120,8 @@ type rawConfig struct {
 		Firewall *string `toml:"firewall"`
 	} `toml:"network"`
 	Storage struct {
-		DataRoot *string `toml:"data_root"`
+		DataRoot  *string                       `toml:"data_root"`
+		Resources map[string]rawStorageResource `toml:"resources"`
 	} `toml:"storage"`
 	Backup struct {
 		Destination *string `toml:"destination"`
@@ -119,6 +137,15 @@ type rawConfig struct {
 			Consistency *string `toml:"consistency"`
 		} `toml:"backup"`
 	} `toml:"services"`
+}
+
+type rawStorageResource struct {
+	Mount                *string `toml:"mount"`
+	FilesystemUUID       *string `toml:"filesystem_uuid"`
+	FilesystemType       *string `toml:"filesystem_type"`
+	MinimumCapacityBytes *int64  `toml:"minimum_capacity_bytes"`
+	MinimumFreeBytes     *int64  `toml:"minimum_free_bytes"`
+	ManagedMount         *bool   `toml:"managed_mount"`
 }
 
 func Defaults() Config {
@@ -172,6 +199,34 @@ func Decode(reader io.Reader) (Config, error) {
 	}
 	if raw.Storage.DataRoot != nil {
 		config.Storage.DataRoot = *raw.Storage.DataRoot
+	}
+	storageNames := make([]string, 0, len(raw.Storage.Resources))
+	for name := range raw.Storage.Resources {
+		storageNames = append(storageNames, name)
+	}
+	sort.Strings(storageNames)
+	for _, name := range storageNames {
+		rawResource := raw.Storage.Resources[name]
+		resource := StorageResource{Name: name}
+		if rawResource.Mount != nil {
+			resource.Mount = *rawResource.Mount
+		}
+		if rawResource.FilesystemUUID != nil {
+			resource.FilesystemUUID = *rawResource.FilesystemUUID
+		}
+		if rawResource.FilesystemType != nil {
+			resource.FilesystemType = *rawResource.FilesystemType
+		}
+		if rawResource.MinimumCapacityBytes != nil {
+			resource.MinimumCapacityBytes = *rawResource.MinimumCapacityBytes
+		}
+		if rawResource.MinimumFreeBytes != nil {
+			resource.MinimumFreeBytes = *rawResource.MinimumFreeBytes
+		}
+		if rawResource.ManagedMount != nil {
+			resource.ManagedMount = *rawResource.ManagedMount
+		}
+		config.Storage.Resources = append(config.Storage.Resources, resource)
 	}
 	if raw.Backup.Destination != nil {
 		config.Backup.Destination = *raw.Backup.Destination
@@ -227,6 +282,9 @@ func Validate(config Config) error {
 	if err := ValidateDataRoot(config.Storage.DataRoot); err != nil {
 		return errs.New(errs.ConfigInvalid, err.Error(), nil)
 	}
+	if err := validateStorageResources(config.Storage); err != nil {
+		return errs.New(errs.ConfigInvalid, err.Error(), nil)
+	}
 	if err := ValidateBackupDestination(config.Backup.Destination); err != nil {
 		return errs.New(errs.ConfigInvalid, err.Error(), nil)
 	}
@@ -274,14 +332,18 @@ func Validate(config Config) error {
 			previousData = resource.Name
 			switch resource.Type {
 			case "volume":
-				if !dockerVolumeKeyPattern.MatchString(resource.Volume) || resource.Path != "" {
+				if !dockerVolumeKeyPattern.MatchString(resource.Volume) || resource.Path != "" || resource.Storage != "" {
 					return errs.New(errs.ConfigInvalid, "service."+service.Name+".data."+resource.Name+" volume resources require a safe Compose volume key and no path", nil)
 				}
 			case "path":
 				if resource.Volume != "" {
 					return errs.New(errs.ConfigInvalid, "service."+service.Name+".data."+resource.Name+" path resources must not declare volume", nil)
 				}
-				if err := ValidateBackupPath(resource.Path, config.Storage.DataRoot); err != nil {
+				resolved, err := ResolveDataPath(config.Storage, resource)
+				if err != nil {
+					return errs.New(errs.ConfigInvalid, "service."+service.Name+".data."+resource.Name+" "+err.Error(), nil)
+				}
+				if err := ValidateBackupPath(resolved, config.Storage.DataRoot); err != nil {
 					return errs.New(errs.ConfigInvalid, "service."+service.Name+".data."+resource.Name+" "+err.Error(), nil)
 				}
 			default:
@@ -290,6 +352,96 @@ func Validate(config Config) error {
 		}
 	}
 	return nil
+}
+
+var filesystemUUIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
+var filesystemTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._+-]{0,31}$`)
+
+func validateStorageResources(storage Storage) error {
+	previousName := ""
+	mounts := map[string]string{}
+	uuids := map[string]string{}
+	for _, resource := range storage.Resources {
+		if !serviceNamePattern.MatchString(resource.Name) || resource.Name == "resources" {
+			return fmt.Errorf("storage resource names must be 1-63 lowercase letters, numbers, or hyphens and start with a letter")
+		}
+		if previousName != "" && resource.Name <= previousName {
+			return fmt.Errorf("storage resources must have unique names in lexical order")
+		}
+		previousName = resource.Name
+		if err := ValidateStorageMount(resource.Mount); err != nil {
+			return fmt.Errorf("storage.resources.%s.mount %w", resource.Name, err)
+		}
+		if !filesystemUUIDPattern.MatchString(resource.FilesystemUUID) {
+			return fmt.Errorf("storage.resources.%s.filesystem_uuid must be a safe filesystem UUID", resource.Name)
+		}
+		if resource.FilesystemType != "" && !filesystemTypePattern.MatchString(resource.FilesystemType) {
+			return fmt.Errorf("storage.resources.%s.filesystem_type must be a safe filesystem type", resource.Name)
+		}
+		if resource.MinimumCapacityBytes < 0 || resource.MinimumFreeBytes < 0 {
+			return fmt.Errorf("storage.resources.%s capacity thresholds must not be negative", resource.Name)
+		}
+		if previous, found := mounts[resource.Mount]; found {
+			return fmt.Errorf("storage resources %s and %s use the same mount point", previous, resource.Name)
+		}
+		mounts[resource.Mount] = resource.Name
+		if previous, found := uuids[resource.FilesystemUUID]; found {
+			return fmt.Errorf("storage resources %s and %s use the same filesystem UUID", previous, resource.Name)
+		}
+		uuids[resource.FilesystemUUID] = resource.Name
+	}
+	for _, one := range storage.Resources {
+		for _, other := range storage.Resources {
+			if one.Name != other.Name && strings.HasPrefix(other.Mount, one.Mount+"/") {
+				return fmt.Errorf("storage mount points %s and %s must not be nested", one.Mount, other.Mount)
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateStorageMount limits M6 to deliberate application-data mount points.
+// It rejects root and host/system trees rather than trying to make arbitrary
+// host filesystems safe to mount or manage.
+func ValidateStorageMount(mount string) error {
+	if mount == "" || !strings.HasPrefix(mount, "/") || strings.ContainsRune(mount, '\x00') || path.Clean(mount) != mount || mount == "/" {
+		return fmt.Errorf("must be a clean absolute mount point other than /")
+	}
+	for _, forbidden := range []string{"/etc", "/usr", "/var", "/home", "/root", "/proc", "/sys", "/dev", "/run", "/boot", "/bin", "/lib", "/lib64", "/sbin"} {
+		if mount == forbidden || strings.HasPrefix(mount, forbidden+"/") {
+			return fmt.Errorf("must not cover system directory %s", forbidden)
+		}
+	}
+	for _, allowed := range []string{"/srv/", "/mnt/", "/data/"} {
+		if strings.HasPrefix(mount, allowed) {
+			return nil
+		}
+	}
+	return fmt.Errorf("must be below /srv, /mnt, or /data")
+}
+
+// ResolveDataPath returns the target path authorized by one data declaration.
+// Storage-relative paths intentionally use POSIX semantics because targets are
+// Linux, irrespective of the controller platform.
+func ResolveDataPath(storage Storage, resource DataResource) (string, error) {
+	if resource.Storage == "" {
+		if resource.Path == "" {
+			return "", fmt.Errorf("path must not be empty")
+		}
+		return resource.Path, nil
+	}
+	if !serviceNamePattern.MatchString(resource.Storage) {
+		return "", fmt.Errorf("storage must name a configured storage resource")
+	}
+	if resource.Path == "" || strings.HasPrefix(resource.Path, "/") || strings.ContainsRune(resource.Path, '\x00') || path.Clean(resource.Path) != resource.Path || resource.Path == "." || strings.HasPrefix(resource.Path, "../") || resource.Path == ".." {
+		return "", fmt.Errorf("storage-relative path must be a clean non-empty relative target path")
+	}
+	for _, candidate := range storage.Resources {
+		if candidate.Name == resource.Storage {
+			return path.Join(candidate.Mount, resource.Path), nil
+		}
+	}
+	return "", fmt.Errorf("storage %q is not declared", resource.Storage)
 }
 
 var dockerVolumeKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
