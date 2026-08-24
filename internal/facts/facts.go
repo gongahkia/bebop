@@ -89,6 +89,7 @@ type Service struct {
 	Health            string `json:"health"`
 	ContainerCount    int    `json:"container_count"`
 	SecretFingerprint string `json:"-"`
+	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 
 type Tailscale struct {
@@ -248,6 +249,7 @@ type ServiceSnapshot struct {
 	Health            string `json:"health"`
 	ContainerCount    int    `json:"container_count"`
 	SecretFingerprint string `json:"secret_fingerprint,omitempty"`
+	PlacementFingerprint string `json:"placement_fingerprint,omitempty"`
 }
 
 func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
@@ -255,7 +257,7 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	sort.Slice(storage, func(i, j int) bool { return storage[i].Name < storage[j].Name })
 	services := make([]ServiceSnapshot, 0, len(host.Services))
 	for _, service := range host.Services {
-		services = append(services, ServiceSnapshot{Name: service.Name, Project: service.Project, DesiredState: service.DesiredState, DeploymentPresent: service.DeploymentPresent, DeploymentUnsafe: service.DeploymentUnsafe, DeploymentDigest: service.DeploymentDigest, Runtime: service.Runtime, Health: service.Health, ContainerCount: service.ContainerCount, SecretFingerprint: service.SecretFingerprint})
+		services = append(services, ServiceSnapshot{Name: service.Name, Project: service.Project, DesiredState: service.DesiredState, DeploymentPresent: service.DeploymentPresent, DeploymentUnsafe: service.DeploymentUnsafe, DeploymentDigest: service.DeploymentDigest, Runtime: service.Runtime, Health: service.Health, ContainerCount: service.ContainerCount, SecretFingerprint: service.SecretFingerprint, PlacementFingerprint: service.PlacementFingerprint})
 	}
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	policy := append([]StoragePolicy(nil), host.Storage.Policy...)

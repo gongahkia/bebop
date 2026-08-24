@@ -125,6 +125,7 @@ func inspectServices(ctx context.Context, tr transport.Transport, dataRoot strin
 		service.DeploymentUnsafe = lines["unsafe"] == "yes"
 		service.DeploymentDigest = lines["digest"]
 		service.SecretFingerprint = lines["secret_fingerprint"]
+		service.PlacementFingerprint = lines["placement_fingerprint"]
 		if dockerResponsive {
 			service.Runtime, service.Health, service.ContainerCount = inspectServiceRuntime(ctx, tr, deployment.Project)
 		} else if !service.DeploymentPresent && !service.DeploymentUnsafe {
@@ -146,7 +147,7 @@ if test -L "$current" && test -d "$current"; then
   resolved=$(readlink -f -- "$current" 2>/dev/null || true)
   case "$resolved" in "$root"/releases/*) ;; *) printf 'unsafe=yes\n'; exit 0;; esac
   if test ! -f "$current"/` + quotedCompose + `; then printf 'unsafe=yes\n'; exit 0; fi
-  digest=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+  digest=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' ! -path './` + services.PlacementFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
     test -n "$file" || continue
     mode=$(stat -c '%a' -- "$file")
     checksum=$(sha256sum -- "$file" | awk '{print $1}')
@@ -155,6 +156,7 @@ if test -L "$current" && test -d "$current"; then
   printf 'deployment=yes\n'
   printf 'digest=%s\n' "$digest"
   if test -f "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + `; then tr -d '\n' < "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + ` | sed 's/^/secret_fingerprint=/'; else printf 'secret_fingerprint=\n'; fi
+  if test -f "$current"/` + transport.ShellQuote(services.PlacementFingerprintName) + `; then tr -d '\n' < "$current"/` + transport.ShellQuote(services.PlacementFingerprintName) + ` | sed 's/^/placement_fingerprint=/'; else printf 'placement_fingerprint=\n'; fi
 elif test -e "$current"; then
   printf 'unsafe=yes\n'
 else

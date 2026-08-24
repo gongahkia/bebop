@@ -398,7 +398,7 @@ func manifest(root string) ([]File, string, string, int64, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("special file %q is not allowed in a deployment source", logical)
 		}
-		if logical == SecretEnvName || logical == SecretFingerprintName {
+		if logical == SecretEnvName || logical == SecretFingerprintName || logical == PlacementFingerprintName {
 			return fmt.Errorf("source may not contain reserved file %q", logical)
 		}
 		contents, err := readRegularFile(filename, false)
@@ -463,9 +463,27 @@ func readRegularFile(filename string, secret bool) ([]byte, error) {
 	return contents, nil
 }
 
-func inputFingerprint(source, secret string) string {
-	sum := sha256.Sum256([]byte("source=" + source + "\nsecret=" + secret + "\n"))
+func inputFingerprint(source, secret, placement string) string {
+	sum := sha256.Sum256([]byte("source=" + source + "\nsecret=" + secret + "\nplacement=" + placement + "\n"))
 	return hex.EncodeToString(sum[:])
+}
+
+// persistentPlacementFingerprint is deployment metadata, not source content.
+// It lets normal planning block a physical persistent-data relocation until the
+// user performs the explicit M4 backup/restore migration.
+func persistentPlacementFingerprint(resources []PersistentResource) (string, error) {
+	semantic := append([]PersistentResource(nil), resources...)
+	for index := range semantic {
+		semantic[index].RuntimeVolume = ""
+		semantic[index].External = false
+	}
+	sort.Slice(semantic, func(i, j int) bool { return semantic[i].Name < semantic[j].Name })
+	encoded, err := json.Marshal(semantic)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func secretKey(base string) ([]byte, error) {

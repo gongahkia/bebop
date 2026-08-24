@@ -55,7 +55,8 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 			continue
 		}
 
-		deploymentChanged := !current.DeploymentPresent || current.DeploymentUnsafe || current.DeploymentDigest != deployment.SourceDigest || (deployment.SecretConfigured && current.SecretFingerprint != deployment.SecretFingerprint)
+		placementChanged := current.DeploymentPresent && current.PlacementFingerprint != deployment.PlacementFingerprint
+		deploymentChanged := !current.DeploymentPresent || current.DeploymentUnsafe || current.DeploymentDigest != deployment.SourceDigest || (deployment.SecretConfigured && current.SecretFingerprint != deployment.SecretFingerprint) || placementChanged
 		deployID := ""
 		if deploymentChanged {
 			kind, summary, reason := "deploy", "deploy Compose source", "managed deployment is missing"
@@ -65,6 +66,8 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 				kind, summary, reason = "update", "update Compose source", "deployment content differs from declared source"
 			} else if deployment.SecretConfigured && current.SecretFingerprint != deployment.SecretFingerprint {
 				kind, summary, reason = "update", "reconcile rotated service secret", "secret input changed without exposing its value"
+			} else if placementChanged {
+				kind, summary, reason = "placement", "migrate persistent data placement", "persistent data placement differs from the active release"
 			}
 			risk := plan.Privileged
 			if len(deployment.Ports) > 0 {
@@ -74,6 +77,9 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 			change.Action = plan.Action{Kind: "service.deploy", Resource: deployment.Name, SourceDigest: deployment.SourceDigest, InputFingerprint: deployment.InputFingerprint, SecretFingerprint: deployment.SecretFingerprint}
 			change.Preconditions = append(deploymentPreconditions(cfg.Storage.DataRoot, deployment, current), storagePreconditions...)
 			change.Blocked = blocked
+			if placementChanged {
+				change.Blocked = "persistent data placement changed; use Bebop backup/restore to migrate state before changing service placement"
+			}
 			if current.DeploymentUnsafe {
 				change.Blocked = "the managed deployment path is not a Bebop current-release symlink; Bebop will not replace an unknown path"
 			}
@@ -387,7 +393,7 @@ current=` + transport.ShellQuote(current) + `
 test -L "$current"
 resolved=$(readlink -f -- "$current")
 case "$resolved" in "$root"/releases/*) ;; *) exit 1;; esac
-actual=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
+actual=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' ! -path './` + services.PlacementFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
   test -n "$file" || continue
   mode=$(stat -c '%a' -- "$file")
   checksum=$(sha256sum -- "$file" | awk '{print $1}')
