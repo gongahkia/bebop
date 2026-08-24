@@ -285,7 +285,7 @@ func (catalog Catalog) List() []Recipe {
 	result := make([]Recipe, 0, len(ids))
 	for _, id := range ids {
 		versions := catalog.byID[id]
-		result = append(result, versions[len(versions)-1])
+		result = append(result, cloneRecipe(versions[len(versions)-1]))
 	}
 	return result
 }
@@ -300,10 +300,25 @@ func (catalog Catalog) Find(id, version string) (Recipe, error) {
 	}
 	for _, recipe := range entries {
 		if recipe.Version == version {
-			return recipe, nil
+			return cloneRecipe(recipe), nil
 		}
 	}
 	return Recipe{}, fmt.Errorf("recipe %q does not include version %s", id, version)
+}
+
+func cloneRecipe(recipe Recipe) Recipe {
+	result := recipe
+	result.Images = append([]string(nil), recipe.Images...)
+	result.Architectures = append([]string(nil), recipe.Architectures...)
+	result.Parameters = make([]Parameter, len(recipe.Parameters))
+	for index, parameter := range recipe.Parameters {
+		result.Parameters[index] = parameter
+		result.Parameters[index].Enum = append([]string(nil), parameter.Enum...)
+	}
+	result.Data = append([]DataResource(nil), recipe.Data...)
+	result.Secrets = append([]Secret(nil), recipe.Secrets...)
+	result.compose = append([]byte(nil), recipe.compose...)
+	return result
 }
 
 func (catalog Catalog) Validate() error {
@@ -742,8 +757,35 @@ func validateRenderedCompose(contents []byte, recipe Recipe) error {
 		if volumes == nil || mappingValue(volumes, resource.Volume) == nil {
 			return fmt.Errorf("rendered Compose does not declare persistent volume %q", resource.Volume)
 		}
+		if !volumeMounted(servicesNode, resource.Volume) {
+			return fmt.Errorf("rendered Compose does not mount persistent volume %q", resource.Volume)
+		}
 	}
 	return nil
+}
+
+func volumeMounted(services *yaml.Node, volume string) bool {
+	for index := 0; index+1 < len(services.Content); index += 2 {
+		definition := services.Content[index+1]
+		mounts := mappingValue(definition, "volumes")
+		if mounts == nil || mounts.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, mount := range mounts.Content {
+			switch mount.Kind {
+			case yaml.ScalarNode:
+				if strings.SplitN(mount.Value, ":", 2)[0] == volume {
+					return true
+				}
+			case yaml.MappingNode:
+				source := mappingValue(mount, "source")
+				if source != nil && source.Kind == yaml.ScalarNode && source.Value == volume {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
