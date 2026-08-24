@@ -36,12 +36,13 @@ func TestSystemdUnitsAreDeterministicAndShellFree(t *testing.T) {
 	if !strings.Contains(timer, "OnCalendar=*-*-* 03:00:00") || !strings.Contains(timer, "Persistent=true") {
 		t.Fatalf("unexpected timer: %s", timer)
 	}
-	for _, malicious := range []config.MaintenanceJob{{Name: "bad\nname", Enabled: true}, {Name: "-leading", Enabled: true}, {Name: "okay", Enabled: true, Schedule: config.MaintenanceSchedule{Kind: "daily", At: "03:00"}}} {
-		if malicious.Name == "okay" {
-			continue
-		}
+	for _, malicious := range []config.MaintenanceJob{
+		{Name: "bad\nname", Enabled: true},
+		{Name: "-leading", Enabled: true},
+		{Name: "okay", Enabled: true, Schedule: config.MaintenanceSchedule{Kind: "daily", At: "03:00\nInjected=true"}},
+	} {
 		if _, err := scheduler.DesiredUnits([]config.MaintenanceJob{malicious}); err == nil {
-			t.Fatalf("unsafe job name accepted: %q", malicious.Name)
+			t.Fatalf("unsafe scheduler input accepted: %#v", malicious)
 		}
 	}
 }

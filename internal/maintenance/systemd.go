@@ -116,6 +116,12 @@ func (scheduler SystemdUser) DesiredUnits(jobs []config.MaintenanceJob) (map[str
 		if !validSchedulerJobName(job.Name) {
 			return nil, fmt.Errorf("unsafe maintenance job name for scheduler unit")
 		}
+		// DesiredUnits can be called independently of config validation. Reparse
+		// the schedule before placing it in OnCalendar so untrusted fields cannot
+		// inject systemd unit content.
+		if _, err := config.ParseMaintenanceSchedule(job.Schedule.String()); err != nil {
+			return nil, fmt.Errorf("invalid maintenance schedule for scheduler unit: %w", err)
+		}
 		if !job.Enabled {
 			continue
 		}

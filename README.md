@@ -309,7 +309,9 @@ On Linux controllers, explicit installation writes deterministic systemd
 **user** services/timers with absolute project, config, inventory, and Bebop
 paths. `maintenance status` detects stale project/binary/policy/unit content.
 macOS and Windows retain manual `maintenance run` where underlying operations
-work, but M7 has no native scheduler adapter for them. See
+work and the local crash-safe lock is available. Windows remains cross-build
+supported but has neither a native scheduler adapter nor a crash-safe local job
+lock in M7. See
 [MAINTENANCE.md](docs/MAINTENANCE.md).
 
 ## Current desired state
