@@ -25,20 +25,7 @@ const (
 	SchedulerUnavailable SchedulerCapability = "unavailable"
 )
 
-type SystemdStatus struct {
-	Job              string `json:"job"`
-	Service          string `json:"service"`
-	Timer            string `json:"timer"`
-	State            string `json:"state"`
-	UnitFingerprint  string `json:"unit_fingerprint,omitempty"`
-	TimerFingerprint string `json:"timer_fingerprint,omitempty"`
-	Detail           string `json:"detail,omitempty"`
-}
-
-type UnitChange struct {
-	Action string `json:"action"`
-	Unit   string `json:"unit"`
-}
+type SystemdStatus = SchedulerJobStatus
 
 type commandRunner func(context.Context, string, ...string) (string, error)
 
@@ -56,33 +43,22 @@ type SystemdUser struct {
 }
 
 func NewSystemdUser(configPath, inventoryPath string) (SystemdUser, error) {
-	absConfig, err := filepath.Abs(configPath)
+	install, err := NewSchedulerContext(configPath, inventoryPath)
 	if err != nil {
 		return SystemdUser{}, err
 	}
-	absConfig, err = filepath.EvalSymlinks(absConfig)
-	if err != nil {
-		return SystemdUser{}, fmt.Errorf("resolve maintenance configuration path: %w", err)
-	}
-	projectRoot := filepath.Dir(absConfig)
-	absInventory, err := filepath.Abs(inventoryPath)
-	if err != nil {
-		return SystemdUser{}, err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return SystemdUser{}, fmt.Errorf("resolve Bebop executable: %w", err)
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return SystemdUser{}, fmt.Errorf("resolve Bebop executable path: %w", err)
-	}
+	return NewSystemdUserWithContext(install)
+}
+
+func NewSystemdUserWithContext(install SchedulerContext) (SystemdUser, error) {
 	userConfig, err := os.UserConfigDir()
 	if err != nil {
 		return SystemdUser{}, fmt.Errorf("resolve controller user configuration directory: %w", err)
 	}
-	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: projectRoot, ConfigPath: absConfig, InventoryPath: absInventory, Executable: executable, Platform: runtime.GOOS, Systemctl: "systemctl", run: runCommand}, nil
+	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: install.ProjectRoot, ConfigPath: install.ConfigPath, InventoryPath: install.InventoryPath, Executable: install.Executable, Platform: install.Platform, Systemctl: "systemctl", run: runCommand}, nil
 }
+
+func (scheduler SystemdUser) Backend() string { return "systemd-user" }
 
 func (scheduler SystemdUser) Capability(ctx context.Context) (SchedulerCapability, string) {
 	if scheduler.Platform == "" {
@@ -246,7 +222,7 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 	}
 	statuses := make([]SystemdStatus, 0, len(jobs))
 	for _, job := range jobs {
-		status := SystemdStatus{Job: job.Name, Service: scheduler.ServiceName(job.Name), Timer: scheduler.TimerName(job.Name)}
+		status := SystemdStatus{Job: job.Name, Backend: scheduler.Backend(), NativeID: scheduler.TimerName(job.Name), Service: scheduler.ServiceName(job.Name), Timer: scheduler.TimerName(job.Name), Enabled: job.Enabled}
 		if !job.Enabled {
 			_, serviceErr := os.Lstat(filepath.Join(scheduler.UnitDirectory, status.Service))
 			_, timerErr := os.Lstat(filepath.Join(scheduler.UnitDirectory, status.Timer))
@@ -268,6 +244,7 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 		actualTimer, timerErr := os.ReadFile(filepath.Join(scheduler.UnitDirectory, status.Timer))
 		status.UnitFingerprint = UnitFingerprint(service)
 		status.TimerFingerprint = UnitFingerprint(timer)
+		status.DesiredFingerprint = schedulerArtifactFingerprint(service, timer)
 		if os.IsNotExist(serviceErr) || os.IsNotExist(timerErr) {
 			status.State = "missing"
 			statuses = append(statuses, status)
@@ -279,6 +256,8 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 			statuses = append(statuses, status)
 			continue
 		}
+		status.Installed = true
+		status.ActualFingerprint = schedulerArtifactFingerprint(string(actualService), string(actualTimer))
 		if string(actualService) != service || string(actualTimer) != timer {
 			status.State = "stale"
 			status.Detail = "unit content differs from current maintenance policy"
@@ -291,6 +270,7 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 			statuses = append(statuses, status)
 			continue
 		}
+		status.Loaded = true
 		status.State = "current"
 		statuses = append(statuses, status)
 	}
@@ -354,7 +334,7 @@ func (scheduler SystemdUser) Install(ctx context.Context, jobs []config.Maintena
 	return changes, nil
 }
 
-func (scheduler SystemdUser) Uninstall(ctx context.Context) ([]UnitChange, error) {
+func (scheduler SystemdUser) Uninstall(ctx context.Context, _ []config.MaintenanceJob) ([]UnitChange, error) {
 	if capability, detail := scheduler.Capability(ctx); capability != SchedulerAvailable {
 		return nil, fmt.Errorf("scheduler %s: %s", capability, detail)
 	}
@@ -372,7 +352,7 @@ func (scheduler SystemdUser) Uninstall(ctx context.Context) ([]UnitChange, error
 		if err := os.Remove(filepath.Join(scheduler.UnitDirectory, filename)); err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
-		changes = append(changes, UnitChange{Action: "remove", Unit: filename})
+		changes = append(changes, UnitChange{Action: "remove", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 	}
 	if len(changes) > 0 {
 		if _, err := scheduler.systemctl(ctx, "--user", "daemon-reload"); err != nil {
@@ -396,16 +376,16 @@ func (scheduler SystemdUser) changes(desired map[string]string) ([]UnitChange, e
 		actual, err := os.ReadFile(filepath.Join(scheduler.UnitDirectory, filename))
 		switch {
 		case os.IsNotExist(err):
-			changes = append(changes, UnitChange{Action: "install", Unit: filename})
+			changes = append(changes, UnitChange{Action: "install", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 		case err != nil:
 			return nil, err
 		case string(actual) != contents:
-			changes = append(changes, UnitChange{Action: "update", Unit: filename})
+			changes = append(changes, UnitChange{Action: "update", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 		}
 		delete(ownedSet, filename)
 	}
 	for filename := range ownedSet {
-		changes = append(changes, UnitChange{Action: "remove", Unit: filename})
+		changes = append(changes, UnitChange{Action: "remove", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 	}
 	sort.Slice(changes, func(i, j int) bool {
 		if changes[i].Unit == changes[j].Unit {
