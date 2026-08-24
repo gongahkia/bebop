@@ -51,19 +51,43 @@ func TestCreatePreservesStoppedServiceState(t *testing.T) {
 
 func TestCreateBlocksStorageRelativePathWithoutReadyPlacement(t *testing.T) {
 	repository, cfg, deployment, _ := storageRestoreFixture(t)
+	for _, test := range []struct {
+		name    string
+		storage facts.Storage
+	}{
+		{name: "root spill", storage: facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/", UUID: "root", Filesystem: "ext4"}}}},
+		{name: "wrong uuid", storage: facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/bulk", UUID: "other", Filesystem: "ext4"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			host := restoreHost(deployment)
+			host.Storage = test.storage
+			fake := &createTransport{archive: tarFixture(t, "state", "portable")}
+			_, err := Create(context.Background(), repository, CreateRequest{Target: "local", Host: host, Config: cfg, Service: deployment.Name, Transport: fake})
+			if err == nil {
+				t.Fatal("backup accepted an unsafe storage-relative path")
+			}
+			var categorized *errs.Error
+			if !errorsAs(err, &categorized) || categorized.Code != errs.PlanBlocked {
+				t.Fatalf("storage placement failure lost plan-blocked category: %v", err)
+			}
+			if fake.streamCalls != 0 {
+				t.Fatalf("backup streamed data after placement validation failed: %d", fake.streamCalls)
+			}
+		})
+	}
+}
+
+func TestCreateStreamsStorageRelativePathWhenPlacementIsReady(t *testing.T) {
+	repository, cfg, deployment, _ := storageRestoreFixture(t)
 	host := restoreHost(deployment)
-	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/", UUID: "root"}}}
+	host.Storage = readyStorage("bulk", 128<<20)
 	fake := &createTransport{archive: tarFixture(t, "state", "portable")}
-	_, err := Create(context.Background(), repository, CreateRequest{Target: "local", Host: host, Config: cfg, Service: deployment.Name, Transport: fake})
-	if err == nil {
-		t.Fatal("backup accepted a root-spill storage-relative path")
+	result, err := Create(context.Background(), repository, CreateRequest{Target: "local", Host: host, Config: cfg, Service: deployment.Name, Transport: fake})
+	if err != nil {
+		t.Fatal(err)
 	}
-	var categorized *errs.Error
-	if !errorsAs(err, &categorized) || categorized.Code != errs.PlanBlocked {
-		t.Fatalf("storage placement failure lost plan-blocked category: %v", err)
-	}
-	if fake.streamCalls != 0 {
-		t.Fatalf("backup streamed data after placement validation failed: %d", fake.streamCalls)
+	if result.Snapshot.SnapshotID == "" || fake.streamCalls != 1 {
+		t.Fatalf("ready storage path backup did not stream one snapshot resource: %#v calls=%d", result, fake.streamCalls)
 	}
 }
 

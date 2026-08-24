@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -77,6 +78,16 @@ func TestMountConfigProbeIsNarrowAndClassifiesUnknownOutput(t *testing.T) {
 	}
 	if got := MountConfigState(resource, "unexpected"); got != "unknown" {
 		t.Fatalf("state = %q, want unknown", got)
+	}
+}
+
+func TestRestoreCapacityRequirementIncludesHeadroomAndRejectsOverflow(t *testing.T) {
+	required, err := RestoreCapacityRequirement(100 << 20)
+	if err != nil || required != 164<<20 {
+		t.Fatalf("restore requirement = %d, %v; want %d", required, err, 164<<20)
+	}
+	if _, err := RestoreCapacityRequirement(math.MaxInt64); err == nil {
+		t.Fatal("overflowing restore size was accepted")
 	}
 }
 

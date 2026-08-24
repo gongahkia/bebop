@@ -6,6 +6,7 @@ package storage
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strings"
 
@@ -231,6 +232,27 @@ func RequireFreeCapacity(assessment Assessment, bytes int64) error {
 		return fmt.Errorf("storage %s has %d available bytes but restore requires at least %d bytes", assessment.Resource.Name, assessment.Mount.AvailableBytes, bytes)
 	}
 	return nil
+}
+
+// RestoreCapacityRequirement reserves modest filesystem metadata/headroom on
+// top of a snapshot's logical archive size. It is deliberately a preflight
+// safety estimate rather than a quota or a promise that concurrent writers
+// cannot consume space after the check.
+func RestoreCapacityRequirement(logicalBytes int64) (int64, error) {
+	if logicalBytes < 0 {
+		return 0, fmt.Errorf("restore size must not be negative")
+	}
+	if logicalBytes == 0 {
+		return 0, nil
+	}
+	margin := logicalBytes / 20 // five percent
+	if margin < 64<<20 {
+		margin = 64 << 20
+	}
+	if logicalBytes > math.MaxInt64-margin {
+		return 0, fmt.Errorf("restore size overflows capacity requirement")
+	}
+	return logicalBytes + margin, nil
 }
 
 // ReadyPrecondition narrows target fact inspection to mutation races. It

@@ -86,7 +86,7 @@ func TestRestoreBlocksNonEmptyDestinationAndWrongHost(t *testing.T) {
 func TestRestoreStoragePlacementAndCapacityAreRechecked(t *testing.T) {
 	repository, cfg, deployment, manifest := storageRestoreFixture(t)
 	host := restoreHost(deployment)
-	host.Storage = readyStorage("bulk", 4<<20)
+	host.Storage = readyStorage("bulk", 128<<20)
 	fake := &restoreTransport{}
 	request := RestoreRequest{SnapshotID: manifest.SnapshotID, Target: "local", Config: cfg, Host: host, Service: deployment.Name, Transport: fake}
 	reviewed, err := BuildRestorePlan(context.Background(), repository, request)

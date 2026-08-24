@@ -116,7 +116,11 @@ func BuildRestorePlan(ctx context.Context, repository Repository, request Restor
 				if err != nil {
 					return RestorePlan{}, errs.New(errs.PlanBlocked, "destination storage placement for "+selectedService.deployment.Name+"/"+destination.Name+" is not ready", err)
 				}
-				if err := storagepolicy.RequireFreeCapacity(assessment, sourceResource.UncompressedSize); err != nil {
+				required, err := storagepolicy.RestoreCapacityRequirement(sourceResource.UncompressedSize)
+				if err != nil {
+					return RestorePlan{}, err
+				}
+				if err := storagepolicy.RequireFreeCapacity(assessment, required); err != nil {
 					return RestorePlan{}, errs.New(errs.PlanBlocked, "destination storage capacity for "+selectedService.deployment.Name+"/"+destination.Name+" is insufficient", err)
 				}
 			}
@@ -445,7 +449,11 @@ func ApplyRestore(ctx context.Context, repository Repository, reviewed RestorePl
 					}
 					for _, plannedResource := range plannedService.Resources {
 						if plannedResource.Name == resource.Name {
-							if err := storagepolicy.RequireFreeCapacity(assessment, sourceResource.UncompressedSize); err != nil {
+							required, err := storagepolicy.RestoreCapacityRequirement(sourceResource.UncompressedSize)
+							if err != nil {
+								return result, err
+							}
+							if err := storagepolicy.RequireFreeCapacity(assessment, required); err != nil {
 								return result, errs.New(errs.PlanStale, "destination storage capacity changed after restore review", err)
 							}
 						}

@@ -1,6 +1,6 @@
 # Backups, restore, and migration
 
-M4 snapshots only persistent resources explicitly declared by a Compose service. It is a controller-side filesystem repository, not a daemon, cloud backend, scheduler, disk imager, encryption product, or Docker-data-root copy.
+M4 snapshots only persistent resources explicitly declared by a Compose service. It is a controller-side filesystem repository, not a daemon, cloud backend, scheduler, disk imager, encryption product, or Docker-data-root copy. A controller-mounted NAS or external disk may be used directly as `backup.destination`; M6 target storage resources do not redefine or manage that controller path.
 
 M5 recipe materialization may generate the same explicit logical resource
 declarations for a stateful service. A recipe does not widen this boundary:

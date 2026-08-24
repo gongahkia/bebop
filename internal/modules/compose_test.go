@@ -110,7 +110,7 @@ func TestComposeBlocksExistingStoragePlacementChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := composeHost(cfg, facts.Service{Name: "hello", Project: deployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: deployment.SourceDigest, PlacementFingerprint: "old-placement", Runtime: "running", Health: "no-healthcheck"})
-	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/bulk", UUID: "11111111-2222-3333-4444-555555555555"}}}
+	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/bulk", UUID: "11111111-2222-3333-4444-555555555555", Filesystem: "ext4"}}}
 	result, err := planner.New(Compose{}).Build(host, cfg)
 	if err != nil {
 		t.Fatal(err)

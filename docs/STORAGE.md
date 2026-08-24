@@ -50,7 +50,10 @@ capacity/free-space threshold failure, unsupported filesystem, fstab conflict,
 and unavailable topology. M6 supports persistent-data placement only on local
 `ext2`, `ext3`, `ext4`, `xfs`, and `btrfs` filesystems with an observed
 filesystem UUID. Other filesystems remain inspectable but are blocked for
-placement; M6 has no filesystem-specific mutation behavior. Deploy,
+placement; mounted network filesystems are not a M6 placement target. An
+already-unlocked encrypted device may be used only when its mounted supported
+filesystem is normally visible with a UUID; Bebop never unlocks or manages
+encryption. M6 has no filesystem-specific mutation behavior. Deploy,
 backup, and restore refuse a storage-relative path unless it is ready.
 
 With `managed_mount = true`, a normal reviewed plan can create an empty,
@@ -67,7 +70,10 @@ free space is intentionally not fingerprinted; policy threshold satisfaction
 and mount UUID/type/read-only state are. A changed device pathname that still
 provides the declared UUID does not invalidate a plan. Capacity accepts binary
 `KiB`, `MiB`, `GiB`, `TiB` and decimal `KB`, `MB`, `GB`, `TB`; bare values are
-rejected. `*_bytes` remains available for generated tooling.
+rejected. `*_bytes` remains available for generated tooling. Restore reserves
+the snapshot's logical archive size plus five percent (at least 64 MiB) as a
+preflight safety estimate, then checks again under the target lock; free space
+is not a quota and can still race external writers.
 
 Changing placement for existing application state is not data migration. Each
 managed release records a non-secret placement fingerprint. A subsequent

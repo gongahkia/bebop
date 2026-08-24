@@ -87,4 +87,10 @@ func TestStorageThresholdPolicyParticipatesWithoutFreeSpaceChurn(t *testing.T) {
 	if err != nil || first == third {
 		t.Fatalf("threshold classification did not change fingerprint: %v", err)
 	}
+	host.Storage.Policy[0].State = "ready"
+	host.Storage.Mounts[0].Source = "/dev/nvme0n1p1"
+	fourth, err := host.ConvergenceFingerprint()
+	if err != nil || first != fourth {
+		t.Fatalf("device path churn changed placement fingerprint: %v", err)
+	}
 }
