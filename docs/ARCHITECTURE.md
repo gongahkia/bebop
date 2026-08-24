@@ -1,17 +1,28 @@
 # Architecture
 
-Bebop's execution model is deliberately one-way:
+Bebop's execution model is deliberately one-way. M2 adds only controller-side
+inventory and portable review artifacts; targets remain ordinary Linux machines
+with no Bebop daemon:
 
 ```text
-Target URI -> Transport -> Inspector -> HostFacts --+
-                                                 +-> Planner -> immutable Plan
-bebop.toml -> strict Config ---------------------+                 |
-                                                                   v
-                                                      explicit Apply / verify
-                                                                   |
-                                                                   v
-                                                     re-inspect and re-plan
+inventory alias ─┐
+literal target ──┼─> resolver -> Target -> Transport -> Inspector -> HostFacts --+
+                 │                                                              +-> Planner -> immutable Plan
+host config ─────┘                     strict Config --------------------------+              |
+                                                                                                 ├─> render
+                                                                                                 └─> canonical artifact
+                                                                                                         |
+later apply ───────────────────────────────────────────────────────────────────── fresh inspection + drift checks
+                                                                                                         |
+                                                                                              target flock lease
+                                                                                                         |
+                                                                                              apply / verify / re-plan
 ```
+
+`internal/inventory` owns versioned `bebop.hosts.toml`: aliases, safe target
+URIs, and relative controller config paths. It writes sorted TOML atomically.
+`internal/resolve` turns both aliases and literal target URIs into the existing
+`target.Target`, so transport and module execution paths remain singular.
 
 `internal/target` parses only `local` or safe `ssh://user@host[:port]` URIs.
 `internal/transport` is the boundary below the domain model. `Local` and `SSH`
@@ -55,3 +66,37 @@ state only when supported, implement the module interface with stable IDs and
 dependencies, register it in `modules.Default`, and add deterministic and
 transition/idempotence tests. Do not let modules invoke ad-hoc SSH clients or
 derive unvalidated shell fragments.
+
+## M2 control-plane boundaries
+
+`internal/preflight` is the shared read-only bootstrap/doctor assessment. It
+uses the normal service inspection rather than an alternate SSH client and
+reports classified DNS, timeout, refused, host-key, authentication, client,
+sudo, and command failures. Inspector facts now include an optional machine ID
+and a detected apt/dpkg capability.
+
+`internal/artifact` defines a versioned JSON plan-file contract. Its ordered
+canonical body has no timestamps or maps and is SHA-256 hashed. It records the
+controller version, endpoint, optional alias, normalized config and fingerprint,
+identity, relevant observed-state fingerprint, and complete plan. On a saved
+apply, `internal/savedplan` validates schema/self-hash/current config, performs
+a fresh normal inspection, checks identity and drift, regenerates the plan, and
+passes only that regenerated plan to apply. Artifact scripts are therefore not
+an execution authority, even if someone recomputes a self-hash.
+
+Relevant state contains planner/module inputs and plan-warning inputs: OS,
+architecture, apt/systemd/privilege state, module facts, firewall/storage
+warnings, and data-root metadata. Kernel, memory, free space, timestamps, and
+transport timing are excluded. Identity prefers machine ID and conservatively
+falls back to hostname plus OS identity when it is unavailable.
+
+`internal/apply` obtains a built-in transport flock lease for the full
+apply/verify/replan interval, then evaluates any module-level preconditions
+immediately before the action. Local and SSH transports hold
+`/run/lock/bebop.lock` through a live process; a controller or SSH crash releases
+the kernel lock. This narrows, but does not eliminate, out-of-band TOCTOU races.
+
+`internal/fleet` runs independent read-only work in a bounded worker pool and
+writes each result to its original sorted inventory index. `status --all` and
+`doctor --all` retain individual errors and render all hosts before returning a
+non-zero aggregate result. Fleet mutation is intentionally unsupported.
