@@ -90,6 +90,43 @@ func TestInitWritesLocalStarterWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
+func TestRecipeCommandsMaterializeAndUpgradeWithoutTargetAccess(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "bebop.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: bebop.NewService(), In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"recipe", "list", "--json"}); code != 0 || !strings.Contains(stdout.String(), `"vaultwarden"`) {
+		t.Fatalf("recipe list failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"recipe", "init", "whoami", "--service", "echo", "--param", "port=8181", "--config", configPath, "--json"}); code != 0 {
+		t.Fatalf("recipe init failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "services", "echo", "compose.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	configContents, err := os.ReadFile(configPath)
+	if err != nil || !strings.Contains(string(configContents), "[services.echo]") {
+		t.Fatalf("recipe init did not append ordinary service config: %s %v", configContents, err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"recipe", "upgrade", "echo", "--to", "1.1.0", "--config", configPath, "--json"}); code != 0 {
+		t.Fatalf("recipe upgrade failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	compose, err := os.ReadFile(filepath.Join(root, "services", "echo", "compose.yaml"))
+	if err != nil || !strings.Contains(string(compose), "bebop.recipe.revision") || !strings.Contains(string(compose), "8181:80") {
+		t.Fatalf("recipe upgrade output invalid: %s %v", compose, err)
+	}
+	if code := runner.Run([]string{"recipe", "init", "whoami", "--service", "../../escape", "--config", configPath}); code == 0 {
+		t.Fatal("recipe output traversal was accepted")
+	}
+}
+
 func TestHostCommandsAndAliasPlanUseInventoryConfig(t *testing.T) {
 	inventoryPath := filepath.Join(t.TempDir(), "bebop.hosts.toml")
 	configPath := filepath.Join(filepath.Dir(inventoryPath), "hosts", "pi.toml")

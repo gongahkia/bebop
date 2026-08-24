@@ -44,22 +44,22 @@ type Catalog struct {
 // Recipe is immutable validated metadata plus an internal Compose template.
 // Image/application version remains distinct from recipe version.
 type Recipe struct {
-	SchemaVersion      int             `json:"schema_version"`
-	ID                 string          `json:"id"`
-	Version            string          `json:"version"`
-	Name               string          `json:"name"`
-	Description        string          `json:"description"`
-	Homepage           string          `json:"homepage,omitempty"`
-	License            string          `json:"license,omitempty"`
-	ApplicationVersion string          `json:"application_version"`
-	Images             []string        `json:"images"`
-	Architectures      []string        `json:"architectures"`
-	Health             string          `json:"health"`
-	HealthTimeout      string          `json:"health_timeout"`
-	Parameters         []Parameter     `json:"parameters"`
-	Data               []DataResource  `json:"data,omitempty"`
-	Secrets            []Secret        `json:"secrets,omitempty"`
-	Fingerprint        string          `json:"fingerprint"`
+	SchemaVersion      int            `json:"schema_version"`
+	ID                 string         `json:"id"`
+	Version            string         `json:"version"`
+	Name               string         `json:"name"`
+	Description        string         `json:"description"`
+	Homepage           string         `json:"homepage,omitempty"`
+	License            string         `json:"license,omitempty"`
+	ApplicationVersion string         `json:"application_version"`
+	Images             []string       `json:"images"`
+	Architectures      []string       `json:"architectures"`
+	Health             string         `json:"health"`
+	HealthTimeout      string         `json:"health_timeout"`
+	Parameters         []Parameter    `json:"parameters"`
+	Data               []DataResource `json:"data,omitempty"`
+	Secrets            []Secret       `json:"secrets,omitempty"`
+	Fingerprint        string         `json:"fingerprint"`
 	compose            []byte
 }
 
@@ -119,11 +119,11 @@ type Request struct {
 // Materialization consists only of ordinary Compose/config inputs and a local
 // provenance file. It intentionally does not reference a target host.
 type Materialization struct {
-	Recipe       Recipe          `json:"recipe"`
-	Service      config.Service  `json:"service"`
-	Source       string          `json:"source"`
-	Compose      []byte          `json:"-"`
-	Provenance   Provenance      `json:"provenance"`
+	Recipe        Recipe         `json:"recipe"`
+	Service       config.Service `json:"service"`
+	Source        string         `json:"source"`
+	Compose       []byte         `json:"-"`
+	Provenance    Provenance     `json:"provenance"`
 	SecretExample []byte         `json:"-"`
 }
 
@@ -172,8 +172,8 @@ type rawRecipe struct {
 		Enum     []string `toml:"enum"`
 		Pattern  string   `toml:"pattern"`
 	} `toml:"parameters"`
-	Data []DataResource `toml:"data"`
-	Secrets []Secret `toml:"secrets"`
+	Data    []DataResource `toml:"data"`
+	Secrets []Secret       `toml:"secrets"`
 }
 
 var builtinOnce sync.Once
@@ -416,24 +416,41 @@ func validParameterType(value string) bool {
 
 func (recipe Recipe) semanticFingerprint() (string, error) {
 	semantic := struct {
-		SchemaVersion      int             `json:"schema_version"`
-		ID                 string          `json:"id"`
-		Version            string          `json:"version"`
-		ApplicationVersion string          `json:"application_version"`
-		Images             []string        `json:"images"`
-		Architectures      []string        `json:"architectures"`
-		Health             string          `json:"health"`
-		HealthTimeout      string          `json:"health_timeout"`
-		Parameters         []Parameter     `json:"parameters"`
-		Data               []DataResource  `json:"data"`
-		Secrets            []Secret        `json:"secrets"`
-		ComposeSHA256      string          `json:"compose_sha256"`
+		SchemaVersion      int            `json:"schema_version"`
+		ID                 string         `json:"id"`
+		Version            string         `json:"version"`
+		ApplicationVersion string         `json:"application_version"`
+		Images             []string       `json:"images"`
+		Architectures      []string       `json:"architectures"`
+		Health             string         `json:"health"`
+		HealthTimeout      string         `json:"health_timeout"`
+		Parameters         []Parameter    `json:"parameters"`
+		Data               []DataResource `json:"data"`
+		Secrets            []Secret       `json:"secrets"`
+		ComposeSHA256      string         `json:"compose_sha256"`
 	}{SchemaVersion: recipe.SchemaVersion, ID: recipe.ID, Version: recipe.Version, ApplicationVersion: recipe.ApplicationVersion, Images: recipe.Images, Architectures: recipe.Architectures, Health: recipe.Health, HealthTimeout: recipe.HealthTimeout, Parameters: recipe.Parameters, Data: recipe.Data, Secrets: recipe.Secrets, ComposeSHA256: hash(recipe.compose)}
 	return hashJSON(semantic)
 }
 
 func (recipe Recipe) Resolve(assignments []string, secretFile string) (Input, error) {
 	return recipe.resolve(assignments, nil, secretFile)
+}
+
+// Reuse normalizes an explicit upgrade request while preserving values from a
+// prior validated provenance entry only when the new schema still accepts them.
+func (recipe Recipe) Reuse(previous []ParameterValue, assignments []string, secretFile string) (Input, error) {
+	return recipe.resolve(assignments, previous, secretFile)
+}
+
+// SupportsArchitecture is intentionally a metadata check only; target access
+// remains owned by Bebop's normal inspection and planning path.
+func (recipe Recipe) SupportsArchitecture(architecture string) bool {
+	for _, supported := range recipe.Architectures {
+		if supported == architecture {
+			return true
+		}
+	}
+	return false
 }
 
 func (recipe Recipe) resolve(assignments []string, existing []ParameterValue, secretFile string) (Input, error) {
@@ -562,6 +579,18 @@ func (recipe Recipe) Materialize(request Request) (Materialization, error) {
 	input, err := recipe.Resolve(request.Parameters, request.SecretFile)
 	if err != nil {
 		return Materialization{}, err
+	}
+	return recipe.MaterializeWithInput(request, input)
+}
+
+// MaterializeWithInput exists for upgrades after Reuse has validated compatible
+// previous values. Callers must obtain input through Resolve or Reuse.
+func (recipe Recipe) MaterializeWithInput(request Request, input Input) (Materialization, error) {
+	if !recipeIDPattern.MatchString(request.Service) {
+		return Materialization{}, fmt.Errorf("service name must be a safe Bebop service identifier")
+	}
+	if err := config.ValidateControllerRelativePath(request.Source, false); err != nil {
+		return Materialization{}, fmt.Errorf("source path %w", err)
 	}
 	compose, err := recipe.render(input)
 	if err != nil {

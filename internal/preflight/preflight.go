@@ -14,6 +14,7 @@ import (
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
+	"github.com/bebop-home/bebop/internal/recipes"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -64,6 +65,7 @@ func Run(ctx context.Context, service *bebop.Service, current target.Target, cfg
 	}
 	result = FromFacts(current, host)
 	appendBackupChecks(&result, cfg)
+	appendRecipeChecks(&result, cfg, host.Architecture)
 	result.Ready = !hasFailure(result.Checks)
 	return result
 }
@@ -209,6 +211,21 @@ func appendBackupChecks(result *Result, cfg config.Config) {
 		return
 	}
 	result.Checks = append(result.Checks, Check{Status: Pass, Code: "backup.destination_ready", Message: "backup destination is a controller-side directory: " + destination})
+}
+
+func appendRecipeChecks(result *Result, cfg config.Config, architecture string) {
+	managed, err := recipes.Managed(cfg)
+	if err != nil {
+		result.Checks = append(result.Checks, Check{Status: Warn, Code: "recipe.metadata_unavailable", Message: "recipe metadata could not be loaded: " + err.Error()})
+		return
+	}
+	for _, service := range managed {
+		if service.Recipe.SupportsArchitecture(architecture) {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: "recipe." + service.Service.Name + ".architecture", Message: "recipe " + service.Recipe.ID + "@" + service.Recipe.Version + " supports " + architecture})
+		} else {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "recipe." + service.Service.Name + ".architecture", Message: "recipe " + service.Recipe.ID + " does not support target architecture " + architecture})
+		}
+	}
 }
 
 func hasFailure(checks []Check) bool {

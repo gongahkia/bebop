@@ -4,13 +4,16 @@ package bebop
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/bebop-home/bebop/internal/config"
+	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/inspect"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/planner"
+	"github.com/bebop-home/bebop/internal/recipes"
 	"github.com/bebop-home/bebop/internal/services"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
@@ -56,6 +59,14 @@ func (s *Service) Plan(ctx context.Context, t target.Target, cfg config.Config) 
 	host, tr, err := s.Inspect(ctx, t, cfg)
 	if err != nil {
 		return facts.HostFacts{}, nil, plan.Plan{}, err
+	}
+	incompatible, err := recipes.Incompatible(cfg, host.Architecture)
+	if err != nil {
+		return facts.HostFacts{}, nil, plan.Plan{}, err
+	}
+	if len(incompatible) > 0 {
+		entry := incompatible[0]
+		return facts.HostFacts{}, nil, plan.Plan{}, errs.New(errs.PlanBlocked, "recipe "+entry.Recipe.ID+" for service "+entry.Service.Name+" does not support target architecture "+host.Architecture+" (supported: "+strings.Join(entry.Recipe.Architectures, ", ")+")", nil)
 	}
 	result, err := s.Planner.Build(host, cfg)
 	return host, tr, result, err

@@ -66,6 +66,8 @@ func (r *Runner) Run(arguments []string) int {
 		err = r.apply(arguments[1:])
 	case "backup":
 		err = r.backup(arguments[1:])
+	case "recipe":
+		err = r.recipe(arguments[1:])
 	case "doctor":
 		err = r.doctor(arguments[1:])
 	case "status":
@@ -1034,6 +1036,10 @@ Usage:
   bebop backup list|show SNAPSHOT|verify SNAPSHOT [--config bebop.toml] [--json]
   bebop backup restore SNAPSHOT HOST [--service NAME] [--out FILE]
   bebop backup restore --plan FILE [--config bebop.toml] [--yes]
+  bebop recipe list|show ID [--json]
+  bebop recipe init ID --service NAME [--param name=value] [--secret-file PATH] [--config bebop.toml]
+  bebop recipe upgrade SERVICE --to VERSION [--param name=value] [--config bebop.toml]
+  bebop recipe validate [--json]
   bebop doctor [HOST|--target TARGET|--all] [--parallel N] [--json]
   bebop status [HOST|--target TARGET|--all] [--parallel N] [--json]
 `)
