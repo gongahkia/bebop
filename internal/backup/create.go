@@ -62,9 +62,6 @@ func Create(ctx context.Context, repository Repository, request CreateRequest) (
 	if err != nil {
 		return result, err
 	}
-	if err := ensureHelper(ctx, request.Transport); err != nil {
-		return result, errs.New(errs.PlanBlocked, "backup helper image is unavailable", err)
-	}
 	locker, supportsLock := request.Transport.(transport.ApplyLocker)
 	if !supportsLock {
 		return result, errs.New(errs.ApplyLocked, "backup requires a transport with the Bebop target apply lock", nil)
@@ -74,6 +71,9 @@ func Create(ctx context.Context, repository Repository, request CreateRequest) (
 		return result, classifyLock(err)
 	}
 	defer lock.Release()
+	if err := ensureHelper(ctx, request.Transport); err != nil {
+		return result, errs.New(errs.PlanBlocked, "backup helper image is unavailable", err)
+	}
 
 	stage, err := repository.Begin(Source{HostAlias: request.HostAlias, Target: request.Target, Identity: request.Host.Identity(), OS: request.Host.OS, Architecture: request.Host.Architecture}, buildinfo.Version)
 	if err != nil {
@@ -178,7 +178,7 @@ func capture(ctx context.Context, stage *Stage, streamer transport.StreamTranspo
 	_ = writer.CloseWithError(streamErr)
 	captured := <-done
 	if streamErr != nil {
-		return ResourceManifest{}, fmt.Errorf("stream %s: %w", resource.Name, streamErr)
+		return ResourceManifest{}, fmt.Errorf("stream %s from %s: %w", resource.Name, ResourceLabel(resource), streamErr)
 	}
 	if captured.err != nil {
 		return ResourceManifest{}, fmt.Errorf("sanitize %s archive: %w", resource.Name, captured.err)

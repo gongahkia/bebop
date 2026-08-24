@@ -7,13 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/bebop-home/bebop/internal/backup"
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/modules"
@@ -124,6 +127,74 @@ func TestComposeLifecycleAgainstDisposableDind(t *testing.T) {
 	assertExec(t, target, "docker --context default volume ls --quiet --filter label=com.docker.compose.project="+transport.ShellQuote(absent.Project)+" | grep -q .")
 }
 
+// TestBackupRestoreMigrationAgainstDisposableDind proves the M4 boundary with
+// two independent Docker targets. The source and destination deliberately use
+// different server names, so their Compose runtime-volume names differ while
+// the snapshot maps by logical resource identity.
+func TestBackupRestoreMigrationAgainstDisposableDind(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	source, destination := startDind(t), startDind(t)
+	sourceRoot, destinationRoot := t.TempDir(), t.TempDir()
+	writeBackupComposeFixture(t, sourceRoot, "source")
+	writeBackupComposeFixture(t, destinationRoot, "destination")
+	sourceConfig, destinationConfig := loadComposeFixture(t, sourceRoot), loadComposeFixture(t, destinationRoot)
+	sourceConfig.Backup.Destination = filepath.Join(t.TempDir(), "backups")
+	provider := modules.Compose{PollInterval: 50 * time.Millisecond}
+	sourceDeployment, err := services.ResolveOne(sourceConfig, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationDeployment, err := services.ResolveOne(destinationConfig, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceDeployment.Data[0].RuntimeVolume == destinationDeployment.Data[0].RuntimeVolume {
+		t.Fatal("migration fixture did not derive distinct runtime volume names")
+	}
+	sourceHost := dindHost(sourceConfig, facts.Service{Name: "hello", Project: sourceDeployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
+	runServiceChanges(t, provider, source, sourceConfig, buildPlan(t, planner.New(provider), sourceHost, sourceConfig))
+	assertExec(t, source, dockerVolumeWriteScript(sourceDeployment.Data[0].RuntimeVolume, "BEBOP_M4_PORTABLE_STATE"))
+	sourceHost.MachineID = "m4-source"
+	sourceHost.Services[0] = facts.Service{Name: "hello", Project: sourceDeployment.Project, DesiredState: "running", DeploymentPresent: true, DeploymentDigest: sourceDeployment.SourceDigest, Runtime: "running", Health: "healthy"}
+	repository, err := backup.Open(sourceConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("source backup resource: %#v", sourceDeployment.Data[0])
+	allDeployments, resolveErr := services.ResolveAll(sourceConfig)
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	t.Logf("all backup resource: %#v", allDeployments[0].Data[0])
+	snapshot, err := backup.Create(context.Background(), repository, backup.CreateRequest{HostAlias: "source", Target: "dind-source", Host: sourceHost, Config: sourceConfig, Service: "hello", Transport: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Verify(snapshot.Snapshot.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	assertExec(t, source, "docker --context default ps --quiet --filter label=com.docker.compose.project="+transport.ShellQuote(sourceDeployment.Project)+" --filter status=running | grep -q .")
+
+	destinationHost := dindHost(destinationConfig, facts.Service{Name: "hello", Project: destinationDeployment.Project, DesiredState: "running", Runtime: "missing", Health: "missing"})
+	destinationHost.MachineID = "m4-destination"
+	restoreRequest := backup.RestoreRequest{SnapshotID: snapshot.Snapshot.SnapshotID, HostAlias: "destination", Target: "dind-destination", Config: destinationConfig, Host: destinationHost, Service: "hello", Transport: destination}
+	restorePlan, err := backup.BuildRestorePlan(context.Background(), repository, restoreRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restorePlan.Services[0].Resources[0].Destination != destinationDeployment.Data[0].RuntimeVolume || restorePlan.Services[0].Resources[0].Exists {
+		t.Fatalf("restore did not map a missing destination logical resource: %#v", restorePlan)
+	}
+	if _, err := backup.ApplyRestore(context.Background(), repository, restorePlan, restoreRequest); err != nil {
+		t.Fatal(err)
+	}
+	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M4_PORTABLE_STATE"))
+	runServiceChanges(t, provider, destination, destinationConfig, buildPlan(t, planner.New(provider), destinationHost, destinationConfig))
+	assertExec(t, destination, dockerVolumeReadScript(destinationDeployment.Data[0].RuntimeVolume, "BEBOP_M4_PORTABLE_STATE"))
+}
+
 func startDind(t *testing.T) *dockerExecTransport {
 	t.Helper()
 	command := exec.Command("docker", "run", "--rm", "-d", "--privileged", "docker:27-dind")
@@ -193,6 +264,31 @@ state = "` + state + `"
 health_timeout = "30s"
 `
 	if err := os.WriteFile(filepath.Join(root, "bebop.toml"), []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeBackupComposeFixture(t *testing.T, root, server string) {
+	t.Helper()
+	writeComposeFixture(t, root, "running", "backup")
+	filename := filepath.Join(root, "bebop.toml")
+	contents, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(contents), `name = "integration"`, `name = "`+server+`"`, 1) + `
+[backup]
+destination = ".bebop/backups"
+
+[[services.hello.data]]
+name = "app-data"
+type = "volume"
+volume = "state"
+
+[services.hello.backup]
+consistency = "stop"
+`
+	if err := os.WriteFile(filename, []byte(updated), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -282,7 +378,10 @@ done`, Privileged: true})
 	return result.Stdout
 }
 
-type dockerExecTransport struct{ container string }
+type dockerExecTransport struct {
+	container string
+	lock      sync.Mutex
+}
 
 func (target *dockerExecTransport) Run(ctx context.Context, request transport.Request) (transport.Result, error) {
 	command := exec.CommandContext(ctx, "docker", "exec", "-i", target.container, "sh", "-ceu", request.Script)
@@ -302,6 +401,38 @@ func (target *dockerExecTransport) Run(ctx context.Context, request transport.Re
 	return result, fmt.Errorf("docker exec: %w", err)
 }
 
+func (target *dockerExecTransport) RunStream(ctx context.Context, request transport.StreamRequest, output io.Writer) (transport.Result, error) {
+	command := exec.CommandContext(ctx, "docker", "exec", "-i", target.container, "sh", "-ceu", request.Script)
+	command.Stdin = request.Stdin
+	if output == nil {
+		output = io.Discard
+	}
+	var stderr bytes.Buffer
+	command.Stdout, command.Stderr = output, &stderr
+	err := command.Run()
+	result := transport.Result{Stderr: strings.TrimSpace(stderr.String())}
+	if err == nil {
+		return result, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		result.ExitCode = exit.ExitCode()
+		return result, &transport.ExitError{Code: result.ExitCode, Stderr: result.Stderr}
+	}
+	return result, fmt.Errorf("docker exec stream: %w", err)
+}
+
+func (target *dockerExecTransport) AcquireApplyLock(context.Context) (transport.ApplyLock, error) {
+	if !target.lock.TryLock() {
+		return nil, &transport.LockError{Busy: true}
+	}
+	return dockerExecLock{mutex: &target.lock}, nil
+}
+
+type dockerExecLock struct{ mutex *sync.Mutex }
+
+func (lock dockerExecLock) Release() error { lock.mutex.Unlock(); return nil }
+
 func (target *dockerExecTransport) ReadFile(ctx context.Context, filename string) (string, error) {
 	result, err := target.Run(ctx, transportRequest("cat -- "+shellQuote(filename)))
 	return result.Stdout, err
@@ -313,3 +444,10 @@ func (target *dockerExecTransport) Description() string {
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+
+func dockerVolumeWriteScript(volume, value string) string {
+	return "docker --context default run --rm -v " + transport.ShellQuote(volume+":/data") + " busybox:1.36.1 sh -ceu " + transport.ShellQuote("printf %s "+transport.ShellQuote(value)+" > /data/state")
+}
+func dockerVolumeReadScript(volume, value string) string {
+	return "docker --context default run --rm -v " + transport.ShellQuote(volume+":/data:ro") + " busybox:1.36.1 sh -ceu " + transport.ShellQuote("test \"$(cat /data/state)\" = "+transport.ShellQuote(value))
+}
