@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,6 +117,21 @@ func TestComposeBlocksExistingStoragePlacementChange(t *testing.T) {
 	}
 	if len(result.Changes) == 0 || result.Changes[0].Blocked == "" || !strings.Contains(result.Changes[0].Blocked, "backup/restore") {
 		t.Fatalf("placement change was not blocked for migration: %#v", result.Changes)
+	}
+}
+
+func TestStoragePathSafetyRejectsAncestorSymlink(t *testing.T) {
+	mount := t.TempDir()
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(mount, "redirect")); err != nil {
+		t.Fatal(err)
+	}
+	targetPath := filepath.Join(mount, "redirect", "service")
+	if err := exec.Command("sh", "-c", storagePathSafetyScript(mount, targetPath)).Run(); err == nil {
+		t.Fatal("storage path safety accepted a symlink ancestor")
+	}
+	if _, err := os.Stat(filepath.Join(external, "service")); !os.IsNotExist(err) {
+		t.Fatalf("storage path safety wrote through a symlink: %v", err)
 	}
 }
 

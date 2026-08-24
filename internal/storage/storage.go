@@ -239,9 +239,9 @@ func RequireFreeCapacity(assessment Assessment, bytes int64) error {
 func ReadyPrecondition(resource config.StorageResource) string {
 	mount := transport.ShellQuote(resource.Mount)
 	uuid := transport.ShellQuote(resource.FilesystemUUID)
-	script := "test \"$(findmnt -rn -o TARGET --target " + mount + ")\" = " + mount + "\ntest \"$(findmnt -rn -o UUID --target " + mount + ")\" = " + uuid + "\ntest -w " + mount
+	checks := []string{"test \"$(findmnt -rn -o TARGET --target " + mount + ")\" = " + mount, "test \"$(findmnt -rn -o UUID --target " + mount + ")\" = " + uuid, "test -w " + mount}
 	if resource.FilesystemType != "" {
-		script += "\ntest \"$(findmnt -rn -o FSTYPE --target " + mount + ")\" = " + transport.ShellQuote(resource.FilesystemType)
+		checks = append(checks, "test \"$(findmnt -rn -o FSTYPE --target "+mount+")\" = "+transport.ShellQuote(resource.FilesystemType))
 	}
-	return script
+	return strings.Join(checks, " && ")
 }

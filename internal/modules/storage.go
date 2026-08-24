@@ -70,7 +70,7 @@ func (Storage) Verify(ctx context.Context, tr transport.Transport, cfg config.Co
 
 func mountpointSafeScript(mount string) string {
 	quoted := transport.ShellQuote(mount)
-	return "test ! -L " + quoted + "\nif test -e " + quoted + "; then test -d " + quoted + "; fi\nif test -d " + quoted + " && find " + quoted + " -xdev -mindepth 1 -print -quit | grep -q .; then exit 1; fi"
+	return "if test -L " + quoted + "; then exit 1; fi\nif test -e " + quoted + " && ! test -d " + quoted + "; then exit 1; fi\nif test -d " + quoted + " && find " + quoted + " -xdev -mindepth 1 -print -quit | grep -q .; then exit 1; fi"
 }
 
 func fstabLine(resource config.StorageResource) string {
@@ -79,10 +79,6 @@ func fstabLine(resource config.StorageResource) string {
 		filesystem = "auto"
 	}
 	return "UUID=" + resource.FilesystemUUID + " " + resource.Mount + " " + filesystem + " defaults,nofail 0 2 # bebop-storage:" + resource.Name
-}
-
-func fstabExactScript(resource config.StorageResource) string {
-	return "grep -Fqx -- " + transport.ShellQuote(fstabLine(resource)) + " /etc/fstab"
 }
 
 func fstabConfiguredScript(resource config.StorageResource) string {
@@ -96,6 +92,7 @@ func fstabSafeScript(resource config.StorageResource) string {
 func fstabWriteScript(resource config.StorageResource) string {
 	line := transport.ShellQuote(fstabLine(resource))
 	return strings.Join([]string{
+		"set -e",
 		"state=$(\n" + storagepolicy.MountConfigProbe(resource) + "\n)",
 		"case \"$state\" in exact|external) exit 0 ;; absent) ;; *) exit 1 ;; esac",
 		"temporary=$(mktemp /etc/.bebop-fstab.XXXXXX)",

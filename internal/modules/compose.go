@@ -287,6 +287,7 @@ func (Compose) Apply(ctx context.Context, tr transport.Transport, cfg config.Con
 
 func prepareStoragePathsScript(cfg config.Config, deployment services.Deployment) string {
 	var script strings.Builder
+	script.WriteString("set -e\n")
 	for _, resource := range deployment.Data {
 		if resource.Type != "path" || resource.Storage == "" {
 			continue
@@ -295,11 +296,34 @@ func prepareStoragePathsScript(cfg config.Config, deployment services.Deployment
 		if !found {
 			continue
 		}
-		// Preconditions have already checked the mount identity. This creates only
-		// the declared child directory and refuses a symlink at that exact path.
-		fmt.Fprintf(&script, "%s\ntest ! -L %s\ninstall -d -m 0750 -o root -g root -- %s\n", storagepolicy.ReadyPrecondition(storageResource), transport.ShellQuote(resource.Path), transport.ShellQuote(resource.Path))
+		// Preconditions have already checked mount identity. Every existing
+		// component below the declared mount must be a real directory: checking
+		// only the final path would allow an ancestor symlink to redirect a
+		// newly-created service directory outside its authorized filesystem.
+		fmt.Fprintf(&script, "%s\n%s\n", storagepolicy.ReadyPrecondition(storageResource), storagePathSafetyScript(storageResource.Mount, resource.Path))
 	}
 	return script.String()
+}
+
+func storagePathSafetyScript(mount, targetPath string) string {
+	return strings.Join([]string{
+		"set -e",
+		"root=" + transport.ShellQuote(mount),
+		"target=" + transport.ShellQuote(targetPath),
+		"test -d \"$root\"",
+		"test ! -L \"$root\"",
+		"case \"$target\" in \"$root\"/*) ;; *) exit 1 ;; esac",
+		"relative=${target#\"$root\"/}",
+		"current=$root",
+		"while test -n \"$relative\"; do",
+		"  segment=${relative%%/*}",
+		"  test -n \"$segment\"",
+		"  current=\"$current/$segment\"",
+		"  if test -e \"$current\" || test -L \"$current\"; then test -d \"$current\"; test ! -L \"$current\"; fi",
+		"  if test \"$segment\" = \"$relative\"; then relative=; else relative=${relative#*/}; fi",
+		"done",
+		"install -d -m 0750 -o root -g root -- \"$target\"",
+	}, "\n")
 }
 
 func (provider Compose) Verify(ctx context.Context, tr transport.Transport, cfg config.Config, change plan.Change) error {

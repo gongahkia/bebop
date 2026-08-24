@@ -30,6 +30,11 @@ storage variables into Compose; arbitrary Compose bind interpolation remains
 rejected. Named Docker volumes remain supported but are intentionally not
 placeable in M6: Docker's data root is out of scope.
 
+Before deployment or restore creates a storage-relative bind directory, Bebop
+checks that the declared mount and every already-existing component below it is
+a real directory rather than a symlink. This prevents an existing nested path
+from redirecting Bebop-owned data outside the declared filesystem.
+
 ## Inspection and management
 
 `bebop storage inspect HOST` renders normalized `lsblk --json` and

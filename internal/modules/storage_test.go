@@ -39,7 +39,7 @@ func TestManagedMountScriptsAreMarkerScopedAndIdempotent(t *testing.T) {
 			t.Fatalf("mount configuration script lacks %q:\n%s", required, script)
 		}
 	}
-	if !strings.Contains(mountpointSafeScript(resource.Mount), "find") || !strings.Contains(mountpointSafeScript(resource.Mount), "test ! -L") {
+	if !strings.Contains(mountpointSafeScript(resource.Mount), "find") || !strings.Contains(mountpointSafeScript(resource.Mount), "test -L") {
 		t.Fatalf("mountpoint safety precondition is incomplete")
 	}
 }
@@ -55,6 +55,17 @@ func TestMountpointOccupancyPreconditionRefusesSentinel(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join(mount, "sentinel"))
 	if err != nil || string(contents) != "keep" {
 		t.Fatalf("sentinel was modified: %q %v", contents, err)
+	}
+}
+
+func TestMountpointSafetyRefusesEmptySymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "mount")
+	if err := os.Symlink(t.TempDir(), target); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("sh", "-c", mountpointSafeScript(target)).Run(); err == nil {
+		t.Fatal("empty symlink mountpoint was accepted")
 	}
 }
 
