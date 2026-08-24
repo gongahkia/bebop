@@ -66,8 +66,9 @@
 - M7: broader Linux distribution support; M8: macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, notifications,
   and richer drift controls.
-- Scheduled/external backup repositories with the same manifest and restore
-  safety model; no storage provisioning or implicit disk automation.
+- M7 — scheduled operations and unattended maintenance: scheduled backups,
+  doctor/health checks, retention execution, maintenance windows, and explicit
+  notifications, retaining the existing manifest/placement safety model.
 - Signed plans, generalized rollback, and transactions.
 - Deterministic agent/MCP integration surfaces that call Bebop APIs, never an
   LLM inside Bebop.

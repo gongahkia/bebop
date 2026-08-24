@@ -14,9 +14,15 @@ so physical mount prefixes stay in the storage declaration. Service deploy/start
 plans gain stable mount dependencies and immediate identity preconditions.
 Backup and restore use the same placement guard and therefore refuse root spill,
 wrong UUID, read-only, and threshold-failing locations before data mutation.
+Restore checks the snapshot archive size again immediately before extraction.
 
 The new controller-side commands are `storage list`, `show`, `inspect`,
 `doctor`, and read-only `adopt`. Storage inspection is available in normal
 facts/status and doctor reports readiness. The next coherent milestone should
 focus on scheduled/external backup repositories, not storage provisioning or
 application catalog expansion.
+
+The opt-in `make test-storage-integration` tier uses a temporary ext4 image
+inside privileged disposable Docker-in-Docker. It verifies Bebop's scoped fstab
+write, UUID mount, post-mount verification, and no-op second plan without
+touching any controller disk or `/etc/fstab`.

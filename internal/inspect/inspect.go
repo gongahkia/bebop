@@ -337,6 +337,7 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 		Type        string      `json:"type"`
 		Size        int64       `json:"size"`
 		FSType      string      `json:"fstype"`
+		Label       string      `json:"label"`
 		UUID        string      `json:"uuid"`
 		ReadOnly    bool        `json:"ro"`
 		Removable   bool        `json:"rm"`
@@ -347,7 +348,7 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 	var blocks struct {
 		Devices []rawDevice `json:"blockdevices"`
 	}
-	blockOutput := mustProbe(ctx, tr, "lsblk --json --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,UUID,RO,RM,TRAN,MOUNTPOINTS 2>/dev/null || true")
+	blockOutput := mustProbe(ctx, tr, "lsblk --json --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,UUID,RO,RM,TRAN,MOUNTPOINTS 2>/dev/null || true")
 	if json.Unmarshal([]byte(blockOutput), &blocks) != nil {
 		return facts.Storage{}
 	}
@@ -355,7 +356,7 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 	byPath := map[string]facts.BlockDevice{}
 	var flatten func(rawDevice)
 	flatten = func(raw rawDevice) {
-		device := facts.BlockDevice{Path: raw.Path, Name: raw.Name, Type: raw.Type, SizeBytes: raw.Size, Filesystem: raw.FSType, UUID: raw.UUID, ReadOnly: raw.ReadOnly, Removable: raw.Removable, Transport: raw.Transport}
+		device := facts.BlockDevice{Path: raw.Path, Name: raw.Name, Type: raw.Type, SizeBytes: raw.Size, Filesystem: raw.FSType, Label: raw.Label, UUID: raw.UUID, ReadOnly: raw.ReadOnly, Removable: raw.Removable, Transport: raw.Transport}
 		for _, mount := range raw.Mountpoints {
 			if mount != nil && *mount != "" {
 				device.Mounts = append(device.Mounts, *mount)

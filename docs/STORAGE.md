@@ -12,8 +12,8 @@ filesystem UUID and may mount that existing filesystem only with explicit
 mount = "/mnt/bulk"
 filesystem_uuid = "11111111-2222-3333-4444-555555555555"
 filesystem_type = "ext4"             # optional
-minimum_capacity_bytes = 100000000000 # optional
-minimum_free_bytes = 10000000000       # optional
+minimum_capacity = "100GiB"            # optional binary threshold
+minimum_free = "10GiB"                 # optional binary threshold
 managed_mount = false                  # default
 
 [[services.hello.data]]
@@ -54,8 +54,12 @@ target apply lock.
 Storage topology and filesystem identity are relevant saved-plan state. Exact
 free space is intentionally not fingerprinted; policy threshold satisfaction
 and mount UUID/type/read-only state are. A changed device pathname that still
-provides the declared UUID does not invalidate a plan.
+provides the declared UUID does not invalidate a plan. Capacity accepts binary
+`KiB`, `MiB`, `GiB`, `TiB` and decimal `KB`, `MB`, `GB`, `TB`; bare values are
+rejected. `*_bytes` remains available for generated tooling.
 
-Changing placement for existing application state is not data migration. Take
-a verified backup, restore into the new declared placement, then converge the
+Changing placement for existing application state is not data migration. Each
+managed release records a non-secret placement fingerprint. A subsequent
+storage-backed placement change is blocked before deployment/start; take a
+verified backup, restore into the new declared placement, then converge the
 service. M6 never moves live bind-path data automatically.

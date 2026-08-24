@@ -150,6 +150,7 @@ type BlockDevice struct {
 	Type       string   `json:"type"`
 	SizeBytes  int64    `json:"size_bytes,omitempty"`
 	Filesystem string   `json:"filesystem,omitempty"`
+	Label      string   `json:"label,omitempty"`
 	UUID       string   `json:"uuid,omitempty"`
 	ReadOnly   bool     `json:"read_only,omitempty"`
 	Removable  bool     `json:"removable,omitempty"`
