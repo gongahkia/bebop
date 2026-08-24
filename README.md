@@ -43,6 +43,32 @@ make build
 # No changes.
 ```
 
+## Storage placement (M6)
+
+Storage is explicit policy over an existing target filesystem, not disk
+automation. Declare the mount and filesystem UUID once, then use a logical
+storage name for a persistent bind path. See [STORAGE.md](docs/STORAGE.md) for
+the complete safety contract and [BACKUPS.md](docs/BACKUPS.md) for backup/
+restore behavior on placed data.
+
+```toml
+[storage.resources.bulk]
+mount = "/mnt/bulk"
+filesystem_uuid = "11111111-2222-3333-4444-555555555555"
+
+[[services.hello.data]]
+name = "media"
+type = "path"
+storage = "bulk"
+path = "media"
+```
+
+Use `bebop storage inspect pi` to inspect normalized topology, `storage list
+pi` to assess declarations, and `storage adopt bulk pi --mount /mnt/bulk
+--filesystem-uuid UUID` to add verified local config metadata. Bebop never
+formats, partitions, auto-selects disks, changes `/var/lib/docker`, or moves
+live application data.
+
 Inventory aliases are additive: the original literal target workflow remains
 available, for example `bebop plan --target ssh://pi@raspberrypi.local --config
 bebop.toml`. `inspect`, `plan`, `status`, `doctor`, `bootstrap`, and host list/

@@ -6,6 +6,11 @@ plugins, a marketplace, a remote registry, arbitrary hooks, or an alternate
 deployment system. Every built-in recipe is embedded in the Bebop binary and is
 therefore available offline.
 
+Recipe persistent-data declarations remain ordinary M4 logical resources. M6
+does not change recipe ownership or place named Docker volumes; a user who
+needs storage-relative bind-path placement may add the documented generic
+storage declaration after materialization. See [STORAGE.md](STORAGE.md).
+
 ## Corpus and inspection
 
 The bundled corpus currently contains `whoami`, `uptime-kuma`, `vaultwarden`,

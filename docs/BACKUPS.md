@@ -31,6 +31,14 @@ consistency = "stop"
 
 `volume` must be a declared, mounted Compose key. Bebop resolves the actual runtime name from the deterministic project and restores via the logical resource name, so source and destination volume names may differ. External volumes require the same explicit declaration but remain lifecycle-external. `path` must be a clean absolute target path below `/srv`, `/mnt`, or `/data`; system trees and the Bebop deployment root are rejected. Undeclared data is never backed up.
 
+M6 path resources may instead use `storage = "NAME"` with a clean relative
+`path`. Before backup or restore Bebop verifies the same declared filesystem
+UUID/mount/read-write policy used by service convergence. A snapshot's logical
+resource identity remains portable: destination storage names and runtime
+volume names are never taken from source-host implementation details. Storage
+placement changes require the normal backup/restore migration flow; Bebop does
+not move live data. See [STORAGE.md](STORAGE.md).
+
 `bebop doctor HOST` reports declared backup resources and the controller-side
 repository path without creating it, pulling an image, or scanning data. A
 missing destination is a warning because `backup create` creates it atomically;

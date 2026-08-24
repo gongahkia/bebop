@@ -62,11 +62,12 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M6: explicit storage workflows; M7: broader Linux
-  distribution support; M8: macOS/Windows target adapters.
+- M6: explicit storage workflows and placement policy.
+- M7: broader Linux distribution support; M8: macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, notifications,
   and richer drift controls.
-- Explicit storage workflows with no implicit disk automation.
+- Scheduled/external backup repositories with the same manifest and restore
+  safety model; no storage provisioning or implicit disk automation.
 - Signed plans, generalized rollback, and transactions.
 - Deterministic agent/MCP integration surfaces that call Bebop APIs, never an
   LLM inside Bebop.

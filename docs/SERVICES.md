@@ -30,6 +30,17 @@ the `bebop.toml` that declares it. It cannot be absolute or escape that
 directory. A source must contain exactly one root-level `compose.yaml`,
 `compose.yml`, `docker-compose.yaml`, or `docker-compose.yml`.
 
+## Storage-relative bind paths (M6)
+
+A path resource may retain M4's explicit absolute `path`, or use a declared
+M6 storage resource plus a clean relative path. For `storage = "bulk"` and
+`path = "media"`, the Compose source binds `${BEBOP_STORAGE_BULK}/media`;
+Bebop provides that fixed value from the storage declaration while validating
+and running Compose. This is the only supported bind-path interpolation. It
+keeps placement out of service source and blocks deployment/start if UUID,
+mount, writeability, or configured capacity policy is not ready. See
+[STORAGE.md](STORAGE.md).
+
 ## Recipe-generated services (M5)
 
 `bebop recipe init ID --service NAME` creates a normal declaration and source

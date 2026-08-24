@@ -203,6 +203,27 @@ by default, restores through a narrow helper, then delegates deployment/startup
 to the existing service planner and apply path. Source and destination runtime
 volume names may therefore differ without losing the logical mapping.
 
+## M6 storage placement policy
+
+M6 adds normalized `lsblk --json` and `findmnt --json` topology beneath the
+same Inspector/HostFacts boundary. `internal/storage` compares a declarative
+resource (mount point, filesystem UUID, optional type/capacity policy) with
+that topology. It emits semantic ready/missing/root-spill/wrong-UUID/read-only
+state for modules, service placement, backups, restore, doctor, and saved-plan
+snapshots; raw device paths and exact free-space telemetry are not desired
+state.
+
+```text
+storage declaration -> Inspector facts -> storage assessment -> Planner
+      │                       │                  │                 │
+      │                       └─ UUID/mount facts │                 ├─ storage mount DAG
+      └─ fixed Compose variable                   └─ placement guard └─ service/backup/restore
+```
+
+The optional storage module has only mount-point, fstab-entry, and mount
+actions, ordered before dependent services and covered by the ordinary apply
+lock. It has no formatting or device-management action. See [STORAGE.md](STORAGE.md).
+
 ## M5 deterministic recipe authoring
 
 M5 deliberately sits **before** normal configuration and source resolution; it
