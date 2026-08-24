@@ -698,9 +698,7 @@ func (r *Runner) bootstrap(arguments []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
 	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
-	if resolution.Alias != "" {
-		result.Checks = append([]preflight.Check{{Status: preflight.Pass, Code: "inventory.resolved", Message: "inventory alias resolved: " + resolution.Alias}}, result.Checks...)
-	}
+	result = withInventoryCheck(result, resolution)
 	if common.json {
 		if err := writeJSON(r.Out, result); err != nil {
 			return err
@@ -762,6 +760,147 @@ func (r *Runner) status(arguments []string) error {
 	}
 	fmt.Fprintf(r.Out, "Host        %s\nOS          %s (%s)\nDocker      %s\nTailscale   %s\nUpdates     %s\nSSH         %s\nData root   %s\nStorage     %s\nOverall     %s\n", report.Host, report.OS, report.Architecture, report.Docker, report.Tailscale, report.Updates, report.SSH, report.DataRoot, storage, report.Overall)
 	return nil
+}
+
+type fleetStatus struct {
+	Host   string        `json:"host"`
+	Target string        `json:"target"`
+	Status *StatusReport `json:"status,omitempty"`
+	Error  string        `json:"error,omitempty"`
+}
+
+type fleetDoctor struct {
+	Host   string        `json:"host"`
+	Target string        `json:"target"`
+	Doctor *DoctorReport `json:"doctor,omitempty"`
+	Error  string        `json:"error,omitempty"`
+}
+
+func (r *Runner) statusAll(common *commonFlags, requestedConfig string, configExplicit bool, parallel int) error {
+	resolutions, err := resolve.All(common.inventory)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
+	defer cancel()
+	mapped, err := fleet.Map(ctx, resolutions, parallel, func(ctx context.Context, resolution resolve.Resolution) (fleetStatus, error) {
+		result := fleetStatus{Host: resolution.Alias, Target: resolution.Target.String()}
+		cfg, err := loadHostConfig(resolution, requestedConfig, configExplicit)
+		if err != nil {
+			return result, err
+		}
+		host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
+		if err != nil {
+			return result, err
+		}
+		report := statusReport(host)
+		result.Status = &report
+		return result, nil
+	})
+	if err != nil {
+		return err
+	}
+	results := make([]fleetStatus, len(mapped))
+	failed := 0
+	for index, result := range mapped {
+		results[index] = result.Value
+		if result.Err != nil {
+			results[index].Error = result.Err.Error()
+			failed++
+		}
+	}
+	if common.json {
+		if err := writeJSON(r.Out, struct {
+			Hosts []fleetStatus `json:"hosts"`
+		}{results}); err != nil {
+			return err
+		}
+	} else {
+		writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(writer, "HOST\tRESULT\tOS\tDOCKER\tTAILSCALE\tOVERALL")
+		for _, result := range results {
+			if result.Error != "" {
+				fmt.Fprintf(writer, "%s\tFAIL\t-\t-\t-\t%s\n", result.Host, result.Error)
+				continue
+			}
+			fmt.Fprintf(writer, "%s\tPASS\t%s\t%s\t%s\t%s\n", result.Host, result.Status.OS, result.Status.Docker, result.Status.Tailscale, result.Status.Overall)
+		}
+		_ = writer.Flush()
+	}
+	if failed > 0 {
+		return errs.New(errs.MultiHostFailed, fmt.Sprintf("%d of %d requested hosts failed status", failed, len(results)), nil)
+	}
+	return nil
+}
+
+func (r *Runner) doctorAll(common *commonFlags, requestedConfig string, configExplicit bool, parallel int) error {
+	resolutions, err := resolve.All(common.inventory)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
+	defer cancel()
+	mapped, err := fleet.Map(ctx, resolutions, parallel, func(ctx context.Context, resolution resolve.Resolution) (fleetDoctor, error) {
+		result := fleetDoctor{Host: resolution.Alias, Target: resolution.Target.String()}
+		cfg, err := loadHostConfig(resolution, requestedConfig, configExplicit)
+		if err != nil {
+			return result, err
+		}
+		preflightResult := withInventoryCheck(preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot), resolution)
+		report := doctorReport(preflightResult)
+		result.Doctor = &report
+		return result, preflightResult.FailureError()
+	})
+	if err != nil {
+		return err
+	}
+	results := make([]fleetDoctor, len(mapped))
+	failed := 0
+	for index, result := range mapped {
+		results[index] = result.Value
+		if result.Err != nil {
+			results[index].Error = result.Err.Error()
+			failed++
+		}
+	}
+	if common.json {
+		if err := writeJSON(r.Out, struct {
+			Hosts []fleetDoctor `json:"hosts"`
+		}{results}); err != nil {
+			return err
+		}
+	} else {
+		writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(writer, "HOST\tRESULT\tDETAILS")
+		for _, result := range results {
+			if result.Error != "" {
+				fmt.Fprintf(writer, "%s\tFAIL\t%s\n", result.Host, result.Error)
+			} else if result.Doctor.Ready {
+				fmt.Fprintf(writer, "%s\tPASS\tready\n", result.Host)
+			} else {
+				fmt.Fprintf(writer, "%s\tWARN\tinspection completed with warnings\n", result.Host)
+			}
+		}
+		_ = writer.Flush()
+	}
+	if failed > 0 {
+		return errs.New(errs.MultiHostFailed, fmt.Sprintf("%d of %d requested hosts failed doctor", failed, len(results)), nil)
+	}
+	return nil
+}
+
+func loadHostConfig(resolution resolve.Resolution, requested string, explicit bool) (config.Config, error) {
+	if !explicit && resolution.ConfigPath != "" {
+		requested = resolution.ConfigPath
+	}
+	return loadOptionalConfig(requested)
+}
+
+func withInventoryCheck(result preflight.Result, resolution resolve.Resolution) preflight.Result {
+	if resolution.Alias != "" {
+		result.Checks = append([]preflight.Check{{Status: preflight.Pass, Code: "inventory.resolved", Message: "inventory alias resolved: " + resolution.Alias}}, result.Checks...)
+	}
+	return result
 }
 
 func loadOptionalConfig(filename string) (config.Config, error) {

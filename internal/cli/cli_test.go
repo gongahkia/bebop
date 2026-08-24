@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bebop-home/bebop/internal/bebop"
+	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
@@ -157,6 +159,45 @@ func TestPortablePlanCanBeWrittenAndAppliedWithFreshPlanSemantics(t *testing.T) 
 	stderr.Reset()
 	if code := runner.Run([]string{"apply", "--plan", artifactPath, "--yes", "--json"}); code == 0 || !strings.Contains(stderr.String(), "does not match") {
 		t.Fatalf("tampered saved plan was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestFleetReadCommandsKeepSuccessfulHostsWhenOneFails(t *testing.T) {
+	inventoryPath := filepath.Join(t.TempDir(), "bebop.hosts.toml")
+	if err := inventory.WriteFile(inventoryPath, inventory.Inventory{Version: inventory.CurrentVersion, Hosts: map[string]inventory.Host{
+		"bad": {Target: "ssh://pi@bad"},
+		"pi":  {Target: "ssh://pi@pi"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	service := bebop.NewService()
+	service.TransportFactory = func(current target.Target) (transport.Transport, error) {
+		if current.Host == "bad" {
+			return nil, errors.New("connection refused")
+		}
+		return &cliFakeTransport{}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"status", "--all", "--inventory", inventoryPath, "--parallel", "2"}); code == 0 {
+		t.Fatalf("mixed fleet status unexpectedly succeeded: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "bad") || !strings.Contains(stdout.String(), "pi") || strings.Index(stdout.String(), "bad") > strings.Index(stdout.String(), "pi") {
+		t.Fatalf("fleet status omitted or reordered results: %s", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"doctor", "--all", "--inventory", inventoryPath, "--json", "--parallel", "2"}); code == 0 {
+		t.Fatalf("mixed fleet doctor unexpectedly succeeded: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	var report struct {
+		Hosts []struct {
+			Host  string `json:"host"`
+			Error string `json:"error"`
+		} `json:"hosts"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || len(report.Hosts) != 2 || report.Hosts[0].Host != "bad" || report.Hosts[0].Error == "" || report.Hosts[1].Host != "pi" {
+		t.Fatalf("fleet doctor JSON lost per-host results: %#v err=%v output=%s", report, err, stdout.String())
 	}
 }
 
