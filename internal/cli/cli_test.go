@@ -85,6 +85,45 @@ func TestInitWritesLocalStarterWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
+func TestHostCommandsAndAliasPlanUseInventoryConfig(t *testing.T) {
+	inventoryPath := filepath.Join(t.TempDir(), "bebop.hosts.toml")
+	configPath := filepath.Join(filepath.Dir(inventoryPath), "hosts", "pi.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &cliFakeTransport{}
+	service := bebop.NewService()
+	service.TransportFactory = func(target.Target) (transport.Transport, error) { return fake, nil }
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"host", "add", "pi", "--inventory", inventoryPath, "--target", "ssh://pi@home", "--config", "hosts/pi.toml"}); code != 0 {
+		t.Fatalf("host add failed: %d %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"host", "list", "--inventory", inventoryPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"name": "pi"`) {
+		t.Fatalf("host list failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"plan", "pi", "--inventory", inventoryPath, "--json"}); code != 0 {
+		t.Fatalf("alias plan failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"host", "remove", "pi", "--inventory", inventoryPath}); code == 0 {
+		t.Fatal("host removal unexpectedly skipped explicit confirmation")
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"host", "remove", "pi", "--inventory", inventoryPath, "--yes"}); code != 0 {
+		t.Fatalf("host remove failed: %d %s", code, stderr.String())
+	}
+}
+
 type cliFakeTransport struct{ privileged bool }
 
 func (f *cliFakeTransport) Description() string                              { return "fake" }

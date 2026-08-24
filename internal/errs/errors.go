@@ -7,14 +7,24 @@ import "fmt"
 type Code string
 
 const (
-	ConfigInvalid        Code = "config_invalid"
-	TargetInvalid        Code = "target_invalid"
-	TargetUnreachable    Code = "target_unreachable"
-	UnsupportedOS        Code = "unsupported_os"
-	PrivilegeUnavailable Code = "privilege_unavailable"
-	PlanBlocked          Code = "plan_blocked"
-	ApplyFailed          Code = "apply_failed"
-	VerificationFailed   Code = "verification_failed"
+	ConfigInvalid          Code = "config_invalid"
+	InventoryInvalid       Code = "inventory_invalid"
+	TargetInvalid          Code = "target_invalid"
+	TargetUnreachable      Code = "target_unreachable"
+	TargetAuthentication   Code = "target_authentication"
+	TargetHostKey          Code = "target_host_key"
+	TargetTimeout          Code = "target_timeout"
+	UnsupportedOS          Code = "unsupported_os"
+	PrivilegeUnavailable   Code = "privilege_unavailable"
+	PlanBlocked            Code = "plan_blocked"
+	PlanInvalid            Code = "plan_invalid"
+	PlanTampered           Code = "plan_tampered"
+	PlanStale              Code = "plan_stale"
+	TargetIdentityMismatch Code = "target_identity_mismatch"
+	ApplyLocked            Code = "apply_locked"
+	ApplyFailed            Code = "apply_failed"
+	VerificationFailed     Code = "verification_failed"
+	MultiHostFailed        Code = "multi_host_failed"
 )
 
 // Error carries an actionable category and the underlying error where present.

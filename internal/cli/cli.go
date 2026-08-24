@@ -18,8 +18,9 @@ import (
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
+	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/plan"
-	"github.com/bebop-home/bebop/internal/target"
+	"github.com/bebop-home/bebop/internal/resolve"
 )
 
 const Version = "0.1.0"
@@ -46,6 +47,8 @@ func (r *Runner) Run(arguments []string) int {
 		fmt.Fprintf(r.Out, "bebop %s\n", Version)
 	case "inspect":
 		err = r.inspect(arguments[1:])
+	case "host":
+		err = r.host(arguments[1:])
 	case "init":
 		err = r.init(arguments[1:])
 	case "plan":
@@ -73,14 +76,16 @@ func (r *Runner) Run(arguments []string) int {
 }
 
 type commonFlags struct {
-	target  string
-	timeout time.Duration
-	json    bool
+	target    string
+	inventory string
+	timeout   time.Duration
+	json      bool
 }
 
 func addCommon(fs *flag.FlagSet, includeJSON bool) *commonFlags {
 	flags := &commonFlags{}
-	fs.StringVar(&flags.target, "target", "local", "target: local or ssh://user@host[:port]")
+	fs.StringVar(&flags.target, "target", "", "literal target: local or ssh://user@host[:port]")
+	fs.StringVar(&flags.inventory, "inventory", inventory.DefaultPath, "path to host inventory")
 	fs.DurationVar(&flags.timeout, "timeout", 30*time.Second, "per-command target operation timeout")
 	if includeJSON {
 		fs.BoolVar(&flags.json, "json", false, "write machine-readable JSON")
@@ -88,23 +93,80 @@ func addCommon(fs *flag.FlagSet, includeJSON bool) *commonFlags {
 	return flags
 }
 
+func resolveTarget(fs *flag.FlagSet, common *commonFlags) (resolve.Resolution, error) {
+	if fs.NArg() > 1 {
+		return resolve.Resolution{}, fmt.Errorf("accepts at most one host reference")
+	}
+	reference := ""
+	if fs.NArg() == 1 {
+		reference = fs.Arg(0)
+	}
+	return resolve.Resolve(reference, common.target, common.inventory)
+}
+
+func configured(fs *flag.FlagSet, resolution resolve.Resolution, requested string) string {
+	set := false
+	fs.Visit(func(flag *flag.Flag) {
+		if flag.Name == "config" {
+			set = true
+		}
+	})
+	if !set && resolution.ConfigPath != "" {
+		return resolution.ConfigPath
+	}
+	return requested
+}
+
+// normalizeArguments lets Bebop keep the conventional "command host --flag"
+// form while using Go's deliberately simple flag package. Only known flags
+// consume a following value; unknown flags remain for FlagSet to reject.
+func normalizeArguments(fs *flag.FlagSet, arguments []string) []string {
+	flags := make([]string, 0, len(arguments))
+	positionals := make([]string, 0, len(arguments))
+	for index := 0; index < len(arguments); index++ {
+		argument := arguments[index]
+		if argument == "--" {
+			positionals = append(positionals, arguments[index+1:]...)
+			break
+		}
+		if !strings.HasPrefix(argument, "-") || argument == "-" {
+			positionals = append(positionals, argument)
+			continue
+		}
+		flags = append(flags, argument)
+		name := strings.TrimLeft(argument, "-")
+		if equals := strings.IndexByte(name, '='); equals >= 0 {
+			continue
+		}
+		registered := fs.Lookup(name)
+		if registered == nil {
+			continue
+		}
+		if _, boolean := registered.Value.(interface{ IsBoolFlag() bool }); boolean {
+			continue
+		}
+		if index+1 < len(arguments) {
+			index++
+			flags = append(flags, arguments[index])
+		}
+	}
+	return append(flags, positionals...)
+}
+
 func (r *Runner) inspect(arguments []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("inspect accepts no positional arguments")
-	}
-	t, err := target.Parse(common.target)
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, t, config.DefaultDataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, config.DefaultDataRoot)
 	if err != nil {
 		return err
 	}
@@ -121,19 +183,16 @@ func (r *Runner) init(arguments []string) error {
 	common := addCommon(fs, false)
 	output := fs.String("output", "bebop.toml", "configuration file to create")
 	force := fs.Bool("force", false, "replace an existing local configuration file")
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("init accepts no positional arguments")
-	}
-	t, err := target.Parse(common.target)
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, t, config.DefaultDataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, config.DefaultDataRoot)
 	if err != nil {
 		return err
 	}
@@ -156,29 +215,178 @@ func (r *Runner) init(arguments []string) error {
 	return nil
 }
 
+func (r *Runner) host(arguments []string) error {
+	if len(arguments) == 0 {
+		return fmt.Errorf("host requires add, remove, list, or show")
+	}
+	switch arguments[0] {
+	case "add":
+		return r.hostAdd(arguments[1:])
+	case "remove":
+		return r.hostRemove(arguments[1:])
+	case "list":
+		return r.hostList(arguments[1:])
+	case "show":
+		return r.hostShow(arguments[1:])
+	default:
+		return fmt.Errorf("unknown host command %q", arguments[0])
+	}
+}
+
+func addInventoryPath(fs *flag.FlagSet) *string {
+	return fs.String("inventory", inventory.DefaultPath, "path to host inventory")
+}
+
+func (r *Runner) hostAdd(arguments []string) error {
+	fs := flag.NewFlagSet("host add", flag.ContinueOnError)
+	fs.SetOutput(r.Err)
+	inventoryPath := addInventoryPath(fs)
+	targetValue := fs.String("target", "", "target: ssh://user@host[:port] or local")
+	configPath := fs.String("config", "", "relative desired-state config path")
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("host add requires exactly one alias")
+	}
+	if *targetValue == "" {
+		return fmt.Errorf("host add requires --target")
+	}
+	loaded, err := inventory.LoadOrEmpty(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	if err := loaded.Add(fs.Arg(0), inventory.Host{Target: *targetValue, Config: *configPath}); err != nil {
+		return err
+	}
+	if err := inventory.WriteFile(*inventoryPath, loaded); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Out, "Added host %s to %s\n", fs.Arg(0), *inventoryPath)
+	return nil
+}
+
+func (r *Runner) hostRemove(arguments []string) error {
+	fs := flag.NewFlagSet("host remove", flag.ContinueOnError)
+	fs.SetOutput(r.Err)
+	inventoryPath := addInventoryPath(fs)
+	yes := fs.Bool("yes", false, "remove inventory metadata without a prompt")
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("host remove requires exactly one alias")
+	}
+	if !*yes {
+		return fmt.Errorf("host remove changes only local inventory metadata; repeat with --yes to confirm")
+	}
+	loaded, err := inventory.LoadFile(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	if err := loaded.Remove(fs.Arg(0)); err != nil {
+		return err
+	}
+	if err := inventory.WriteFile(*inventoryPath, loaded); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.Out, "Removed host %s from %s; no target was contacted.\n", fs.Arg(0), *inventoryPath)
+	return nil
+}
+
+func (r *Runner) hostList(arguments []string) error {
+	fs := flag.NewFlagSet("host list", flag.ContinueOnError)
+	fs.SetOutput(r.Err)
+	inventoryPath := addInventoryPath(fs)
+	jsonOutput := fs.Bool("json", false, "write machine-readable JSON")
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("host list accepts no positional arguments")
+	}
+	loaded, err := inventory.LoadOrEmpty(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	type entry struct {
+		Name   string `json:"name"`
+		Target string `json:"target"`
+		Config string `json:"config,omitempty"`
+	}
+	entries := make([]entry, 0, len(loaded.Hosts))
+	for _, alias := range loaded.SortedAliases() {
+		host := loaded.Hosts[alias]
+		entries = append(entries, entry{Name: alias, Target: host.Target, Config: host.Config})
+	}
+	if *jsonOutput {
+		return writeJSON(r.Out, struct {
+			Version int     `json:"version"`
+			Hosts   []entry `json:"hosts"`
+		}{Version: loaded.Version, Hosts: entries})
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(r.Out, "No hosts registered.")
+		return nil
+	}
+	fmt.Fprintln(r.Out, "NAME\tTARGET\tCONFIG")
+	for _, host := range entries {
+		fmt.Fprintf(r.Out, "%s\t%s\t%s\n", host.Name, host.Target, host.Config)
+	}
+	return nil
+}
+
+func (r *Runner) hostShow(arguments []string) error {
+	fs := flag.NewFlagSet("host show", flag.ContinueOnError)
+	fs.SetOutput(r.Err)
+	inventoryPath := addInventoryPath(fs)
+	jsonOutput := fs.Bool("json", false, "write machine-readable JSON")
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("host show requires exactly one alias")
+	}
+	loaded, err := inventory.LoadFile(*inventoryPath)
+	if err != nil {
+		return err
+	}
+	host, exists := loaded.Hosts[fs.Arg(0)]
+	if !exists {
+		return errs.New(errs.InventoryInvalid, "unknown host alias: "+fs.Arg(0), nil)
+	}
+	if *jsonOutput {
+		return writeJSON(r.Out, struct {
+			Name   string `json:"name"`
+			Target string `json:"target"`
+			Config string `json:"config,omitempty"`
+		}{Name: fs.Arg(0), Target: host.Target, Config: host.Config})
+	}
+	fmt.Fprintf(r.Out, "Name    %s\nTarget  %s\nConfig  %s\n", fs.Arg(0), host.Target, host.Config)
+	return nil
+}
+
 func (r *Runner) plan(arguments []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
 	showCommands := fs.Bool("show-commands", false, "include exact planned shell scripts in human output")
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("plan accepts no positional arguments")
-	}
-	cfg, err := config.LoadFile(*configPath)
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
-	t, err := target.Parse(common.target)
+	path := configured(fs, resolution, *configPath)
+	cfg, err := config.LoadFile(path)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	_, _, result, err := r.Service.Plan(ctx, t, cfg)
+	_, _, result, err := r.Service.Plan(ctx, resolution.Target, cfg)
 	if err != nil {
 		return err
 	}
@@ -201,26 +409,24 @@ func (r *Runner) apply(arguments []string) error {
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
 	yes := fs.Bool("yes", false, "apply without interactive confirmation")
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("apply accepts no positional arguments")
+	resolution, err := resolveTarget(fs, common)
+	if err != nil {
+		return err
 	}
 	if common.json && !*yes {
 		return fmt.Errorf("apply --json requires --yes because prompts would corrupt JSON output")
 	}
-	cfg, err := config.LoadFile(*configPath)
-	if err != nil {
-		return err
-	}
-	t, err := target.Parse(common.target)
+	path := configured(fs, resolution, *configPath)
+	cfg, err := config.LoadFile(path)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout(common.timeout))
 	defer cancel()
-	_, tr, reviewed, err := r.Service.Plan(ctx, t, cfg)
+	_, tr, reviewed, err := r.Service.Plan(ctx, resolution.Target, cfg)
 	if err != nil {
 		return err
 	}
@@ -258,7 +464,7 @@ func (r *Runner) apply(arguments []string) error {
 		}
 	}
 	result, err := apply.Execute(ctx, reviewed, tr, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
-		_, _, next, buildErr := r.Service.Plan(replanContext, t, cfg)
+		_, _, next, buildErr := r.Service.Plan(replanContext, resolution.Target, cfg)
 		return next, buildErr
 	})
 	if err != nil {
@@ -287,23 +493,21 @@ func (r *Runner) doctor(arguments []string) error {
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("doctor accepts no positional arguments")
-	}
-	cfg, err := loadOptionalConfig(*configPath)
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
-	t, err := target.Parse(common.target)
+	path := configured(fs, resolution, *configPath)
+	cfg, err := loadOptionalConfig(path)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, t, cfg.Storage.DataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
 	if err != nil {
 		return err
 	}
@@ -329,23 +533,21 @@ func (r *Runner) status(arguments []string) error {
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
-	if err := fs.Parse(arguments); err != nil {
+	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("status accepts no positional arguments")
-	}
-	cfg, err := loadOptionalConfig(*configPath)
+	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
 	}
-	t, err := target.Parse(common.target)
+	path := configured(fs, resolution, *configPath)
+	cfg, err := loadOptionalConfig(path)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, t, cfg.Storage.DataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
 	if err != nil {
 		return err
 	}
