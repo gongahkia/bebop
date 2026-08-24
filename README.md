@@ -130,6 +130,12 @@ Each project name is deterministic and unique per `server.name` plus service
 name, so an update to one declared service cannot target another project's
 containers.
 
+Deployment releases are replaceable content. Relative bind mounts such as
+`./data:/data` are rejected because they could place persistent data inside a
+release that a later deployment update replaces. Use named volumes or deliberate
+absolute target paths for persistent data; `absent` never removes those volumes
+or paths.
+
 Services need Docker Engine and Docker Compose v2. Bebop detects Compose; when
 the target apt repositories advertise `docker-compose-plugin` or
 `docker-compose-v2`, its existing Docker module can install it through a

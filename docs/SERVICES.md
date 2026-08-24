@@ -67,9 +67,10 @@ The states mean:
 
 There is intentionally no aggressive release cleanup, automatic image pull,
 volume deletion, data-root deletion, or generalized rollback. Relative bind
-mount paths are particularly important: place persistent application data in a
-deliberate external path (for example `/srv/bebop/data/hello`) rather than
-assuming deployment releases are backup-safe data locations.
+mount paths are rejected because an application could write persistent data into
+a replaceable release tree. Use a named volume or a deliberate absolute target
+path (for example `/srv/bebop/data/hello`) rather than treating deployment
+releases as persistent data.
 
 Project names are deterministic from `server.name` and service name, with a
 bounded hash. Every Compose command specifies this project name and its active

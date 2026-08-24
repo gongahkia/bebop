@@ -1,7 +1,10 @@
 package services
 
 import (
+	"archive/tar"
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +131,29 @@ source = "services/hello"
 	}
 }
 
+func TestResolveAllRejectsRelativeBindMounts(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", `services:
+  hello:
+    image: alpine:3.20
+    volumes:
+      - ./data:/data
+`)
+	writeFixture(t, root, "bebop.toml", `version = 1
+
+[services.hello]
+type = "compose"
+source = "services/hello"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveAll(cfg); err == nil || !strings.Contains(err.Error(), "relative bind mount") {
+		t.Fatalf("expected relative bind mount rejection, got %v", err)
+	}
+}
+
 func TestAbsentServiceDoesNotRequireDeletedSource(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, "bebop.toml", `version = 1
@@ -144,6 +170,44 @@ state = "absent"
 	deployments, err := ResolveAll(cfg)
 	if err != nil || len(deployments) != 1 || deployments[0].SourceDigest != "" {
 		t.Fatalf("absent service unexpectedly required a source: %#v %v", deployments, err)
+	}
+}
+
+func TestControlledArchiveContainsOnlySafeRegularRelativeEntries(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", "services:\n  hello:\n    image: alpine:3.20\n")
+	writeFixture(t, root, "services/hello/nested/config.txt", "safe")
+	writeFixture(t, root, "bebop.toml", `version = 1
+
+[services.hello]
+type = "compose"
+source = "services/hello"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := ResolveOne(cfg, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tar.NewReader(bytes.NewReader(deployment.Payload))
+	entries := 0
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries++
+		if filepath.IsAbs(header.Name) || strings.HasPrefix(filepath.Clean(header.Name), "..") || header.Typeflag != tar.TypeReg {
+			t.Fatalf("unsafe controlled archive entry: %#v", header)
+		}
+	}
+	if entries != 2 {
+		t.Fatalf("unexpected archive entry count: %d", entries)
 	}
 }
 

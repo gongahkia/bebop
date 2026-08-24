@@ -42,10 +42,10 @@ directories as deployment state.
 M3 service absence runs `docker compose down --remove-orphans` **without**
 `-v`, removes only the active `current` link, and retains release trees. Bebop
 does not invoke `docker volume rm`, `docker compose down -v`, or recursive
-deletion of bind-mounted or application data. Relative bind mounts are still a
-user-controlled Compose behavior, so users should place persistent data in an
-explicit external path rather than rely on retained deployment files as a
-backup boundary.
+deletion of bind-mounted or application data. Relative bind mounts are rejected
+because they could write persistent data into a replaceable release tree. Use a
+named volume or explicit absolute external target path rather than rely on
+retained deployment files as a backup boundary.
 
 During a non-empty built-in apply, Bebop holds a target-side advisory flock at
 `/run/lock/bebop.lock` through the full apply/verify/replan window. A second

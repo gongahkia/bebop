@@ -516,6 +516,9 @@ func validateCompose(filename string, files []File, secretConfigured bool) ([]Po
 		if err := validateEnvFiles(mappingValue(definition, "env_file"), fileSet, secretConfigured); err != nil {
 			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
 		}
+		if err := validateVolumes(mappingValue(definition, "volumes")); err != nil {
+			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
+		}
 		parsed, err := parsePorts(mappingValue(definition, "ports"))
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", serviceName.Value, err)
@@ -571,6 +574,39 @@ func validateEnvFiles(node *yaml.Node, sourceFiles map[string]bool, secretConfig
 		}
 		if err := config.ValidateControllerRelativePath(path, true); err != nil || !sourceFiles[path] {
 			return fmt.Errorf("env_file %q must be a regular file inside the service source", path)
+		}
+	}
+	return nil
+}
+
+// Releases are replaceable deployment content. A relative bind mount would
+// make a service write persistent data below that replaceable tree, so M3
+// requires named volumes or deliberate absolute target paths instead.
+func validateVolumes(node *yaml.Node) error {
+	if node == nil {
+		return nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("volumes must be a sequence")
+	}
+	for _, value := range node.Content {
+		switch value.Kind {
+		case yaml.ScalarNode:
+			source, _, found := strings.Cut(value.Value, ":")
+			if found && (source == "." || source == ".." || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")) {
+				return fmt.Errorf("relative bind mount %q is unsafe; use a named volume or absolute target path", value.Value)
+			}
+		case yaml.MappingNode:
+			typeNode := mappingValue(value, "type")
+			if typeNode == nil || typeNode.Kind != yaml.ScalarNode || typeNode.Value != "bind" {
+				continue
+			}
+			sourceNode := mappingValue(value, "source")
+			if sourceNode == nil || sourceNode.Kind != yaml.ScalarNode || !strings.HasPrefix(sourceNode.Value, "/") {
+				return fmt.Errorf("bind mounts require an absolute target source path")
+			}
+		default:
+			return fmt.Errorf("volume must use string or long mapping syntax")
 		}
 	}
 	return nil
