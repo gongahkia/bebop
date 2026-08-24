@@ -15,6 +15,7 @@ import (
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/modules"
+	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -230,6 +231,14 @@ func TestSavedPlanRejectsInventoryAliasRetargeting(t *testing.T) {
 	var categorized *errs.Error
 	if !errors.As(err, &categorized) || categorized.Code != errs.TargetIdentityMismatch {
 		t.Fatalf("retargeted alias was not rejected: %v", err)
+	}
+}
+
+func TestHumanPlanRenderingUsesShortFingerprint(t *testing.T) {
+	var output bytes.Buffer
+	renderPlan(&output, plan.Plan{Target: "local", Fingerprint: "0123456789abcdef"}, false)
+	if !strings.Contains(output.String(), "Plan fingerprint: 0123456789ab") || strings.Contains(output.String(), "0123456789abcdef") {
+		t.Fatalf("human fingerprint was not shortened: %s", output.String())
 	}
 }
 

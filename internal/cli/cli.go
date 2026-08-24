@@ -956,7 +956,7 @@ func renderFacts(output io.Writer, host facts.HostFacts) {
 }
 
 func renderPlan(output io.Writer, result plan.Plan, showCommands bool) {
-	fmt.Fprintf(output, "Target: %s\nPlan fingerprint: %s\n", result.Target, result.Fingerprint)
+	fmt.Fprintf(output, "Target: %s\nPlan fingerprint: %s\n", result.Target, shortFingerprint(result.Fingerprint))
 	if len(result.Changes) == 0 {
 		fmt.Fprintln(output, "\nNo changes.")
 	}
