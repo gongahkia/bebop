@@ -202,6 +202,11 @@ func TestLaunchdInstallReconcilesOwnedFilesAndRefusesSymlinks(t *testing.T) {
 	if err := os.WriteFile(unrelated, []byte("unrelated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	foreignName := scheduler.Label("foreign") + ".plist"
+	foreign := filepath.Join(scheduler.LaunchAgentDirectory, foreignName)
+	if err := os.WriteFile(foreign, []byte("<plist><dict><string>"+scheduler.ConfigPath+"</string></dict></plist>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	changes, err := scheduler.Install(context.Background(), []config.MaintenanceJob{job}, false)
 	if err != nil || len(changes) != 1 || changes[0].Action != "install" || !loaded[scheduler.Label(job.Name)] {
 		t.Fatalf("install = %#v %v", changes, err)
@@ -216,6 +221,9 @@ func TestLaunchdInstallReconcilesOwnedFilesAndRefusesSymlinks(t *testing.T) {
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("unrelated LaunchAgent was touched: %v", err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("unmarked project-prefixed LaunchAgent was touched: %v", err)
 	}
 	if _, err := scheduler.Uninstall(context.Background(), []config.MaintenanceJob{job}); err != nil {
 		t.Fatal(err)
@@ -234,6 +242,24 @@ func TestLaunchdInstallReconcilesOwnedFilesAndRefusesSymlinks(t *testing.T) {
 	contents, err := os.ReadFile(target)
 	if err != nil || string(contents) != "outside" {
 		t.Fatalf("symlink target was modified: %q %v", contents, err)
+	}
+}
+
+func TestLaunchdRefusesInvalidPlistValidationResult(t *testing.T) {
+	scheduler, _ := testLaunchd(t)
+	job := testScheduledJob(t)
+	originalRun := scheduler.run
+	scheduler.run = func(ctx context.Context, program string, arguments ...string) (string, error) {
+		if program == scheduler.Plutil {
+			return "invalid plist", errors.New("plutil rejected plist")
+		}
+		return originalRun(ctx, program, arguments...)
+	}
+	if _, err := scheduler.Install(context.Background(), []config.MaintenanceJob{job}, false); err == nil || !strings.Contains(err.Error(), "validate LaunchAgent plist") {
+		t.Fatalf("invalid plist validation result = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(scheduler.LaunchAgentDirectory, scheduler.PlistName(job.Name))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unvalidated plist was installed: %v", err)
 	}
 }
 

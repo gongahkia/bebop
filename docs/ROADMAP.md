@@ -1,5 +1,17 @@
 # Roadmap
 
+## Implemented in M9: portable native controller schedulers
+
+- A centralized controller scheduler adapter boundary for the existing typed
+  maintenance policy: Linux systemd user timers, macOS launchd LaunchAgents,
+  and explicit unsupported-controller diagnostics.
+- Deterministic project-scoped native identities, direct absolute Bebop argv,
+  safe environment minimization, atomic artifact reconciliation, loaded/enabled
+  verification, drift/status reporting, and conservative M7 Linux-unit
+  migration.
+- No Bebop daemon, target scheduler, cron emulation, Windows Task Scheduler,
+  arbitrary commands, or copied notification secrets.
+
 ## Implemented in M8: local-first notifications and operational events
 
 - Strict controller-local notification policy with secret-reference-only file
@@ -91,8 +103,6 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M9: broader native controller scheduler adapters, beginning with macOS
-  launchd, while preserving typed jobs and no-daemon operation semantics.
 - Broader Linux distribution support, then macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, and richer
   drift controls.

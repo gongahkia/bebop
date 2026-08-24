@@ -8,10 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/bebop-home/bebop/internal/config"
 )
+
+const schedulerSafePath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 // SchedulerAdapter decides when a typed maintenance invocation starts. It
 // never executes a maintenance operation itself: every native artifact invokes
@@ -174,6 +177,15 @@ func schedulerArtifactFingerprint(contents ...string) string {
 		_, _ = hash.Write([]byte{0})
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func sortedArtifactNames(artifacts map[string]string) []string {
+	names := make([]string, 0, len(artifacts))
+	for name := range artifacts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NewScheduler is the sole production scheduler resolver. Platform selection

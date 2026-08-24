@@ -183,9 +183,9 @@ secret references. Response bodies are discarded; delivery history stores only
 the safe category, attempt count, and HTTP status.
 
 M8 intentionally does not implement a desktop sink: controller graphical
-sessions are not reliable for unattended systemd user timers, and file/webhook
-sinks provide portable explicit behavior. It also has no command sink and no
-inbound endpoint.
+sessions are not a reliable notification boundary for unattended systemd user
+timers or launchd LaunchAgents, and file/webhook sinks provide portable explicit
+behavior. It also has no command sink and no inbound endpoint.
 
 ## Commands
 
@@ -212,3 +212,10 @@ machine IDs. This applies before JSON serialization, local state/history, file
 sinks, and webhook payloads. Delivery errors use categories such as `timeout`,
 `server_error`, or `authentication`, never raw endpoint strings or response
 bodies.
+
+M9 scheduler artifacts remain outside this boundary: neither systemd units nor
+launchd plists contain webhook values or authorization headers. On macOS, a
+LaunchAgent does not receive an interactive shell environment by default; an
+operator must arrange referenced variables in the launchd user domain. `bebop
+notification status` can report availability to the current controller process,
+but it cannot prove that a later LaunchAgent receives the same environment.

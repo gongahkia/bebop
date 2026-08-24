@@ -24,7 +24,6 @@ const launchdPlistHeader = `<?xml version="1.0" encoding="UTF-8"?>
 
 const launchdManagedMarker = "<!-- Managed by Bebop. Do not edit; run bebop maintenance install. -->\n"
 
-const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 const schedulerCommandTimeout = 10 * time.Second
 
 // Launchd owns only project-scoped user LaunchAgents. It creates finite
@@ -56,8 +55,8 @@ func NewLaunchdWithContext(install SchedulerContext) Launchd {
 		Home:                 install.Home,
 		UID:                  install.UID,
 		Platform:             install.Platform,
-		Launchctl:            "launchctl",
-		Plutil:               "plutil",
+		Launchctl:            "/bin/launchctl",
+		Plutil:               "/usr/bin/plutil",
 	}
 }
 
@@ -152,7 +151,7 @@ func (scheduler Launchd) renderPlist(job config.MaintenanceJob) (string, error) 
 	writePlistString(&result, "  ", "WorkingDirectory", scheduler.ProjectRoot)
 	result.WriteString("  <key>EnvironmentVariables</key>\n  <dict>\n")
 	writePlistString(&result, "    ", "HOME", scheduler.Home)
-	writePlistString(&result, "    ", "PATH", launchdPath)
+	writePlistString(&result, "    ", "PATH", schedulerSafePath)
 	result.WriteString("  </dict>\n")
 	writePlistString(&result, "  ", "ProcessType", "Background")
 	if err := writeLaunchdSchedule(&result, job.Schedule); err != nil {
@@ -380,6 +379,9 @@ func (scheduler Launchd) Uninstall(ctx context.Context, _ []config.MaintenanceJo
 		return nil, fmt.Errorf("scheduler %s: %s", capability, detail)
 	}
 	owned, err := scheduler.ownedPlists()
+	if errors.Is(err, os.ErrNotExist) {
+		return []UnitChange{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -505,14 +507,14 @@ func (scheduler Launchd) launchctlProgram() string {
 	if scheduler.Launchctl != "" {
 		return scheduler.Launchctl
 	}
-	return "launchctl"
+	return "/bin/launchctl"
 }
 
 func (scheduler Launchd) plutilProgram() string {
 	if scheduler.Plutil != "" {
 		return scheduler.Plutil
 	}
-	return "plutil"
+	return "/usr/bin/plutil"
 }
 
 func (scheduler Launchd) checkLaunchAgentDirectory(create bool) error {

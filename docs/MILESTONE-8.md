@@ -33,7 +33,7 @@ local dedupe/recovery state, and makes bounded outbound delivery attempts.
 M8 has no daemon, cloud relay, telemetry, notification queue, remote command,
 inbound webhook/API, chatops, automatic remediation, arbitrary command hook,
 desktop adapter, vendor integration catalog, escalation engine, or historical
-event replay. It does not make Windows systemd scheduling available; Windows
+event replay. It does not make Windows native scheduling available; Windows
 keeps the existing cross-build/manual controller boundary with a real local
 lease implementation.
 

@@ -6,6 +6,10 @@ scheduled backup, doctor, and update-awareness jobs, install deterministic
 Linux systemd user timers explicitly, and inspect their local history/state.
 Targets remain agentless.
 
+M9 later preserves this policy/runtime and adds a macOS controller adapter plus
+project-scoped native artifact ownership. This document records the original M7
+scope; see [M9](MILESTONE-9.md) for current scheduler behavior.
+
 ## Delivered boundary
 
 - Strict versioned controller maintenance policy, portable daily/weekly/hourly

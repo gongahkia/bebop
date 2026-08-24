@@ -290,9 +290,10 @@ func (r *Runner) maintenanceInstall(arguments []string) error {
 	}
 	if *jsonOutput {
 		return writeJSON(r.Out, struct {
+			Backend string                   `json:"backend"`
 			DryRun  bool                     `json:"dry_run"`
 			Changes []maintenance.UnitChange `json:"changes"`
-		}{DryRun: *dryRun, Changes: changes})
+		}{Backend: scheduler.Backend(), DryRun: *dryRun, Changes: changes})
 	}
 	if len(changes) == 0 {
 		fmt.Fprintln(r.Out, "Maintenance scheduler artifacts are current.")
@@ -339,8 +340,9 @@ func (r *Runner) maintenanceUninstall(arguments []string) error {
 	}
 	if *jsonOutput {
 		return writeJSON(r.Out, struct {
+			Backend string                   `json:"backend"`
 			Changes []maintenance.UnitChange `json:"changes"`
-		}{changes})
+		}{Backend: scheduler.Backend(), Changes: changes})
 	}
 	if len(changes) == 0 {
 		fmt.Fprintln(r.Out, "No Bebop-owned maintenance scheduler artifacts were installed.")
@@ -408,6 +410,7 @@ func (r *Runner) maintenanceStatus(arguments []string) error {
 		}
 	}
 	writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(writer, "Scheduler backend: %s\n", scheduler.Backend())
 	fmt.Fprintln(writer, "JOB\tSCHEDULE\tSCHEDULER\tLAST RUN\tRESULT")
 	for _, status := range statuses {
 		job, _ := maintenanceJob(cfg.Maintenance.Jobs, status.Job)

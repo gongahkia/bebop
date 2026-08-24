@@ -248,7 +248,7 @@ checking health; already stopped services remain stopped. Restore is planned,
 identity/config/snapshot/destination-state guarded, and `empty-only`: Bebop
 refuses to overwrite non-empty data. See [backup documentation](docs/BACKUPS.md).
 
-## Scheduled maintenance (M7)
+## Scheduled maintenance (M7/M9)
 
 M7 makes a small set of existing safe operations repeatable from the
 **controller**. It does not add a Bebop daemon, a target agent, arbitrary cron
@@ -306,14 +306,16 @@ invocation rechecks its policy before target access.
 ./bin/bebop maintenance uninstall --yes
 ```
 
-On Linux controllers, explicit installation writes deterministic systemd
-**user** services/timers with absolute project, config, inventory, and Bebop
-paths. `maintenance status` detects stale project/binary/policy/unit content.
-macOS and Windows retain manual `maintenance run` where underlying operations
-work and the local crash-safe lock is available. Windows remains cross-build
-supported with an OS-backed local job lease, but has no native scheduler adapter.
-See
-[MAINTENANCE.md](docs/MAINTENANCE.md).
+Explicit scheduler installation is controller-only. Linux uses deterministic
+project-scoped systemd **user** services/timers; macOS uses deterministic
+project-scoped launchd **LaunchAgents** in `~/Library/LaunchAgents`. Both call
+the same direct `maintenance run --scheduled` entrypoint with captured absolute
+paths, a narrow system `PATH`, no shell wrapper, and no copied notification
+secrets. `maintenance status` detects project/binary/policy/artifact drift.
+Windows remains cross-build supported with an OS-backed local job lease, but
+has no native scheduler adapter. See [MAINTENANCE.md](docs/MAINTENANCE.md) for
+native timing, user-session prerequisites, M7 migration, and notification
+environment limits.
 
 ## Local-first notifications (M8)
 
@@ -442,6 +444,8 @@ make test-storage
 make test-storage-integration
 make test-maintenance
 make test-maintenance-integration
+make test-schedulers
+make test-launchd
 make test-notifications
 make test-notification-integration
 make recipe-validate
@@ -456,7 +460,10 @@ is deliberately not claimed as container coverage. `make
 test-compose-integration` uses an opt-in, privileged nested Docker daemon. It
 validates real staged transfer and Compose lifecycle behavior in a disposable
 runtime, but it does not claim systemd coverage; the target is Docker-in-Docker
-rather than a full Debian/Ubuntu systemd VM.
+rather than a full Debian/Ubuntu systemd VM. `make test-launchd` is deliberately
+guarded: it runs only on macOS when `BEBOP_LAUNCHD_INTEGRATION=1` and
+`BEBOP_LAUNCHD_BINARY` names a stable absolute installed binary. Normal Linux
+development skips it without touching a controller scheduler.
 
 Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
 [M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md),
@@ -465,5 +472,6 @@ Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
 [M7 scope](docs/MILESTONE-7.md), [services](docs/SERVICES.md),
 [backups](docs/BACKUPS.md), [recipes](docs/RECIPES.md),
 [maintenance](docs/MAINTENANCE.md), [notifications](docs/NOTIFICATIONS.md),
-[M8 scope](docs/MILESTONE-8.md), and [roadmap](docs/ROADMAP.md) before
+[M8 scope](docs/MILESTONE-8.md), [M9 scope](docs/MILESTONE-9.md), and
+[roadmap](docs/ROADMAP.md) before
 extending Bebop.

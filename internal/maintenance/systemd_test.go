@@ -29,6 +29,9 @@ func TestSystemdUnitsAreDeterministicAndShellFree(t *testing.T) {
 	if strings.Contains(service, "/bin/sh -c") || !strings.Contains(service, "ExecStart=") || !strings.Contains(service, "\"maintenance\" \"run\"") {
 		t.Fatalf("generated service is not a direct typed invocation: %s", service)
 	}
+	if !strings.Contains(service, "Environment=\"PATH=/usr/bin:/bin:/usr/sbin:/sbin\"") {
+		t.Fatalf("generated service does not set the narrow scheduler PATH: %s", service)
+	}
 	if !strings.Contains(service, "project %% path") || !strings.Contains(service, "bebop %% binary") {
 		t.Fatalf("systemd specifier escaping missing: %s", service)
 	}
@@ -60,7 +63,7 @@ func TestSystemdStatusDetectsTamperingAndConfigDrift(t *testing.T) {
 		}
 	}
 	statuses, err := scheduler.Status(context.Background(), []config.MaintenanceJob{job})
-	if err != nil || len(statuses) != 1 || statuses[0].State != "current" {
+	if err != nil || len(statuses) != 1 || statuses[0].State != "current" || !statuses[0].Installed || !statuses[0].Loaded {
 		t.Fatalf("current status = %#v, %v", statuses, err)
 	}
 	service := filepath.Join(scheduler.UnitDirectory, scheduler.ServiceName(job.Name))
@@ -213,6 +216,25 @@ func TestSystemdProjectScopedArtifactsCoexist(t *testing.T) {
 	}
 }
 
+func TestSystemdRefusesSymlinkedOwnedArtifact(t *testing.T) {
+	scheduler := testSystemd(t)
+	job := testScheduledJob(t)
+	target := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(target, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(scheduler.UnitDirectory, scheduler.ServiceName(job.Name))); err != nil {
+		t.Skipf("symlink test unavailable: %v", err)
+	}
+	if _, err := scheduler.Install(context.Background(), []config.MaintenanceJob{job}, false); err == nil {
+		t.Fatal("symlinked scheduler unit was accepted")
+	}
+	contents, err := os.ReadFile(target)
+	if err != nil || string(contents) != "outside" {
+		t.Fatalf("symlink target was modified: %q %v", contents, err)
+	}
+}
+
 func TestSystemdCapabilityExplainsUnavailableUserManager(t *testing.T) {
 	scheduler := testSystemd(t)
 	scheduler.run = func(context.Context, string, ...string) (string, error) {
@@ -238,6 +260,9 @@ func testSystemd(t *testing.T) SystemdUser {
 		for _, argument := range arguments {
 			if argument == "is-enabled" {
 				return "enabled", nil
+			}
+			if argument == "is-active" {
+				return "active", nil
 			}
 		}
 		return "", nil

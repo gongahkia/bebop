@@ -224,7 +224,7 @@ The optional storage module has only mount-point, fstab-entry, and mount
 actions, ordered before dependent services and covered by the ordinary apply
 lock. It has no formatting or device-management action. See [STORAGE.md](STORAGE.md).
 
-## M7 scheduled operations and history
+## M7/M9 scheduled operations and history
 
 M7 is a controller-side adapter around existing operations. A strict optional
 `[maintenance]` policy normalizes a small typed job model (`backup`, `doctor`,
@@ -234,31 +234,50 @@ desired state and is deliberately excluded from ordinary convergence-plan
 fingerprints.
 
 ```text
-maintenance TOML -> normalized job -> systemd-user adapter --+-> generated user timer
-                              |                                |
-                              +-> manual maintenance run <------+ 
-                                                               |
-                                                   eligibility + local job lock
-                                                               |
-                           +--------------- existing Bebop operation layers ----------------+
-                           |                         |                                      |
-                        backup.Create             preflight.Run                    apt simulation
-                           |                         |                                      |
-                     target apply flock       read-only SSH inspection       optional locked apt update
-                           |                                                                |
-                           +---------------- typed result -----------------------------------+
-                                                               |
-                                                    immutable local history record
+maintenance TOML -> normalized job -> portable scheduler resolver --+-> Linux systemd-user timer
+                              |                                     +-> macOS launchd LaunchAgent
+                              |                                     +-> unsupported-controller diagnostic
+                              +-> manual maintenance run <----------------+
+                                                                        |
+                                                            eligibility + local job lock
+                                                                        |
+                            +-------------- existing Bebop operation layers ---------------+
+                            |                         |                                     |
+                         backup.Create             preflight.Run                   apt simulation
+                            |                         |                                     |
+                      target apply flock       read-only SSH inspection      optional locked apt update
+                            |                                                               |
+                            +---------------- typed result ----------------------------------+
+                                                                        |
+                                                             immutable local history record
 ```
 
-The Linux systemd adapter generates one `Type=oneshot` user service and one
-`Persistent=true` timer for each enabled job. `ExecStart` is a correctly quoted
-absolute Bebop executable plus `maintenance run --scheduled`, absolute config,
-absolute inventory, and safe job name; it does not use a shell wrapper, copy
-secrets, or rely on scheduler `PATH`/cwd. The unit content is the scheduler
-fingerprint: status compares exact desired bytes to detect policy, project,
-binary, and manual-edit drift. Installation/reconciliation is explicit and
-only manages files with Bebop's owned marker.
+`internal/maintenance.SchedulerAdapter` is the controller-only native boundary.
+It compiles the existing portable policy into deterministic artifacts but never
+executes a maintenance operation. Every backend uses the same direct absolute
+`bebop maintenance run --scheduled --config ... --inventory ... JOB` entrypoint,
+so `internal/maintenance.Runner`, policy/window validation, leases, target
+locks, history, notification evaluation, and operation results remain
+backend-independent.
+
+The Linux adapter generates project-scoped `Type=oneshot` services and
+`Persistent=true` timers. The macOS adapter generates project-scoped
+`~/Library/LaunchAgents/com.bebop.<project-id>.maintenance.<job>.plist` files
+and loads them in `gui/<uid>` with `launchctl bootstrap`. Both capture canonical
+absolute executable/project/config/inventory paths, use direct argument vectors
+instead of a shell, and set only a narrow system `PATH` plus `HOME` on launchd.
+The Linux service also sets that narrow path so the established OpenSSH client
+resolves predictably. Neither backend copies secret values into native
+artifacts.
+
+Project identity is a deterministic short digest of the canonical project root.
+It scopes ownership without exposing the root in a label/filename; exact
+artifact bytes also bind the canonical paths. Status compares the desired and
+actual artifact digests plus native enabled/loaded state to detect policy,
+project, binary, config, and manual-edit drift. Installation/reconciliation is
+explicit and only manages regular artifacts with Bebop's marker, project-scoped
+identity, and matching config binding. Linux recognizes an M7 legacy unit only
+when that stricter path binding proves it belongs to the current project.
 
 `internal/maintenance.Runner` is the common manual/scheduled entrypoint. It
 checks enabled/window policy before target access, holds a controller-local
@@ -309,7 +328,7 @@ failure.
 `internal/notification` owns policy routing, state, delivery history, safe
 file append, and generic webhook delivery. It has no target transport and no
 provider-specific operation code. Webhook secrets resolve at delivery from the
-controller environment and never enter systemd units, events, history, local
+controller environment and never enter systemd units, launchd plists, events, history, local
 state, or error output. A delivery result is returned separately from the
 maintenance operation result, so delivery failures do not retry or invalidate
 the operation.

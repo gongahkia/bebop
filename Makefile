@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration recipe-validate format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration test-schedulers test-launchd recipe-validate format check run cross
 
 build:
 	@mkdir -p bin
@@ -65,6 +65,16 @@ test-maintenance-integration:
 		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestMaintenanceBackupRetentionAgainstDisposableDind$$' ./internal/integration; \
 	else \
 		echo "Docker daemon unavailable; skipping maintenance integration tests."; \
+	fi
+
+test-schedulers:
+	go test ./internal/maintenance ./internal/cli
+
+test-launchd:
+	@if [ "$$(uname -s)" = "Darwin" ] && [ "$$BEBOP_LAUNCHD_INTEGRATION" = "1" ] && [ -n "$$BEBOP_LAUNCHD_BINARY" ]; then \
+		BEBOP_LAUNCHD_INTEGRATION=1 BEBOP_LAUNCHD_BINARY="$$BEBOP_LAUNCHD_BINARY" go test -tags=integration -run '^TestLaunchdLifecycleAgainstUserDomain$$' ./internal/integration; \
+	else \
+		echo "Launchd integration requires macOS plus BEBOP_LAUNCHD_INTEGRATION=1 and BEBOP_LAUNCHD_BINARY=/absolute/stable/bebop; skipping."; \
 	fi
 
 test-notifications:

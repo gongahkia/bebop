@@ -22,6 +22,8 @@ jobs:
         run: go vet ./...
       - name: Unit tests
         run: go test ./...
+      - name: Portable scheduler adapter tests
+        run: make test-schedulers
       - name: Validate embedded recipe corpus
         run: make recipe-validate
       - name: Race tests

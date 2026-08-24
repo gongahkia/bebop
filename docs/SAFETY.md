@@ -176,7 +176,7 @@ portability, but cross-host bind paths and applications can still require
 compatible ownership expectations. Architecture differences are reported as a
 warning, not a claim of application compatibility.
 
-## M7 unattended maintenance boundary
+## M7/M9 unattended maintenance boundary
 
 Maintenance policy is controller-side, strict versioned TOML. Jobs are limited
 to typed `backup`, `doctor`, and `update-check` operations; it contains no
@@ -185,14 +185,36 @@ apply, recipe-upgrade, service-restart, package-upgrade, or reboot capability.
 Declaring policy never installs a timer: only explicit `bebop maintenance
 install` mutates the controller scheduler, and it never mutates a target.
 
-Linux M7 units run as the controller user, not root. Bebop records canonical
-absolute project/config/inventory/executable paths and generates direct,
-quoted `ExecStart` arguments—never `/bin/sh -c`. Unit job names are constrained
-identifiers, controller arguments reject control characters, and systemd
-specifier escaping is applied. Unit content is rechecked by `maintenance
-status`; a manual edit, binary move, project move, or policy change is stale
-until an explicit reinstall. Uninstall removes only unit files carrying the
-Bebop ownership marker, preserving policy, snapshots, and history.
+M9 selects a controller-native adapter only: Linux systemd **user** timers,
+macOS user LaunchAgents, or an explicit unsupported result. It does not create
+a daemon, a target scheduler, a LaunchDaemon, cron entry, or Windows task.
+Artifacts run as the controller user, never root. Bebop records canonical
+absolute project/config/inventory/executable paths and generates direct
+arguments—never `/bin/sh -c`. A temporary executable is rejected before an
+artifact can capture it. Job names and labels are constrained identifiers,
+controller arguments reject control characters, systemd specifier escaping is
+applied, and launchd text is XML escaped.
+
+Artifact names include a short deterministic project identifier, so two local
+projects cannot reconcile each other's scheduler state. Exact artifact content
+binds the canonical paths and policy. `maintenance status` rechecks desired
+versus actual bytes plus native state; manual edits, a binary/config/project
+move, a schedule/policy change, or a missing/unloaded artifact is stale until
+explicit reinstall. Reconciliation accepts only safe regular files carrying
+the Bebop marker, expected project-scoped identity, and config binding. It
+does not follow or remove symlinks or unrelated user artifacts. M7 legacy Linux
+units are claimed only after their own managed content proves the same project
+and config binding.
+
+The Linux service and macOS plist set only `/usr/bin:/bin:/usr/sbin:/sbin` (and
+`HOME` in launchd) so `/usr/bin/ssh` is deterministic. No arbitrary inherited
+shell environment, SSH secret, sudo credential, webhook URL, or authorization
+header is written to either artifact. The launchd adapter requires `launchctl`,
+`plutil`, a `gui/<uid>` domain, and a safe LaunchAgents directory; systemd
+requires a reachable user manager and safe user unit directory. Command calls
+are context-bounded. Reconfiguring a changed launchd artifact requires native
+`bootout`/`bootstrap`, which may interrupt that native service; Bebop reports
+any failure and the existing per-job lease remains the overlap boundary.
 
 Every scheduled invocation rechecks enabled/window policy. A window controls
 only timing; it cannot bypass host identity, storage UUID, backup integrity,
@@ -207,7 +229,7 @@ typed summary counts, IDs, fingerprints, and a safe error category, not raw
 stderr, command output, job TOML, secret env content, or SSH/sudo credentials.
 It is observational only: deleting history does not change job eligibility,
 snapshot validity, target state, or locking. Native scheduler logs stay in
-journald.
+journald on Linux or macOS's normal launchd/unified-log diagnostics.
 
 Retention runs only after M4 reports a complete verified new snapshot. It can
 select only verified completed snapshots carrying the same M7 job scope;

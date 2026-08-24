@@ -56,7 +56,7 @@ func NewSystemdUserWithContext(install SchedulerContext) (SystemdUser, error) {
 	if err != nil {
 		return SystemdUser{}, fmt.Errorf("resolve controller user configuration directory: %w", err)
 	}
-	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: install.ProjectRoot, ProjectID: install.ProjectID, ConfigPath: install.ConfigPath, InventoryPath: install.InventoryPath, Executable: install.Executable, Platform: install.Platform, Systemctl: "systemctl", run: runCommand}, nil
+	return SystemdUser{UnitDirectory: filepath.Join(userConfig, "systemd", "user"), ProjectRoot: install.ProjectRoot, ProjectID: install.ProjectID, ConfigPath: install.ConfigPath, InventoryPath: install.InventoryPath, Executable: install.Executable, Platform: install.Platform, Systemctl: "/usr/bin/systemctl", run: runCommand}, nil
 }
 
 func (scheduler SystemdUser) Backend() string { return "systemd-user" }
@@ -66,16 +66,22 @@ func (scheduler SystemdUser) Capability(ctx context.Context) (SchedulerCapabilit
 		scheduler.Platform = runtime.GOOS
 	}
 	if scheduler.Platform != "linux" {
-		return SchedulerUnsupported, "M7 scheduler installation currently supports Linux systemd user timers only"
+		return SchedulerUnsupported, "systemd-user scheduling is supported only on Linux controllers"
 	}
 	program := scheduler.Systemctl
 	if program == "" {
-		program = "systemctl"
+		program = "/usr/bin/systemctl"
 	}
 	if scheduler.run == nil {
 		if _, err := exec.LookPath(program); err != nil {
 			return SchedulerUnavailable, "systemctl is not available on this controller"
 		}
+		if info, err := os.Stat("/usr/bin/ssh"); err != nil || !info.Mode().IsRegular() {
+			return SchedulerUnavailable, "required /usr/bin/ssh is not available for systemd maintenance jobs"
+		}
+	}
+	if err := scheduler.checkUnitDirectory(false); err != nil {
+		return SchedulerUnavailable, conciseError(err)
 	}
 	if _, err := scheduler.systemctl(ctx, "--user", "show-environment"); err != nil {
 		return SchedulerUnavailable, "systemd user manager is unavailable: " + conciseError(err)
@@ -165,7 +171,7 @@ func (scheduler SystemdUser) renderService(job config.MaintenanceJob, serviceNam
 	if err != nil {
 		return "", err
 	}
-	return unitHeader + "# Bebop-Job-Fingerprint: " + fingerprint + "\n[Unit]\nDescription=Bebop maintenance " + job.Name + "\n\n[Service]\nType=oneshot\nWorkingDirectory=" + workingDirectory + "\nExecStart=" + strings.Join(escaped, " ") + "\n", nil
+	return unitHeader + "# Bebop-Job-Fingerprint: " + fingerprint + "\n[Unit]\nDescription=Bebop maintenance " + job.Name + "\n\n[Service]\nType=oneshot\nWorkingDirectory=" + workingDirectory + "\nEnvironment=\"PATH=" + schedulerSafePath + "\"\nExecStart=" + strings.Join(escaped, " ") + "\n", nil
 }
 
 func (scheduler SystemdUser) renderTimer(job config.MaintenanceJob, serviceName string) (string, error) {
@@ -222,14 +228,6 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 	if err != nil {
 		return nil, err
 	}
-	runner := scheduler.run
-	if runner == nil {
-		runner = runCommand
-	}
-	program := scheduler.Systemctl
-	if program == "" {
-		program = "systemctl"
-	}
 	statuses := make([]SystemdStatus, 0, len(jobs))
 	for _, job := range jobs {
 		status := SystemdStatus{Job: job.Name, Backend: scheduler.Backend(), NativeID: scheduler.TimerName(job.Name), Service: scheduler.ServiceName(job.Name), Timer: scheduler.TimerName(job.Name), Enabled: job.Enabled}
@@ -279,9 +277,16 @@ func (scheduler SystemdUser) Status(ctx context.Context, jobs []config.Maintenan
 			statuses = append(statuses, status)
 			continue
 		}
-		output, enabledErr := runner(ctx, program, "--user", "is-enabled", status.Timer)
+		output, enabledErr := scheduler.systemctl(ctx, "--user", "is-enabled", status.Timer)
 		if enabledErr != nil || strings.TrimSpace(output) != "enabled" {
 			status.State = "disabled"
+			statuses = append(statuses, status)
+			continue
+		}
+		output, activeErr := scheduler.systemctl(ctx, "--user", "is-active", status.Timer)
+		if activeErr != nil || strings.TrimSpace(output) != "active" {
+			status.State = "disabled"
+			status.Detail = "scheduler timer is enabled but not active"
 			statuses = append(statuses, status)
 			continue
 		}
@@ -311,10 +316,11 @@ func (scheduler SystemdUser) Install(ctx context.Context, jobs []config.Maintena
 	if dryRun {
 		return changes, nil
 	}
-	if err := os.MkdirAll(scheduler.UnitDirectory, 0o700); err != nil {
+	if err := scheduler.checkUnitDirectory(true); err != nil {
 		return nil, err
 	}
-	for filename, contents := range desired {
+	for _, filename := range sortedArtifactNames(desired) {
+		contents := desired[filename]
 		if err := writeUnitAtomic(filepath.Join(scheduler.UnitDirectory, filename), contents); err != nil {
 			return nil, err
 		}
@@ -345,6 +351,9 @@ func (scheduler SystemdUser) Install(ctx context.Context, jobs []config.Maintena
 		if _, err := scheduler.systemctl(ctx, "--user", "enable", "--now", scheduler.TimerName(job.Name)); err != nil {
 			return nil, fmt.Errorf("enable scheduler timer for %s: %w", job.Name, err)
 		}
+		if _, err := scheduler.systemctl(ctx, "--user", "list-timers", "--all", "--no-legend", scheduler.TimerName(job.Name)); err != nil {
+			return nil, fmt.Errorf("verify scheduler timer for %s: %w", job.Name, err)
+		}
 	}
 	return changes, nil
 }
@@ -354,6 +363,9 @@ func (scheduler SystemdUser) Uninstall(ctx context.Context, jobs []config.Mainte
 		return nil, fmt.Errorf("scheduler %s: %s", capability, detail)
 	}
 	owned, err := scheduler.ownedUnits()
+	if os.IsNotExist(err) {
+		return []UnitChange{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -393,13 +405,13 @@ func (scheduler SystemdUser) changes(jobs []config.MaintenanceJob, desired map[s
 	}
 	changes := make([]UnitChange, 0)
 	for filename, contents := range desired {
-		actual, err := os.ReadFile(filepath.Join(scheduler.UnitDirectory, filename))
+		actual, err := safeReadArtifact(filepath.Join(scheduler.UnitDirectory, filename))
 		switch {
 		case os.IsNotExist(err):
 			changes = append(changes, UnitChange{Action: "install", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 		case err != nil:
 			return nil, err
-		case string(actual) != contents:
+		case actual != contents:
 			changes = append(changes, UnitChange{Action: "update", Unit: filename, Backend: scheduler.Backend(), NativeID: filename})
 		}
 		delete(ownedSet, filename)
@@ -434,6 +446,26 @@ func (scheduler SystemdUser) ownedUnits() ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+func (scheduler SystemdUser) checkUnitDirectory(create bool) error {
+	info, err := os.Lstat(scheduler.UnitDirectory)
+	if os.IsNotExist(err) {
+		if !create {
+			return nil
+		}
+		if err := os.MkdirAll(scheduler.UnitDirectory, 0o700); err != nil {
+			return fmt.Errorf("create systemd user unit directory: %w", err)
+		}
+		info, err = os.Lstat(scheduler.UnitDirectory)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("systemd user unit directory must be a real non-writable directory")
+	}
+	return nil
 }
 
 // legacyOwnedUnits recognizes only old M7 artifacts that bind to this exact
@@ -484,7 +516,7 @@ func uniqueSortedStrings(values []string) []string {
 func (scheduler SystemdUser) systemctl(ctx context.Context, arguments ...string) (string, error) {
 	program := scheduler.Systemctl
 	if program == "" {
-		program = "systemctl"
+		program = "/usr/bin/systemctl"
 	}
 	runner := scheduler.run
 	if runner == nil {
@@ -497,9 +529,6 @@ func (scheduler SystemdUser) systemctl(ctx context.Context, arguments ...string)
 
 func writeUnitAtomic(filename, contents string) error {
 	directory := filepath.Dir(filename)
-	if !schedulerPathContains(directory, filename) || filepath.Dir(filename) != directory {
-		return fmt.Errorf("scheduler unit path escapes its directory")
-	}
 	if info, err := os.Lstat(filename); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
 		return fmt.Errorf("refuse to replace non-regular scheduler unit")
 	} else if err != nil && !os.IsNotExist(err) {
