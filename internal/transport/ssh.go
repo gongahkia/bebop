@@ -68,6 +68,18 @@ func (s *SSH) FileExists(ctx context.Context, path string) (bool, error) {
 	return false, err
 }
 
+func (s *SSH) AcquireApplyLock(ctx context.Context) (ApplyLock, error) {
+	args := []string{"-o", "BatchMode=yes"}
+	if s.target.Port != 0 {
+		args = append(args, "-p", stringPort(s.target.Port))
+	}
+	args = append(args, s.target.User+"@"+s.target.Host)
+	script := lockScript(defaultApplyLockPath)
+	remote := "if test \"$(id -u)\" -eq 0; then exec sh -ceu " + ShellQuote(script) + "; else exec sudo -n sh -ceu " + ShellQuote(script) + "; fi"
+	args = append(args, remote)
+	return acquireProcessLock(ctx, "ssh", args)
+}
+
 func stringPort(port int) string {
 	if port == 0 {
 		return ""

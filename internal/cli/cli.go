@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/bebop-home/bebop/internal/apply"
@@ -21,6 +22,7 @@ import (
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
+	"github.com/bebop-home/bebop/internal/fleet"
 	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/preflight"
@@ -638,8 +640,16 @@ func (r *Runner) doctor(arguments []string) error {
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
+	all := fs.Bool("all", false, "run against every inventory host")
+	parallel := fs.Int("parallel", 4, "maximum concurrent host operations")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
+	}
+	if *all {
+		if fs.NArg() != 0 || common.target != "" {
+			return fmt.Errorf("doctor --all cannot be combined with a host reference or --target")
+		}
+		return r.doctorAll(common, *configPath, flagWasSet(fs, "config"), *parallel)
 	}
 	resolution, err := resolveTarget(fs, common)
 	if err != nil {
@@ -653,9 +663,7 @@ func (r *Runner) doctor(arguments []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
 	result := preflight.Run(ctx, r.Service, resolution.Target, cfg.Storage.DataRoot)
-	if resolution.Alias != "" {
-		result.Checks = append([]preflight.Check{{Status: preflight.Pass, Code: "inventory.resolved", Message: "inventory alias resolved: " + resolution.Alias}}, result.Checks...)
-	}
+	result = withInventoryCheck(result, resolution)
 	report := doctorReport(result)
 	if common.json {
 		if err := writeJSON(r.Out, report); err != nil {
@@ -718,8 +726,16 @@ func (r *Runner) status(arguments []string) error {
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
+	all := fs.Bool("all", false, "run against every inventory host")
+	parallel := fs.Int("parallel", 4, "maximum concurrent host operations")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
+	}
+	if *all {
+		if fs.NArg() != 0 || common.target != "" {
+			return fmt.Errorf("status --all cannot be combined with a host reference or --target")
+		}
+		return r.statusAll(common, *configPath, flagWasSet(fs, "config"), *parallel)
 	}
 	resolution, err := resolveTarget(fs, common)
 	if err != nil {

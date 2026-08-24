@@ -2,10 +2,14 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Request executes a Bebop-controlled POSIX shell script. Callers must use
@@ -30,6 +34,34 @@ type Transport interface {
 	FileExists(context.Context, string) (bool, error)
 	Description() string
 }
+
+// ApplyLocker is optional so existing test and third-party transports remain
+// valid. Built-in local and SSH transports implement it with a target-side
+// flock lease held for the full mutation window.
+type ApplyLocker interface {
+	AcquireApplyLock(context.Context) (ApplyLock, error)
+}
+
+type ApplyLock interface {
+	Release() error
+}
+
+type LockError struct {
+	Busy bool
+	Err  error
+}
+
+func (e *LockError) Error() string {
+	if e.Busy {
+		return "another Bebop apply already holds the target lock"
+	}
+	if e.Err != nil {
+		return "acquire Bebop target lock: " + e.Err.Error()
+	}
+	return "acquire Bebop target lock"
+}
+
+func (e *LockError) Unwrap() error { return e.Err }
 
 // ExitError means the remote command ran but returned a non-zero status.
 type ExitError struct {
@@ -91,4 +123,65 @@ func ClassifyFailure(err error) FailureKind {
 	default:
 		return FailureRemoteCommand
 	}
+}
+
+const defaultApplyLockPath = "/run/lock/bebop.lock"
+
+func lockScript(path string) string {
+	return "exec 9>" + ShellQuote(path) + "\nflock -n 9 || exit 75\nprintf 'bebop-lock-acquired\\n'\ncat >/dev/null"
+}
+
+func acquireProcessLock(ctx context.Context, program string, arguments []string) (ApplyLock, error) {
+	command := exec.CommandContext(ctx, program, arguments...)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return nil, &LockError{Err: err}
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, &LockError{Err: err}
+	}
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return nil, &LockError{Err: err}
+	}
+	lease := &processLock{stdin: stdin, done: make(chan error, 1)}
+	go func() { lease.done <- command.Wait() }()
+	line, readErr := bufio.NewReader(stdout).ReadString('\n')
+	if readErr == nil && line == "bebop-lock-acquired\n" {
+		return lease, nil
+	}
+	_ = stdin.Close()
+	waitErr := <-lease.done
+	if exitCode(waitErr) == 75 {
+		return nil, &LockError{Busy: true, Err: waitErr}
+	}
+	if readErr != nil {
+		return nil, &LockError{Err: fmt.Errorf("wait for lock lease: %w", readErr)}
+	}
+	return nil, &LockError{Err: fmt.Errorf("lock lease did not acknowledge acquisition: %s", strings.TrimSpace(stderr.String()))}
+}
+
+type processLock struct {
+	stdin io.WriteCloser
+	done  chan error
+	once  sync.Once
+	err   error
+}
+
+func (lease *processLock) Release() error {
+	lease.once.Do(func() {
+		_ = lease.stdin.Close()
+		lease.err = <-lease.done
+	})
+	return lease.err
+}
+
+func exitCode(err error) int {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return 0
 }

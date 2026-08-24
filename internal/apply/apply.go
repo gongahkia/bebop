@@ -3,6 +3,7 @@ package apply
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/bebop-home/bebop/internal/errs"
@@ -26,6 +27,21 @@ func Execute(ctx context.Context, reviewed plan.Plan, tr transport.Transport, mo
 	for _, change := range reviewed.Changes {
 		if change.Blocked != "" {
 			return Result{}, errs.New(errs.PlanBlocked, fmt.Sprintf("change %s is blocked: %s", change.ID, change.Blocked), nil)
+		}
+	}
+	var lock transport.ApplyLock
+	if len(reviewed.Changes) > 0 {
+		if locker, supported := tr.(transport.ApplyLocker); supported {
+			acquired, err := locker.AcquireApplyLock(ctx)
+			if err != nil {
+				var lockError *transport.LockError
+				if errors.As(err, &lockError) && lockError.Busy {
+					return Result{}, errs.New(errs.ApplyLocked, lockError.Error(), err)
+				}
+				return Result{}, errs.New(errs.ApplyFailed, "acquire target apply lock", err)
+			}
+			lock = acquired
+			defer lock.Release()
 		}
 	}
 	byName := make(map[string]module.Module, len(modules))

@@ -66,3 +66,29 @@ func TestClassifyFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalApplyLockRejectsOverlapAndReleases(t *testing.T) {
+	local := NewLocalWithLockPath(t.TempDir() + "/bebop.lock")
+	first, err := local.AcquireApplyLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquire first lock: %v", err)
+	}
+	if _, err := local.AcquireApplyLock(context.Background()); err == nil {
+		t.Fatal("second lock acquisition unexpectedly succeeded")
+	} else {
+		var lockError *LockError
+		if !errors.As(err, &lockError) || !lockError.Busy {
+			t.Fatalf("expected busy lock error, got %v", err)
+		}
+	}
+	if err := first.Release(); err != nil {
+		t.Fatalf("release first lock: %v", err)
+	}
+	second, err := local.AcquireApplyLock(context.Background())
+	if err != nil {
+		t.Fatalf("lock did not release: %v", err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+}

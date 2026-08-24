@@ -8,9 +8,16 @@ import (
 	"strings"
 )
 
-type Local struct{}
+type Local struct {
+	lockPath       string
+	lockPrivileged bool
+}
 
-func NewLocal() *Local { return &Local{} }
+func NewLocal() *Local { return &Local{lockPath: defaultApplyLockPath, lockPrivileged: true} }
+
+// NewLocalWithLockPath exists for disposable test environments. Production
+// callers should use NewLocal and its fixed target-side lock location.
+func NewLocalWithLockPath(lockPath string) *Local { return &Local{lockPath: lockPath} }
 
 func (l *Local) Description() string { return "local" }
 
@@ -53,4 +60,14 @@ func (l *Local) FileExists(ctx context.Context, path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func (l *Local) AcquireApplyLock(ctx context.Context) (ApplyLock, error) {
+	program := "sh"
+	arguments := []string{"-ceu", lockScript(l.lockPath)}
+	if l.lockPrivileged && os.Geteuid() != 0 {
+		program = "sudo"
+		arguments = append([]string{"-n", "sh"}, arguments...)
+	}
+	return acquireProcessLock(ctx, program, arguments)
 }
