@@ -1,0 +1,28 @@
+schema_version = 1
+
+[recipe]
+id = "uptime-kuma"
+version = "1.0.0"
+name = "Uptime Kuma"
+description = "Self-hosted availability monitor"
+homepage = "https://github.com/louislam/uptime-kuma"
+license = "MIT"
+application_version = "1.23.16"
+images = ["louislam/uptime-kuma:1.23.16"]
+
+[compatibility]
+architectures = ["amd64", "arm64"]
+
+[service]
+health = "running-only"
+health_timeout = "2m"
+
+[[parameters]]
+name = "port"
+type = "port"
+default = "3001"
+
+[[data]]
+name = "app-data"
+type = "volume"
+volume = "data"

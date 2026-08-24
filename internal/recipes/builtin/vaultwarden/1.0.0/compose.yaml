@@ -1,0 +1,12 @@
+services:
+  app:
+    image: vaultwarden/server:1.32.7
+    env_file: .bebop-secret.env
+    environment:
+      DOMAIN: "${domain}"
+    ports:
+      - "${port}:80"
+    volumes:
+      - data:/data
+volumes:
+  data: {}

@@ -1,0 +1,28 @@
+schema_version = 1
+
+[recipe]
+id = "forgejo"
+version = "1.0.0"
+name = "Forgejo"
+description = "Self-hosted Git forge"
+homepage = "https://forgejo.org/"
+license = "MIT"
+application_version = "10.0.3"
+images = ["codeberg.org/forgejo/forgejo:10.0.3-rootless"]
+
+[compatibility]
+architectures = ["amd64", "arm64"]
+
+[service]
+health = "running-only"
+health_timeout = "2m"
+
+[[parameters]]
+name = "port"
+type = "port"
+default = "3000"
+
+[[data]]
+name = "app-data"
+type = "volume"
+volume = "data"

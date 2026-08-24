@@ -1,0 +1,23 @@
+schema_version = 1
+
+[recipe]
+id = "whoami"
+version = "1.0.0"
+name = "Traefik Whoami"
+description = "Small HTTP echo service for simple deployments and tests"
+homepage = "https://github.com/traefik/whoami"
+license = "MIT"
+application_version = "v1.10.3"
+images = ["traefik/whoami:v1.10.3"]
+
+[compatibility]
+architectures = ["amd64", "arm64"]
+
+[service]
+health = "running-only"
+health_timeout = "2m"
+
+[[parameters]]
+name = "port"
+type = "port"
+default = "8080"

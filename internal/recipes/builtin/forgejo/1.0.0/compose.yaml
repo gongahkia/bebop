@@ -1,0 +1,9 @@
+services:
+  app:
+    image: codeberg.org/forgejo/forgejo:10.0.3-rootless
+    ports:
+      - "${port}:3000"
+    volumes:
+      - data:/var/lib/gitea
+volumes:
+  data: {}

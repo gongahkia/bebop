@@ -1,0 +1,38 @@
+schema_version = 1
+
+[recipe]
+id = "vaultwarden"
+version = "1.0.0"
+name = "Vaultwarden"
+description = "Self-hosted password manager server"
+homepage = "https://github.com/dani-garcia/vaultwarden"
+license = "AGPL-3.0"
+application_version = "1.32.7"
+images = ["vaultwarden/server:1.32.7"]
+
+[compatibility]
+architectures = ["amd64", "arm64"]
+
+[service]
+health = "running-only"
+health_timeout = "2m"
+
+[[parameters]]
+name = "domain"
+type = "string"
+default = "http://localhost:8080"
+
+[[parameters]]
+name = "port"
+type = "port"
+default = "8080"
+
+[[data]]
+name = "app-data"
+type = "volume"
+volume = "data"
+
+[[secrets]]
+name = "admin-token"
+environment = "ADMIN_TOKEN"
+required = true
