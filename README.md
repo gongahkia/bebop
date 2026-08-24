@@ -91,6 +91,37 @@ non-secret source manifest and keyed secret marker. Editing a Compose source or
 referenced secret after review makes `apply --plan` refuse before target
 mutation.
 
+## Deterministic service recipes
+
+M5 adds a small, local corpus of reviewed Compose recipes: `whoami`,
+`uptime-kuma`, `vaultwarden`, and `forgejo`. Recipes are not a marketplace,
+plugin system, remote catalog, or target-side installer. The versioned corpus
+is embedded in the Bebop binary, so listing, validation, rendering, and
+materialization work offline and do not contact a host.
+
+```sh
+./bin/bebop recipe list
+./bin/bebop recipe show uptime-kuma
+./bin/bebop recipe init uptime-kuma --service status --config bebop.toml --param port=3001
+# Review the ordinary files, then use the unchanged workflow:
+./bin/bebop plan pi --config bebop.toml
+```
+
+`recipe init` writes a normal `[services.status]` declaration, a normal
+`services/status/compose.yaml`, and generated `bebop.recipe.json` provenance.
+The planner, saved-plan protection, service lifecycle, data declarations, and
+backup/restore path are exactly the existing M3/M4 paths. A stateful recipe's
+logical data declarations therefore remain explicit backup authorization.
+
+Recipe parameters are strictly typed scalars and renderer substitution happens
+only in declared YAML scalar nodes. Secret values are never parameters: a
+recipe with required secrets needs `--secret-file`, writes only a `*.example`
+template, and reuses M3's existing secret env-file/HMAC-marker boundary.
+Generated source is intentionally not overwritten casually. `recipe upgrade
+SERVICE --to VERSION` requires valid provenance, an unchanged generated source,
+and compatible secret/data declarations; remove `bebop.recipe.json` to eject a
+service to ordinary user-managed Compose source. See [recipe documentation](docs/RECIPES.md).
+
 ## Compose workloads
 
 M3 adds one generic, built-in Compose service resource. It is not an
@@ -256,6 +287,9 @@ make cross
 make test-integration
 make test-ssh-integration
 make test-compose-integration
+make test-backup-integration
+make test-recipe-integration
+make recipe-validate
 ```
 
 Integration tests are opt-in and need a running Docker daemon. `make
@@ -271,6 +305,7 @@ rather than a full Debian/Ubuntu systemd VM.
 
 Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
 [M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md),
-[M3 scope](docs/MILESTONE-3.md), [services](docs/SERVICES.md), and
-[roadmap](docs/ROADMAP.md) before
+[M3 scope](docs/MILESTONE-3.md), [M4 scope](docs/MILESTONE-4.md),
+[M5 scope](docs/MILESTONE-5.md), [services](docs/SERVICES.md),
+[backups](docs/BACKUPS.md), [recipes](docs/RECIPES.md), and [roadmap](docs/ROADMAP.md) before
 extending Bebop.
