@@ -268,7 +268,7 @@ func ServiceConfigurationDigest(deployment services.Deployment) (string, error) 
 		Source      string                        `json:"source"`
 		Data        []services.PersistentResource `json:"data"`
 		Consistency string                        `json:"consistency"`
-	}{Name: deployment.Name, Source: deployment.SourceDigest, Data: deployment.Data, Consistency: deployment.BackupConsistency}
+	}{Name: deployment.Name, Source: deployment.SourceDigest, Data: append([]services.PersistentResource(nil), deployment.Data...), Consistency: deployment.BackupConsistency}
 	for index := range semantic.Data {
 		semantic.Data[index].RuntimeVolume = ""
 		semantic.Data[index].Path = "" // resource path is target-local, logical name/type is portable.

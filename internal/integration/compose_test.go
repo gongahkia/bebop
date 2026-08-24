@@ -162,12 +162,14 @@ func TestBackupRestoreMigrationAgainstDisposableDind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("source backup resource: %#v", sourceDeployment.Data[0])
-	allDeployments, resolveErr := services.ResolveAll(sourceConfig)
-	if resolveErr != nil {
-		t.Fatal(resolveErr)
-	}
-	t.Logf("all backup resource: %#v", allDeployments[0].Data[0])
+	t.Cleanup(func() {
+		_ = filepath.Walk(repository.Root(), func(filename string, info os.FileInfo, err error) error {
+			if err == nil {
+				_ = os.Chmod(filename, 0o700)
+			}
+			return nil
+		})
+	})
 	snapshot, err := backup.Create(context.Background(), repository, backup.CreateRequest{HostAlias: "source", Target: "dind-source", Host: sourceHost, Config: sourceConfig, Service: "hello", Transport: source})
 	if err != nil {
 		t.Fatal(err)
