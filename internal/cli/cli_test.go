@@ -133,6 +133,53 @@ schedule = "daily@03:00"
 	}
 }
 
+func TestNotificationCLIListsTestsAndKeepsSyntheticEventsOutOfActiveIssues(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "bebop.toml")
+	contents := `version = 1
+
+[notifications]
+version = 1
+enabled = true
+state_dir = ".bebop/notifications"
+history_max_entries = 10
+
+[[notifications.sinks]]
+name = "events"
+type = "file"
+path = ".bebop/notifications/events.jsonl"
+
+[[notifications.routes]]
+name = "ops"
+sink = "events"
+events = ["maintenance.failed"]
+recoveries = true
+`
+	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := New()
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	runner.Out, runner.Err = stdout, stderr
+	if code := runner.Run([]string{"notification", "list", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"events"`) {
+		t.Fatalf("notification list failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"notification", "test", "events", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"result": "delivered"`) {
+		t.Fatalf("notification test failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"notification", "status", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"active_issues": []`) {
+		t.Fatalf("notification status failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	contentsBytes, err := os.ReadFile(filepath.Join(directory, ".bebop", "notifications", "events.jsonl"))
+	if err != nil || !strings.Contains(string(contentsBytes), `"test":true`) {
+		t.Fatalf("test file sink = %q %v", contentsBytes, err)
+	}
+}
+
 func TestStorageAdoptRecordsObservedMountedFilesystemWithoutTargetMutation(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "bebop.toml")
 	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {

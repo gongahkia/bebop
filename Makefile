@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration recipe-validate format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration recipe-validate format check run cross
 
 build:
 	@mkdir -p bin
@@ -66,6 +66,12 @@ test-maintenance-integration:
 	else \
 		echo "Docker daemon unavailable; skipping maintenance integration tests."; \
 	fi
+
+test-notifications:
+	go test ./internal/notification ./internal/lease ./internal/config ./internal/maintenance ./internal/cli
+
+test-notification-integration:
+	go test -tags=integration -run '^TestNotification' ./internal/integration
 
 recipe-validate:
 	go run ./cmd/bebop recipe validate

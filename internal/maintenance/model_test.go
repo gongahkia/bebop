@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bebop-home/bebop/internal/config"
+	"github.com/bebop-home/bebop/internal/notification"
 )
 
 type recordingExecutor struct {
@@ -18,6 +19,12 @@ type recordingExecutor struct {
 	calls   int
 	outcome Outcome
 	err     error
+}
+
+type failingNotifier struct{}
+
+func (failingNotifier) Process(context.Context, []notification.Event) ([]notification.DeliveryResult, error) {
+	return nil, errors.New("BEBOP_TEST_SECRET_DO_NOT_LEAK")
 }
 
 func (executor *recordingExecutor) Execute(context.Context, config.MaintenanceJob, Invocation) (Outcome, error) {
@@ -174,6 +181,24 @@ func TestHistoryRejectsWorldWritableDirectory(t *testing.T) {
 	}
 	if _, err := NewHistory(base); err == nil || !strings.Contains(err.Error(), "world-writable") {
 		t.Fatalf("world-writable history directory was accepted: %v", err)
+	}
+}
+
+func TestNotificationFailureDoesNotChangeMaintenanceOperationResult(t *testing.T) {
+	base := maintenanceConfig(t)
+	history, err := NewHistory(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := testJob()
+	runner := Runner{Jobs: []config.MaintenanceJob{job}, Clock: func() time.Time { return time.Date(2026, 8, 24, 3, 0, 0, 0, time.UTC) }, History: history, Locks: LocalLocker{Directory: filepath.Join(base.SourceDirectory(), ".bebop", "maintenance", "locks")}, Executor: &recordingExecutor{outcome: Outcome{Result: Success}}, Notifier: failingNotifier{}}
+	result, err := runner.RunDetailed(context.Background(), job.Name, RunOptions{Origin: "scheduled"})
+	if err != nil || result.Record.Result != Success || result.NotificationError == "" || strings.Contains(result.NotificationError, "BEBOP_TEST_SECRET_DO_NOT_LEAK") {
+		t.Fatalf("notification failure changed or leaked maintenance operation: %#v %v", result, err)
+	}
+	records, err := history.List(job.Name)
+	if err != nil || len(records) != 1 || records[0].Result != Success {
+		t.Fatalf("notification failure changed operation history: %#v %v", records, err)
 	}
 }
 

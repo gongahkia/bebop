@@ -13,6 +13,7 @@ import (
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
+	"github.com/bebop-home/bebop/internal/notification"
 )
 
 const HistorySchemaVersion = 1
@@ -29,19 +30,28 @@ const (
 // Details is a bounded typed operation summary. It deliberately excludes raw
 // terminal output and any source/secret input contents.
 type Details struct {
-	SnapshotID              string   `json:"snapshot_id,omitempty"`
-	Resources               int      `json:"resources,omitempty"`
-	StoredSize              int64    `json:"stored_size,omitempty"`
-	RetentionDeleted        []string `json:"retention_deleted,omitempty"`
-	RetentionCorruptSkipped []string `json:"retention_corrupt_skipped,omitempty"`
-	DoctorPass              int      `json:"doctor_pass,omitempty"`
-	DoctorWarn              int      `json:"doctor_warn,omitempty"`
-	DoctorFail              int      `json:"doctor_fail,omitempty"`
-	UpdatesAvailable        int      `json:"updates_available,omitempty"`
-	SecurityUpdates         int      `json:"security_updates,omitempty"`
-	SecurityClassification  string   `json:"security_classification,omitempty"`
-	MetadataRefreshed       bool     `json:"metadata_refreshed,omitempty"`
-	Reason                  string   `json:"reason,omitempty"`
+	SnapshotID              string    `json:"snapshot_id,omitempty"`
+	Resources               int       `json:"resources,omitempty"`
+	StoredSize              int64     `json:"stored_size,omitempty"`
+	RetentionDeleted        []string  `json:"retention_deleted,omitempty"`
+	RetentionCorruptSkipped []string  `json:"retention_corrupt_skipped,omitempty"`
+	DoctorPass              int       `json:"doctor_pass,omitempty"`
+	DoctorWarn              int       `json:"doctor_warn,omitempty"`
+	DoctorFail              int       `json:"doctor_fail,omitempty"`
+	UpdatesAvailable        int       `json:"updates_available,omitempty"`
+	SecurityUpdates         int       `json:"security_updates,omitempty"`
+	SecurityClassification  string    `json:"security_classification,omitempty"`
+	MetadataRefreshed       bool      `json:"metadata_refreshed,omitempty"`
+	RetentionFailure        bool      `json:"retention_failure,omitempty"`
+	Findings                []Finding `json:"findings,omitempty"`
+	Reason                  string    `json:"reason,omitempty"`
+}
+
+// Finding mirrors only preflight's stable diagnostic code/status. Messages do
+// not enter maintenance history or notification payloads.
+type Finding struct {
+	Code   string `json:"code"`
+	Status string `json:"status"`
 }
 
 // Record is immutable operational provenance. It is observational only; jobs,
@@ -83,45 +93,65 @@ type RunOptions struct {
 	IgnoreWindow bool
 }
 
+// Notifier is deliberately downstream from maintenance execution. It receives
+// already-sanitized events and cannot change the operation result.
+type Notifier interface {
+	Process(context.Context, []notification.Event) ([]notification.DeliveryResult, error)
+}
+
+type InvocationResult struct {
+	Record            Record                        `json:"record"`
+	Notifications     []notification.DeliveryResult `json:"notifications,omitempty"`
+	NotificationError string                        `json:"notification_error,omitempty"`
+}
+
 type Runner struct {
 	Jobs     []config.MaintenanceJob
 	Clock    func() time.Time
 	History  History
 	Locks    Locker
 	Executor Executor
+	Notifier Notifier
 }
 
 func (runner Runner) Run(ctx context.Context, name string, options RunOptions) (Record, error) {
+	result, err := runner.RunDetailed(ctx, name, options)
+	return result.Record, err
+}
+
+// RunDetailed preserves the operation result while exposing separate
+// controller-local notification delivery information to the CLI.
+func (runner Runner) RunDetailed(ctx context.Context, name string, options RunOptions) (InvocationResult, error) {
 	job, found := findJob(runner.Jobs, name)
 	if !found {
-		return Record{}, fmt.Errorf("unknown maintenance job %q", name)
+		return InvocationResult{}, fmt.Errorf("unknown maintenance job %q", name)
 	}
 	if runner.Clock == nil {
 		runner.Clock = time.Now
 	}
 	if runner.Executor == nil {
-		return Record{}, fmt.Errorf("maintenance runner has no operation executor")
+		return InvocationResult{}, fmt.Errorf("maintenance runner has no operation executor")
 	}
 	if options.Origin == "" {
 		options.Origin = "manual"
 	}
 	if options.Origin != "manual" && options.Origin != "scheduled" {
-		return Record{}, fmt.Errorf("invalid maintenance invocation origin")
+		return InvocationResult{}, fmt.Errorf("invalid maintenance invocation origin")
 	}
 	if options.IgnoreWindow && options.Origin == "scheduled" {
-		return Record{}, fmt.Errorf("scheduled maintenance cannot ignore its maintenance window")
+		return InvocationResult{}, fmt.Errorf("scheduled maintenance cannot ignore its maintenance window")
 	}
 	fingerprint, err := job.Fingerprint()
 	if err != nil {
-		return Record{}, err
+		return InvocationResult{}, err
 	}
 	started := runner.Clock().UTC()
 	runID, err := newRunID(started)
 	if err != nil {
-		return Record{}, err
+		return InvocationResult{}, err
 	}
 	record := Record{SchemaVersion: HistorySchemaVersion, RunID: runID, Job: job.Name, JobFingerprint: fingerprint, Operation: job.Type, Target: job.Target, Origin: options.Origin, WindowOverride: options.IgnoreWindow, StartedAt: started}
-	finish := func(result Result, details Details, runErr error) (Record, error) {
+	finish := func(result Result, details Details, runErr error) (InvocationResult, error) {
 		record.FinishedAt = runner.Clock().UTC()
 		record.Result = result
 		record.Details = details
@@ -130,11 +160,23 @@ func (runner Runner) Run(ctx context.Context, name string, options RunOptions) (
 		}
 		if err := runner.History.Append(record); err != nil {
 			if runErr != nil {
-				return record, fmt.Errorf("%w; also write maintenance history: %v", runErr, err)
+				return InvocationResult{Record: record}, fmt.Errorf("%w; also write maintenance history: %v", runErr, err)
 			}
-			return record, fmt.Errorf("write maintenance history: %w", err)
+			return InvocationResult{Record: record}, fmt.Errorf("write maintenance history: %w", err)
 		}
-		return record, runErr
+		invocation := InvocationResult{Record: record}
+		if runner.Notifier != nil {
+			events, deriveErr := notification.Derive(notificationOperation(record, runErr))
+			if deriveErr != nil {
+				invocation.NotificationError = "event derivation failed"
+			} else {
+				invocation.Notifications, deriveErr = runner.Notifier.Process(ctx, events)
+				if deriveErr != nil {
+					invocation.NotificationError = "notification delivery unavailable"
+				}
+			}
+		}
+		return invocation, runErr
 	}
 	if !job.Enabled {
 		return finish(Skipped, Details{Reason: "disabled"}, nil)
@@ -158,6 +200,25 @@ func (runner Runner) Run(ctx context.Context, name string, options RunOptions) (
 		outcome.Result = Failure
 	}
 	return finish(outcome.Result, outcome.Details, operationErr)
+}
+
+func notificationOperation(record Record, operationErr error) notification.Operation {
+	findings := make([]notification.Finding, 0, len(record.Details.Findings))
+	for _, finding := range record.Details.Findings {
+		findings = append(findings, notification.Finding{Code: finding.Code, Status: finding.Status})
+	}
+	return notification.Operation{RunID: record.RunID, Job: record.Job, Operation: record.Operation, Target: record.Target, Origin: record.Origin, Result: string(record.Result), OccurredAt: record.FinishedAt, FailureCategory: notificationFailureCategory(operationErr), SnapshotID: record.Details.SnapshotID, Updates: record.Details.UpdatesAvailable, SecurityUpdates: record.Details.SecurityUpdates, RetentionFailure: record.Details.RetentionFailure, Reason: record.Details.Reason, Findings: findings}
+}
+
+func notificationFailureCategory(err error) string {
+	if err == nil {
+		return ""
+	}
+	var categorized *errs.Error
+	if errors.As(err, &categorized) {
+		return string(categorized.Code)
+	}
+	return "operation_failed"
 }
 
 // historyError intentionally does not persist raw remote stderr or arbitrary

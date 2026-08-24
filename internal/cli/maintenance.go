@@ -13,6 +13,7 @@ import (
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/maintenance"
+	"github.com/bebop-home/bebop/internal/notification"
 )
 
 func (r *Runner) maintenance(arguments []string) error {
@@ -204,21 +205,61 @@ func (r *Runner) maintenanceRun(arguments []string) error {
 	locksDirectory := filepath.Join(cfg.SourceDirectory(), ".bebop", "maintenance", "locks")
 	executor := maintenance.BebopExecutor{Service: r.Service, PolicyConfig: cfg, InventoryPath: *inventoryPath, OperationTimeout: *timeout}
 	runner := maintenance.Runner{Jobs: cfg.Maintenance.Jobs, History: history, Locks: maintenance.LocalLocker{Directory: locksDirectory}, Executor: executor}
+	notificationSetupError := ""
+	if cfg.Notifications != nil && cfg.Notifications.Enabled {
+		processor, processorErr := notification.NewService(cfg)
+		if processorErr != nil {
+			notificationSetupError = "notification delivery unavailable"
+		} else {
+			runner.Notifier = processor
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	origin := "manual"
 	if *scheduled {
 		origin = "scheduled"
 	}
-	record, runErr := runner.Run(ctx, fs.Arg(0), maintenance.RunOptions{Origin: origin, IgnoreWindow: *ignoreWindow})
+	invocation, runErr := runner.RunDetailed(ctx, fs.Arg(0), maintenance.RunOptions{Origin: origin, IgnoreWindow: *ignoreWindow})
+	if notificationSetupError != "" && invocation.NotificationError == "" {
+		invocation.NotificationError = notificationSetupError
+	}
 	if *jsonOutput {
-		if err := writeJSON(r.Out, record); err != nil {
+		if cfg.Notifications == nil || !cfg.Notifications.Enabled {
+			if err := writeJSON(r.Out, invocation.Record); err != nil {
+				return err
+			}
+		} else if err := writeJSON(r.Out, invocation); err != nil {
 			return err
 		}
 	} else {
-		renderMaintenanceRecord(r.Out, record)
+		renderMaintenanceRecord(r.Out, invocation.Record)
+		renderNotificationSummary(r.Out, invocation)
 	}
 	return runErr
+}
+
+func renderNotificationSummary(output io.Writer, invocation maintenance.InvocationResult) {
+	if len(invocation.Notifications) == 0 && invocation.NotificationError == "" {
+		return
+	}
+	delivered, failed, suppressed := 0, 0, 0
+	for _, result := range invocation.Notifications {
+		switch result.Result {
+		case "delivered":
+			delivered++
+		case "failed":
+			failed++
+		case "suppressed":
+			suppressed++
+		}
+	}
+	if delivered > 0 || suppressed > 0 {
+		fmt.Fprintf(output, "Notifications: delivered=%d suppressed=%d\n", delivered, suppressed)
+	}
+	if failed > 0 || invocation.NotificationError != "" {
+		fmt.Fprintln(output, "Notification: unavailable; underlying maintenance result is unchanged")
+	}
 }
 
 func (r *Runner) maintenanceInstall(arguments []string) error {

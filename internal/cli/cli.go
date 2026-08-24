@@ -70,6 +70,8 @@ func (r *Runner) Run(arguments []string) int {
 		err = r.storage(arguments[1:])
 	case "maintenance":
 		err = r.maintenance(arguments[1:])
+	case "notification":
+		err = r.notification(arguments[1:])
 	case "recipe":
 		err = r.recipe(arguments[1:])
 	case "doctor":
@@ -1049,14 +1051,17 @@ Usage:
   bebop backup list|show SNAPSHOT|verify SNAPSHOT [--config bebop.toml] [--json]
   bebop backup restore SNAPSHOT HOST [--service NAME] [--out FILE]
   bebop backup restore --plan FILE [--config bebop.toml] [--yes]
-	  bebop maintenance list|status|history [--config bebop.toml] [--json]
-	  bebop maintenance show JOB [--config bebop.toml] [--inventory FILE] [--json]
-	  bebop maintenance run JOB [--config bebop.toml] [--inventory FILE] [--ignore-window] [--json]
-	  bebop maintenance install [--config bebop.toml] [--inventory FILE] [--dry-run]
-	  bebop maintenance uninstall --yes [--config bebop.toml] [--inventory FILE]
-	  bebop storage list|inspect|doctor [HOST|--target TARGET] [--config bebop.toml]
-	  bebop storage show NAME [HOST|--target TARGET] [--config bebop.toml]
-	  bebop storage adopt NAME HOST --mount PATH --filesystem-uuid UUID [--managed-mount]
+  bebop maintenance list|status|history [--config bebop.toml] [--json]
+  bebop maintenance show JOB [--config bebop.toml] [--inventory FILE] [--json]
+  bebop maintenance run JOB [--config bebop.toml] [--inventory FILE] [--ignore-window] [--json]
+  bebop maintenance install [--config bebop.toml] [--inventory FILE] [--dry-run]
+  bebop maintenance uninstall --yes [--config bebop.toml] [--inventory FILE]
+  bebop notification list|status|history [--config bebop.toml] [--json]
+  bebop notification show SINK_OR_ROUTE [--config bebop.toml] [--json]
+  bebop notification test SINK [--config bebop.toml] [--json]
+  bebop storage list|inspect|doctor [HOST|--target TARGET] [--config bebop.toml]
+  bebop storage show NAME [HOST|--target TARGET] [--config bebop.toml]
+  bebop storage adopt NAME HOST --mount PATH --filesystem-uuid UUID [--managed-mount]
   bebop recipe list [--json]
   bebop recipe show ID [--version VERSION] [--json]
   bebop recipe init ID --service NAME [--version VERSION] [--output PATH] [--param name=value] [--secret-file PATH] [--config bebop.toml] [--dry-run] [--json]

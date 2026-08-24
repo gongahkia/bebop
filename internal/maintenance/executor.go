@@ -92,6 +92,7 @@ func (executor BebopExecutor) backup(ctx context.Context, job config.Maintenance
 	}
 	retention, err := repository.PlanRetention(scope, job.Retention.KeepLast)
 	if err != nil {
+		details.RetentionFailure = true
 		return Outcome{Result: Warning, Details: details}, fmt.Errorf("backup succeeded but plan retention: %w", err)
 	}
 	for _, snapshot := range retention.Remove {
@@ -99,9 +100,11 @@ func (executor BebopExecutor) backup(ctx context.Context, job config.Maintenance
 	}
 	details.RetentionCorruptSkipped = append(details.RetentionCorruptSkipped, retention.CorruptSkipped...)
 	if err := repository.ApplyRetention(retention); err != nil {
+		details.RetentionFailure = true
 		return Outcome{Result: Warning, Details: details}, fmt.Errorf("backup succeeded but apply retention: %w", err)
 	}
 	if len(details.RetentionCorruptSkipped) > 0 {
+		details.RetentionFailure = true
 		return Outcome{Result: Warning, Details: details}, fmt.Errorf("backup succeeded but retention preserved corrupt snapshot(s): %s", strings.Join(details.RetentionCorruptSkipped, ", "))
 	}
 	return Outcome{Result: Success, Details: details}, nil
@@ -111,6 +114,7 @@ func (executor BebopExecutor) doctor(ctx context.Context, resolution resolve.Res
 	result := preflight.Run(ctx, executor.Service, resolution.Target, cfg)
 	details := Details{}
 	for _, check := range result.Checks {
+		details.Findings = append(details.Findings, Finding{Code: check.Code, Status: string(check.Status)})
 		switch check.Status {
 		case preflight.Pass:
 			details.DoctorPass++

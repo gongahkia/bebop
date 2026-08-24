@@ -27,6 +27,8 @@ const DefaultServiceHealthTimeout = "2m"
 const DefaultBackupDestination = ".bebop/backups"
 const DefaultMaintenanceHistoryDirectory = ".bebop/history"
 const DefaultMaintenanceHistoryMaxEntries = 500
+const DefaultNotificationStateDirectory = ".bebop/notifications"
+const DefaultNotificationHistoryMaxEntries = 1_000
 
 type Config struct {
 	Version  int      `toml:"version" json:"version"`
@@ -38,7 +40,10 @@ type Config struct {
 	// Maintenance is controller-side policy. It is optional so existing
 	// single-target configurations retain their M0-M6 behavior unchanged.
 	Maintenance *Maintenance `toml:"-" json:"maintenance,omitempty"`
-	Services    []Service    `toml:"-" json:"services,omitempty"`
+	// Notifications are controller-side operational policy. They never affect
+	// target convergence or saved-plan validity.
+	Notifications *Notifications `toml:"-" json:"notifications,omitempty"`
+	Services      []Service      `toml:"-" json:"services,omitempty"`
 
 	// sourceDirectory is controller-local context, never desired state. It is
 	// populated by LoadFile so service source paths resolve beside the config
@@ -133,8 +138,9 @@ type rawConfig struct {
 	Backup struct {
 		Destination *string `toml:"destination"`
 	} `toml:"backup"`
-	Maintenance *rawMaintenance `toml:"maintenance"`
-	Services    map[string]struct {
+	Maintenance   *rawMaintenance   `toml:"maintenance"`
+	Notifications *rawNotifications `toml:"notifications"`
+	Services      map[string]struct {
 		Type          *string        `toml:"type"`
 		Source        *string        `toml:"source"`
 		State         *string        `toml:"state"`
@@ -268,6 +274,13 @@ func Decode(reader io.Reader) (Config, error) {
 		}
 		config.Maintenance = &maintenance
 	}
+	if raw.Notifications != nil {
+		notifications, notificationErr := decodeNotifications(*raw.Notifications)
+		if notificationErr != nil {
+			return Config{}, notificationErr
+		}
+		config.Notifications = &notifications
+	}
 	serviceNames := make([]string, 0, len(raw.Services))
 	for name := range raw.Services {
 		serviceNames = append(serviceNames, name)
@@ -327,6 +340,11 @@ func Validate(config Config) error {
 	}
 	if config.Maintenance != nil {
 		if err := ValidateMaintenance(*config.Maintenance); err != nil {
+			return errs.New(errs.ConfigInvalid, err.Error(), nil)
+		}
+	}
+	if config.Notifications != nil {
+		if err := ValidateNotifications(*config.Notifications); err != nil {
 			return errs.New(errs.ConfigInvalid, err.Error(), nil)
 		}
 	}
@@ -711,6 +729,7 @@ func Fingerprint(config Config) (string, error) {
 	// state. Changing a timer must not stale an otherwise reviewed convergence
 	// plan; maintenance jobs carry their own deterministic fingerprints.
 	normalized.Maintenance = nil
+	normalized.Notifications = nil
 	normalized.Services = append([]Service(nil), config.Services...)
 	sort.Slice(normalized.Services, func(i, j int) bool { return normalized.Services[i].Name < normalized.Services[j].Name })
 	encoded, err := json.Marshal(normalized)
