@@ -77,9 +77,22 @@ func (r *Runner) Run(arguments []string) int {
 		return 0
 	}
 	fmt.Fprintln(r.Err, "error:", err)
+	return exitCode(err)
+}
+
+func exitCode(err error) int {
 	var categorized *errs.Error
-	if errors.As(err, &categorized) && categorized.Code == errs.PlanBlocked {
-		return 2
+	if errors.As(err, &categorized) {
+		switch categorized.Code {
+		case errs.ConfigInvalid, errs.InventoryInvalid, errs.TargetInvalid, errs.PlanInvalid:
+			return 2
+		case errs.TargetUnreachable, errs.TargetAuthentication, errs.TargetHostKey, errs.TargetTimeout, errs.UnsupportedOS, errs.MultiHostFailed:
+			return 3
+		case errs.PlanBlocked, errs.PlanTampered, errs.PlanStale, errs.TargetIdentityMismatch:
+			return 4
+		case errs.ApplyLocked, errs.ApplyFailed, errs.VerificationFailed, errs.PrivilegeUnavailable:
+			return 5
+		}
 	}
 	return 1
 }
@@ -166,6 +179,7 @@ func (r *Runner) inspect(arguments []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
+	configPath := fs.String("config", "bebop.toml", "configuration used to select the data root when present")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
@@ -173,9 +187,14 @@ func (r *Runner) inspect(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	path := configured(fs, resolution, *configPath)
+	cfg, err := loadOptionalConfig(path)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	host, _, err := r.Service.Inspect(ctx, resolution.Target, config.DefaultDataRoot)
+	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg.Storage.DataRoot)
 	if err != nil {
 		return err
 	}
@@ -989,11 +1008,17 @@ func (r *Runner) usage() {
 
 Usage:
   bebop version
-  bebop inspect --target local|ssh://user@host[:port] [--json]
-  bebop init --target TARGET [--output bebop.toml] [--force]
-  bebop plan --target TARGET --config bebop.toml [--json] [--show-commands]
-  bebop apply --target TARGET --config bebop.toml [--yes]
-  bebop doctor --target TARGET [--json]
-  bebop status --target TARGET [--json]
+  bebop host add NAME --target TARGET [--config RELATIVE_PATH]
+  bebop host list [--inventory FILE] [--json]
+  bebop host show NAME [--inventory FILE] [--json]
+  bebop host remove NAME --yes [--inventory FILE]
+  bebop bootstrap [HOST|--target TARGET] [--config FILE] [--json]
+  bebop inspect [HOST|--target TARGET] [--config FILE] [--json]
+  bebop init [HOST|--target TARGET] [--output bebop.toml] [--force]
+  bebop plan [HOST|--target TARGET] [--config bebop.toml] [--out FILE] [--json] [--show-commands]
+  bebop apply [HOST|--target TARGET] [--config bebop.toml] [--yes]
+  bebop apply --plan FILE [--config bebop.toml] [--yes]
+  bebop doctor [HOST|--target TARGET|--all] [--parallel N] [--json]
+  bebop status [HOST|--target TARGET|--all] [--parallel N] [--json]
 `)
 }

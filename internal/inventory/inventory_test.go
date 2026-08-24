@@ -96,3 +96,10 @@ func TestConfigPathResolvesOnlyWithinInventoryDirectory(t *testing.T) {
 		t.Fatalf("config path = %q, want %q", got, want)
 	}
 }
+
+func TestAddRejectsControlCharactersBeforeCanonicalSerialization(t *testing.T) {
+	result := Empty()
+	if err := result.Add("pi", Host{Target: "ssh://pi@home", Config: "hosts/pi\n.toml"}); err == nil {
+		t.Fatal("control character in controller path was accepted")
+	}
+}

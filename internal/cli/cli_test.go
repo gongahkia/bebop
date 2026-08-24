@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bebop-home/bebop/internal/artifact"
 	"github.com/bebop-home/bebop/internal/bebop"
+	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/inventory"
 	"github.com/bebop-home/bebop/internal/modules"
 	"github.com/bebop-home/bebop/internal/target"
@@ -198,6 +200,36 @@ func TestFleetReadCommandsKeepSuccessfulHostsWhenOneFails(t *testing.T) {
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || len(report.Hosts) != 2 || report.Hosts[0].Host != "bad" || report.Hosts[0].Error == "" || report.Hosts[1].Host != "pi" {
 		t.Fatalf("fleet doctor JSON lost per-host results: %#v err=%v output=%s", report, err, stdout.String())
+	}
+}
+
+func TestOperationalErrorCategoriesHaveDistinctExitCodes(t *testing.T) {
+	for _, test := range []struct {
+		code errs.Code
+		want int
+	}{
+		{errs.ConfigInvalid, 2},
+		{errs.TargetUnreachable, 3},
+		{errs.PlanStale, 4},
+		{errs.ApplyLocked, 5},
+	} {
+		if got := exitCode(errs.New(test.code, "test", nil)); got != test.want {
+			t.Fatalf("code %s exits %d, want %d", test.code, got, test.want)
+		}
+	}
+}
+
+func TestSavedPlanRejectsInventoryAliasRetargeting(t *testing.T) {
+	inventoryPath := filepath.Join(t.TempDir(), "bebop.hosts.toml")
+	if err := inventory.WriteFile(inventoryPath, inventory.Inventory{Version: inventory.CurrentVersion, Hosts: map[string]inventory.Host{
+		"pi": {Target: "ssh://pi@different-host"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	err := validateSavedInventory(artifact.Artifact{HostAlias: "pi", Target: "ssh://pi@reviewed-host"}, inventoryPath)
+	var categorized *errs.Error
+	if !errors.As(err, &categorized) || categorized.Code != errs.TargetIdentityMismatch {
+		t.Fatalf("retargeted alias was not rejected: %v", err)
 	}
 }
 

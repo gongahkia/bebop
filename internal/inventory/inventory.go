@@ -113,6 +113,11 @@ func ValidateConfigPath(configPath string) error {
 	if strings.ContainsRune(configPath, '\x00') || filepath.IsAbs(configPath) {
 		return fmt.Errorf("config path must be a non-absolute relative path")
 	}
+	for _, character := range configPath {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("config path must not contain control characters")
+		}
+	}
 	cleaned := filepath.Clean(filepath.FromSlash(configPath))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("config path must stay within the inventory directory")

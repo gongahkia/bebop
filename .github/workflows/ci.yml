@@ -22,5 +22,22 @@ jobs:
         run: go vet ./...
       - name: Unit tests
         run: go test ./...
+      - name: Race tests
+        run: go test -race ./...
       - name: Build
         run: go build -o bin/bebop ./cmd/bebop
+      - name: Cross-build controllers
+        run: make cross
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Disposable Debian inspect integration
+        run: make test-integration
+      - name: Disposable Debian and Ubuntu SSH integration
+        run: make test-ssh-integration

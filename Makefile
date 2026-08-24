@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration format check run cross
 
 build:
 	@mkdir -p bin
@@ -14,9 +14,16 @@ test-race:
 
 test-integration:
 	@if docker info >/dev/null 2>&1; then \
-		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration ./internal/integration; \
+		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestDebianInspect$$' ./internal/integration; \
 	else \
 		echo "Docker daemon unavailable; skipping integration tests."; \
+	fi
+
+test-ssh-integration:
+	@if docker info >/dev/null 2>&1; then \
+		BEBOP_INTEGRATION_DOCKER=1 go test -tags=integration -run '^TestSSHInspectAgainstDisposableDebianAndUbuntu$$' ./internal/integration; \
+	else \
+		echo "Docker daemon unavailable; skipping SSH integration tests."; \
 	fi
 
 format:
