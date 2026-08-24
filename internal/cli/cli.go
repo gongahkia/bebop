@@ -793,6 +793,12 @@ func (r *Runner) status(arguments []string) error {
 			fmt.Fprintf(r.Out, "  %s  %s  %s  %s\n", service.Name, service.Desired, service.Runtime, service.Health)
 		}
 	}
+	if len(report.Storage) > 0 {
+		fmt.Fprintln(r.Out, "Storage resources")
+		for _, resource := range report.Storage {
+			fmt.Fprintf(r.Out, "  %s  %s  %s\n", resource.Name, resource.Mount, resource.State)
+		}
+	}
 	fmt.Fprintf(r.Out, "Overall     %s\n", report.Overall)
 	return nil
 }

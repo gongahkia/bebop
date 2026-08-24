@@ -130,16 +130,26 @@ type StorageDevice struct {
 // inspection. Capacity values are shown to operators but only policy outcomes
 // participate in stale-plan protection.
 type Storage struct {
-	Available bool            `json:"available"`
-	Devices   []BlockDevice   `json:"devices,omitempty"`
-	Mounts    []StorageMount  `json:"mounts,omitempty"`
-	Policy    []StoragePolicy `json:"policy,omitempty"`
+	Available    bool                 `json:"available"`
+	Devices      []BlockDevice        `json:"devices,omitempty"`
+	Mounts       []StorageMount       `json:"mounts,omitempty"`
+	MountConfigs []StorageMountConfig `json:"mount_configs,omitempty"`
+	Policy       []StoragePolicy      `json:"policy,omitempty"`
 }
 
 // StoragePolicy is config-relative, non-volatile inspection output. It records
 // whether declared placement and thresholds are currently satisfied without
 // putting exact free-space telemetry into a saved-plan fingerprint.
 type StoragePolicy struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+// StorageMountConfig is a narrowly-scoped inspection of one declared
+// managed-mount fstab mapping. It contains no fstab contents, only whether an
+// equivalent external mapping is safe, Bebop's exact marker is present, or a
+// conflicting mapping requires operator attention.
+type StorageMountConfig struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 }
@@ -224,8 +234,9 @@ type ConvergenceSnapshot struct {
 // free space is volatile; configured threshold outcomes are calculated by the
 // storage module and placed in plan actions/preconditions instead.
 type StorageSnapshot struct {
-	Available bool            `json:"available"`
-	Policy    []StoragePolicy `json:"policy,omitempty"`
+	Available    bool                 `json:"available"`
+	MountConfigs []StorageMountConfig `json:"mount_configs,omitempty"`
+	Policy       []StoragePolicy      `json:"policy,omitempty"`
 }
 
 type StorageMountStable struct {
@@ -263,12 +274,14 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	policy := append([]StoragePolicy(nil), host.Storage.Policy...)
 	sort.Slice(policy, func(i, j int) bool { return policy[i].Name < policy[j].Name })
+	mountConfigs := append([]StorageMountConfig(nil), host.Storage.MountConfigs...)
+	sort.Slice(mountConfigs, func(i, j int) bool { return mountConfigs[i].Name < mountConfigs[j].Name })
 	return ConvergenceSnapshot{
 		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
 		PackageManager: host.PackageManager, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, Firewall: host.Firewall,
-		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, Policy: policy}, DataRoot: host.DataRoot, Services: services,
+		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, MountConfigs: mountConfigs, Policy: policy}, DataRoot: host.DataRoot, Services: services,
 	}
 }
 

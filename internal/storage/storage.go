@@ -17,15 +17,18 @@ import (
 type State string
 
 const (
-	Ready        State = "ready"
-	Unavailable  State = "unavailable"
-	Missing      State = "missing"
-	RootSpill    State = "root-spill"
-	WrongUUID    State = "wrong-uuid"
-	WrongType    State = "wrong-filesystem-type"
-	ReadOnly     State = "read-only"
-	CapacityLow  State = "capacity-low"
-	FreeSpaceLow State = "free-space-low"
+	Ready                 State = "ready"
+	Unavailable           State = "unavailable"
+	Missing               State = "missing"
+	RootSpill             State = "root-spill"
+	WrongUUID             State = "wrong-uuid"
+	WrongType             State = "wrong-filesystem-type"
+	ReadOnly              State = "read-only"
+	CapacityLow           State = "capacity-low"
+	FreeSpaceLow          State = "free-space-low"
+	ConfigConflict        State = "conflicting-mount-config"
+	ConfigUnknown         State = "mount-config-unknown"
+	UnsupportedFilesystem State = "unsupported-filesystem"
 )
 
 type Assessment struct {
@@ -45,6 +48,21 @@ func AssessAll(cfg config.Storage, topology facts.Storage) []Assessment {
 
 func Assess(resource config.StorageResource, topology facts.Storage) Assessment {
 	result := Assessment{Resource: resource}
+	if resource.ManagedMount {
+		for _, mountConfig := range topology.MountConfigs {
+			if mountConfig.Name != resource.Name {
+				continue
+			}
+			switch mountConfig.State {
+			case "conflict":
+				result.State, result.Detail = ConfigConflict, "fstab has a conflicting mapping for the declared UUID or mount point"
+				return result
+			case "unknown":
+				result.State, result.Detail = ConfigUnknown, "Bebop could not determine whether fstab conflicts with the declared mount"
+				return result
+			}
+		}
+	}
 	if !topology.Available {
 		result.State, result.Detail = Unavailable, "target did not provide usable lsblk and findmnt JSON storage facts"
 		return result
@@ -71,10 +89,52 @@ func Assess(resource config.StorageResource, topology facts.Storage) Assessment 
 	return result
 }
 
+// MountConfigProbe classifies only the fstab entries that can affect one
+// declared managed mount. It deliberately ignores unrelated entries and emits
+// no potentially sensitive fstab contents. "external" is an equivalent
+// user-owned UUID mapping that Bebop may use but does not rewrite.
+func MountConfigProbe(resource config.StorageResource) string {
+	mount := transport.ShellQuote(resource.Mount)
+	source := transport.ShellQuote("UUID=" + resource.FilesystemUUID)
+	filesystem := transport.ShellQuote(resource.FilesystemType)
+	marker := transport.ShellQuote("# bebop-storage:" + resource.Name)
+	return "mount=" + mount + "\nsource=" + source + "\nfilesystem=" + filesystem + "\nmarker=" + marker + `
+if ! test -r /etc/fstab; then printf unknown; exit 0; fi
+if grep -Fqx -- "$source $mount ${filesystem:-auto} defaults,nofail 0 2 $marker" /etc/fstab; then printf exact; exit 0; fi
+awk -v mount="$mount" -v source="$source" -v filesystem="$filesystem" '
+  NF && $1 !~ /^#/ {
+    same_source = $1 == source
+    same_mount = $2 == mount
+    same_filesystem = filesystem == "" || $3 == filesystem || $3 == "auto"
+    if (same_source && same_mount && same_filesystem) equivalent = 1
+    else if (same_source || same_mount) conflict = 1
+  }
+  END {
+    if (conflict) print "conflict"
+    else if (equivalent) print "external"
+    else print "absent"
+  }
+' /etc/fstab`
+}
+
+func MountConfigState(resource config.StorageResource, output string) string {
+	state := strings.TrimSpace(output)
+	switch state {
+	case "exact", "external", "absent", "conflict":
+		return state
+	default:
+		return "unknown"
+	}
+}
+
 func assessMounted(result Assessment) Assessment {
 	mount := result.Mount
 	if mount.UUID == "" || mount.UUID != result.Resource.FilesystemUUID {
 		result.State, result.Detail = WrongUUID, "mounted filesystem UUID does not match the declared storage resource"
+		return result
+	}
+	if !placementFilesystemSupported(mount.Filesystem) {
+		result.State, result.Detail = UnsupportedFilesystem, "mounted filesystem type is not supported for Bebop persistent-data placement"
 		return result
 	}
 	if result.Resource.FilesystemType != "" && mount.Filesystem != result.Resource.FilesystemType {
@@ -95,6 +155,15 @@ func assessMounted(result Assessment) Assessment {
 	}
 	result.State, result.Detail = Ready, "mounted filesystem identity and placement policy are satisfied"
 	return result
+}
+
+func placementFilesystemSupported(filesystem string) bool {
+	switch filesystem {
+	case "ext2", "ext3", "ext4", "xfs", "btrfs":
+		return true
+	default:
+		return false
+	}
 }
 
 func Find(cfg config.Storage, name string) (config.StorageResource, bool) {

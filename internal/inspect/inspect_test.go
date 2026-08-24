@@ -34,6 +34,11 @@ func TestInspectStorageNormalizesDevicesMountsAndFallback(t *testing.T) {
 	if !fallback.Available || len(fallback.Mounts) != 1 || fallback.Mounts[0].Target != "/mnt/fast" || fallback.Mounts[0].UUID == "" {
 		t.Fatalf("lsblk fallback was not safe/useful: %#v", fallback)
 	}
+	tr.lsblk, tr.findmnt = "not-json", `{"filesystems":[{"target":"/mnt/fast","source":"/dev/nvme0n1p1","fstype":"ext4","options":"rw","size":900,"avail":600}]}`
+	findmntOnly := inspectStorage(context.Background(), tr)
+	if !findmntOnly.Available || len(findmntOnly.Devices) != 0 || len(findmntOnly.Mounts) != 1 || findmntOnly.Mounts[0].UUID != "" || findmntOnly.Mounts[0].AvailableBytes != 600 {
+		t.Fatalf("findmnt-only fallback was not safely normalized: %#v", findmntOnly)
+	}
 }
 
 type storageTransport struct{ output string }

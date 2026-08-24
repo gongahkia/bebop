@@ -70,3 +70,16 @@ func TestStorageWrongFilesystemBlocksWithoutMutation(t *testing.T) {
 		t.Fatalf("wrong filesystem must be visible but non-mutating: %#v", changes)
 	}
 }
+
+func TestStorageConflictingMountConfigurationBlocksWithoutMutation(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Storage.Resources = []config.StorageResource{{Name: "bulk", Mount: "/mnt/bulk", FilesystemUUID: "11111111-2222-3333-4444-555555555555", ManagedMount: true}}
+	host := facts.HostFacts{SudoAvailable: true, Storage: facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/bulk", UUID: "11111111-2222-3333-4444-555555555555"}}, MountConfigs: []facts.StorageMountConfig{{Name: "bulk", State: "conflict"}}}}
+	changes, _, err := (Storage{}).Plan(host, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action.Script != "" || !strings.Contains(changes[0].Blocked, "conflicting-mount-config") {
+		t.Fatalf("fstab conflict must be visible but non-mutating: %#v", changes)
+	}
+}

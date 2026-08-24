@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -48,10 +49,29 @@ func TestCreatePreservesStoppedServiceState(t *testing.T) {
 	}
 }
 
+func TestCreateBlocksStorageRelativePathWithoutReadyPlacement(t *testing.T) {
+	repository, cfg, deployment, _ := storageRestoreFixture(t)
+	host := restoreHost(deployment)
+	host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/", UUID: "root"}}}
+	fake := &createTransport{archive: tarFixture(t, "state", "portable")}
+	_, err := Create(context.Background(), repository, CreateRequest{Target: "local", Host: host, Config: cfg, Service: deployment.Name, Transport: fake})
+	if err == nil {
+		t.Fatal("backup accepted a root-spill storage-relative path")
+	}
+	var categorized *errs.Error
+	if !errorsAs(err, &categorized) || categorized.Code != errs.PlanBlocked {
+		t.Fatalf("storage placement failure lost plan-blocked category: %v", err)
+	}
+	if fake.streamCalls != 0 {
+		t.Fatalf("backup streamed data after placement validation failed: %d", fake.streamCalls)
+	}
+}
+
 type createTransport struct {
-	scripts   []string
-	streamErr error
-	archive   []byte
+	scripts     []string
+	streamErr   error
+	archive     []byte
+	streamCalls int
 }
 
 func (tr *createTransport) Description() string                              { return "create fake" }
@@ -71,6 +91,7 @@ func (tr *createTransport) Run(_ context.Context, request transport.Request) (tr
 }
 
 func (tr *createTransport) RunStream(_ context.Context, request transport.StreamRequest, output io.Writer) (transport.Result, error) {
+	tr.streamCalls++
 	if tr.streamErr != nil {
 		return transport.Result{}, tr.streamErr
 	}

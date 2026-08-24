@@ -63,8 +63,10 @@ func statusReport(host facts.HostFacts, cfg config.Config) StatusReport {
 	if host.DataRoot.Exists {
 		report.DataRoot = host.DataRoot.Path
 	}
+	storageHealthy := true
 	for _, assessment := range storagepolicy.AssessAll(cfg.Storage, host.Storage) {
 		report.Storage = append(report.Storage, StorageStatus{Name: assessment.Resource.Name, Mount: assessment.Resource.Mount, State: string(assessment.State)})
+		storageHealthy = storageHealthy && assessment.State == storagepolicy.Ready
 	}
 	servicesHealthy := true
 	for _, service := range host.Services {
@@ -85,7 +87,7 @@ func statusReport(host facts.HostFacts, cfg config.Config) StatusReport {
 		}
 	}
 	sort.Slice(report.Services, func(i, j int) bool { return report.Services[i].Name < report.Services[j].Name })
-	if host.Docker.Responsive && host.Tailscale.Connected && report.Updates == "enabled" && report.SSH == "hardened" && host.DataRoot.Exists && servicesHealthy {
+	if host.Docker.Responsive && host.Tailscale.Connected && report.Updates == "enabled" && report.SSH == "hardened" && host.DataRoot.Exists && storageHealthy && servicesHealthy {
 		report.Overall = "healthy"
 	}
 	return report

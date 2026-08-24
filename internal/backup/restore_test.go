@@ -83,6 +83,40 @@ func TestRestoreBlocksNonEmptyDestinationAndWrongHost(t *testing.T) {
 	}
 }
 
+func TestRestoreStoragePlacementAndCapacityAreRechecked(t *testing.T) {
+	repository, cfg, deployment, manifest := storageRestoreFixture(t)
+	host := restoreHost(deployment)
+	host.Storage = readyStorage("bulk", 4<<20)
+	fake := &restoreTransport{}
+	request := RestoreRequest{SnapshotID: manifest.SnapshotID, Target: "local", Config: cfg, Host: host, Service: deployment.Name, Transport: fake}
+	reviewed, err := BuildRestorePlan(context.Background(), repository, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	drifted := request
+	drifted.Host.Storage = facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/", UUID: "root"}}}
+	if _, err := ApplyRestore(context.Background(), repository, reviewed, drifted); err == nil {
+		t.Fatal("restore accepted storage root-spill after review")
+	} else {
+		var categorized *errs.Error
+		if !errorsAs(err, &categorized) || categorized.Code != errs.PlanStale {
+			t.Fatalf("storage placement drift lost stale-plan category: %v", err)
+		}
+	}
+
+	tooSmall := request
+	tooSmall.Host.Storage = readyStorage("bulk", 1)
+	if _, err := BuildRestorePlan(context.Background(), repository, tooSmall); err == nil {
+		t.Fatal("restore plan accepted insufficient destination capacity")
+	} else {
+		var categorized *errs.Error
+		if !errorsAs(err, &categorized) || categorized.Code != errs.PlanBlocked {
+			t.Fatalf("capacity preflight lost plan-blocked category: %v", err)
+		}
+	}
+}
+
 func restoreFixture(t *testing.T) (Repository, config.Config, services.Deployment, Manifest) {
 	t.Helper()
 	root := t.TempDir()
@@ -152,6 +186,84 @@ volume = "data"
 		})
 	})
 	return repository, cfg, deployment, manifest
+}
+
+func storageRestoreFixture(t *testing.T) (Repository, config.Config, services.Deployment, Manifest) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services", "hello"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "hello", "compose.yaml"), []byte(`services:
+  hello:
+    image: alpine:3.20
+    volumes: ["${BEBOP_STORAGE_BULK}/state:/data"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bebop.toml"), []byte(`version = 1
+[backup]
+destination = "backups"
+[storage.resources.bulk]
+mount = "/mnt/bulk"
+filesystem_uuid = "11111111-2222-3333-4444-555555555555"
+filesystem_type = "ext4"
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "app-data"
+type = "path"
+path = "state"
+storage = "bulk"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := services.ResolveOne(cfg, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := repository.Begin(Source{Target: "local", Identity: facts.Identity{MachineID: "source"}}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := stage.WriteArchive(context.Background(), "services/hello/data/app-data.tar", simpleArchive(t, "state", "portable"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.Name, resource.Type = "app-data", "path"
+	digest, err := ServiceConfigurationDigest(deployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.AddService(ServiceManifest{Name: "hello", ConfigurationDigest: digest, Consistency: "stop", Resources: []ResourceManifest{resource}}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := stage.Complete()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = filepath.Walk(repository.Root(), func(filename string, info os.FileInfo, err error) error {
+			if err == nil {
+				_ = os.Chmod(filename, 0o700)
+			}
+			return nil
+		})
+	})
+	return repository, cfg, deployment, manifest
+}
+
+func readyStorage(name string, available int64) facts.Storage {
+	return facts.Storage{Available: true, Mounts: []facts.StorageMount{{Target: "/mnt/" + name, UUID: "11111111-2222-3333-4444-555555555555", Filesystem: "ext4", SizeBytes: 8 << 20, AvailableBytes: available}}}
 }
 
 func restoreHost(deployment services.Deployment) facts.HostFacts {

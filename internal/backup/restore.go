@@ -431,6 +431,10 @@ func ApplyRestore(ctx context.Context, repository Repository, reviewed RestorePl
 		stopped := false
 		for _, resource := range selectedService.deployment.Data {
 			if resource.Type == "path" && resource.Storage != "" {
+				sourceResource, found := snapshotResource(selectedService.snapshot, resource.Name)
+				if !found {
+					return result, errs.New(errs.PlanStale, "snapshot resource mapping changed for "+selectedService.deployment.Name+"/"+resource.Name, nil)
+				}
 				assessment, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, resource.Storage, resource.Path)
 				if err != nil {
 					return result, errs.New(errs.PlanStale, "destination storage placement changed after restore review", err)
@@ -441,7 +445,7 @@ func ApplyRestore(ctx context.Context, repository Repository, reviewed RestorePl
 					}
 					for _, plannedResource := range plannedService.Resources {
 						if plannedResource.Name == resource.Name {
-							if err := storagepolicy.RequireFreeCapacity(assessment, plannedResource.StoredSize); err != nil {
+							if err := storagepolicy.RequireFreeCapacity(assessment, sourceResource.UncompressedSize); err != nil {
 								return result, errs.New(errs.PlanStale, "destination storage capacity changed after restore review", err)
 							}
 						}
@@ -557,6 +561,16 @@ func persistentResource(deployment services.Deployment, name string) (services.P
 	}
 	return services.PersistentResource{}, false
 }
+
+func snapshotResource(service ServiceManifest, name string) (ResourceManifest, bool) {
+	for _, resource := range service.Resources {
+		if resource.Name == name {
+			return resource, true
+		}
+	}
+	return ResourceManifest{}, false
+}
+
 func plannedRestoreService(plan RestorePlan, name string) (RestoreService, bool) {
 	for _, service := range plan.Services {
 		if service.Name == name {

@@ -67,11 +67,24 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.Storage = inspectStorage(ctx, tr)
+	f.Storage.MountConfigs = inspectManagedMountConfigs(ctx, tr, cfg.Storage.Resources)
 	for _, assessment := range storagepolicy.AssessAll(cfg.Storage, f.Storage) {
 		f.Storage.Policy = append(f.Storage.Policy, facts.StoragePolicy{Name: assessment.Resource.Name, State: string(assessment.State)})
 	}
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
+}
+
+func inspectManagedMountConfigs(ctx context.Context, tr transport.Transport, resources []config.StorageResource) []facts.StorageMountConfig {
+	result := make([]facts.StorageMountConfig, 0)
+	for _, resource := range resources {
+		if !resource.ManagedMount {
+			continue
+		}
+		result = append(result, facts.StorageMountConfig{Name: resource.Name, State: storagepolicy.MountConfigState(resource, mustProbe(ctx, tr, storagepolicy.MountConfigProbe(resource)))})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
 }
 
 // mustProbe returns an empty string on a missing optional capability. Failure of
@@ -349,9 +362,7 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 		Devices []rawDevice `json:"blockdevices"`
 	}
 	blockOutput := mustProbe(ctx, tr, "lsblk --json --bytes --output NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,UUID,RO,RM,TRAN,MOUNTPOINTS 2>/dev/null || true")
-	if json.Unmarshal([]byte(blockOutput), &blocks) != nil {
-		return facts.Storage{}
-	}
+	blocksAvailable := json.Unmarshal([]byte(blockOutput), &blocks) == nil
 	devices := make([]facts.BlockDevice, 0)
 	byPath := map[string]facts.BlockDevice{}
 	var flatten func(rawDevice)
@@ -371,8 +382,10 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 			flatten(child)
 		}
 	}
-	for _, device := range blocks.Devices {
-		flatten(device)
+	if blocksAvailable {
+		for _, device := range blocks.Devices {
+			flatten(device)
+		}
 	}
 	sort.Slice(devices, func(i, j int) bool { return devices[i].Path < devices[j].Path })
 
@@ -390,6 +403,9 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 	}
 	mountOutput := mustProbe(ctx, tr, "findmnt --json --bytes --output TARGET,SOURCE,FSTYPE,OPTIONS,SIZE,AVAIL 2>/dev/null || true")
 	if json.Unmarshal([]byte(mountOutput), &found) != nil {
+		if !blocksAvailable {
+			return facts.Storage{}
+		}
 		// lsblk still supplies UUID, filesystem type, and mounted target paths.
 		// Capacity/options are unavailable, so policies that require a threshold
 		// remain conservatively blocked by storage.Assess.
@@ -424,6 +440,10 @@ func inspectStorage(ctx context.Context, tr transport.Transport) facts.Storage {
 		collect(mount)
 	}
 	sort.Slice(mounts, func(i, j int) bool { return mounts[i].Target < mounts[j].Target })
+	// findmnt alone remains useful when lsblk is absent: it provides mounted
+	// topology, filesystem type, read-only state, and capacity. UUID identity is
+	// intentionally unavailable in that fallback, so UUID-declared storage
+	// cannot become ready by guesswork.
 	return facts.Storage{Available: true, Devices: devices, Mounts: mounts}
 }
 

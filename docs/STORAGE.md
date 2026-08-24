@@ -40,16 +40,21 @@ appends only local config metadata; adoption has no target-side mutation.
 
 An assessment distinguishes ready, missing, root-spill (the desired directory
 is really served by `/`), wrong UUID, wrong filesystem type, read-only,
-capacity/free-space threshold failure, and unavailable topology. Deploy,
+capacity/free-space threshold failure, unsupported filesystem, fstab conflict,
+and unavailable topology. M6 supports persistent-data placement only on local
+`ext2`, `ext3`, `ext4`, `xfs`, and `btrfs` filesystems with an observed
+filesystem UUID. Other filesystems remain inspectable but are blocked for
+placement; M6 has no filesystem-specific mutation behavior. Deploy,
 backup, and restore refuse a storage-relative path unless it is ready.
 
 With `managed_mount = true`, a normal reviewed plan can create an empty,
 non-symlink mount directory; append a marker-scoped UUID fstab entry after
-`findmnt --verify`; and mount it. Any existing fstab entry for that mount point,
-non-empty mount point, wrong filesystem, or failed verification blocks. Bebop
-does not rewrite user fstab lines. The ordered actions are mount-point,
-mount-config, mount, then dependent service actions, all under the ordinary
-target apply lock.
+`findmnt --verify`; and mount it. An equivalent existing UUID/mount mapping is
+accepted as externally managed and is never rewritten. A conflicting mapping
+for either the mount point or UUID, a non-empty mount point, wrong filesystem,
+or failed verification blocks; `bebop storage doctor` names the fstab conflict.
+The ordered actions are mount-point, mount-config, mount, then dependent
+service actions, all under the ordinary target apply lock.
 
 Storage topology and filesystem identity are relevant saved-plan state. Exact
 free space is intentionally not fingerprinted; policy threshold satisfaction

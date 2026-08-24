@@ -127,7 +127,9 @@ whole disks found through `lsblk --json`; it does not partition, format,
 resize, encrypt, erase, auto-select, unmount, or automate disks. M6 can mount
 only an already-formatted filesystem whose configured UUID was verified, only
 through explicit `managed_mount` review, an empty non-symlink mount point, and
-a marker-scoped validated fstab entry. It also does not install an OS,
+a marker-scoped validated fstab entry when Bebop owns the mapping. An
+equivalent external UUID mapping is accepted without being rewritten; a
+conflicting UUID or mount-point mapping blocks. It also does not install an OS,
 rotate SSH credentials, delete arbitrary user data,
 perform `apt upgrade`, use convenience installer pipes, send telemetry, depend
 on a Bebop cloud, or invoke an LLM/AI API.

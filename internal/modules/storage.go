@@ -34,7 +34,7 @@ func (Storage) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		changes = append(changes,
 			plan.Change{ID: mountpointID, Module: "storage", Summary: "prepare declared storage mount point", Reason: assessment.Detail, Risk: plan.Privileged, RequiresRoot: true, Current: string(assessment.State), Desired: "empty non-symlink directory " + resource.Mount, Preconditions: []plan.Precondition{{ID: mountpointID + ".safe", Description: "mount point is absent or an empty non-symlink directory", Script: mountpointSafeScript(resource.Mount)}}, Action: plan.Action{Kind: "storage.prepare-mountpoint", Resource: resource.Name, Script: "install -d -m 0750 -o root -g root -- " + transport.ShellQuote(resource.Mount)}, Verification: "mount point is an empty non-symlink directory"},
 			plan.Change{ID: configureID, Module: "storage", Summary: "persist declared filesystem mount", Reason: "managed_mount is enabled for an already-formatted filesystem", Risk: plan.Privileged, RequiresRoot: true, Current: "no Bebop-owned fstab entry", Desired: "UUID " + resource.FilesystemUUID + " mounted at " + resource.Mount, Dependencies: []string{mountpointID}, Preconditions: []plan.Precondition{{ID: configureID + ".safe", Description: "no conflicting fstab mount entry exists", Script: fstabSafeScript(resource)}}, Action: plan.Action{Kind: "storage.configure-mount", Resource: resource.Name, Script: fstabWriteScript(resource)}, Verification: "a validated Bebop-owned fstab entry identifies the declared filesystem UUID"},
-			plan.Change{ID: "storage." + resource.Name + ".mount", Module: "storage", Summary: "mount declared storage filesystem", Reason: "managed mount is not active", Risk: plan.Privileged, RequiresRoot: true, Current: string(assessment.State), Desired: "mounted writable filesystem UUID " + resource.FilesystemUUID, Dependencies: []string{configureID}, Preconditions: []plan.Precondition{{ID: "storage." + resource.Name + ".mount-safe", Description: "mount point remains safe and fstab entry remains exact", Script: mountpointSafeScript(resource.Mount) + "\n" + fstabExactScript(resource)}}, Action: plan.Action{Kind: "storage.mount", Resource: resource.Name, Script: "mount " + transport.ShellQuote(resource.Mount)}, Verification: "configured filesystem UUID is mounted writable at its declared mount point"},
+			plan.Change{ID: "storage." + resource.Name + ".mount", Module: "storage", Summary: "mount declared storage filesystem", Reason: "managed mount is not active", Risk: plan.Privileged, RequiresRoot: true, Current: string(assessment.State), Desired: "mounted writable filesystem UUID " + resource.FilesystemUUID, Dependencies: []string{configureID}, Preconditions: []plan.Precondition{{ID: "storage." + resource.Name + ".mount-safe", Description: "mount point remains safe and fstab entry remains compatible", Script: mountpointSafeScript(resource.Mount) + "\n" + fstabConfiguredScript(resource)}}, Action: plan.Action{Kind: "storage.mount", Resource: resource.Name, Script: "mount " + transport.ShellQuote(resource.Mount)}, Verification: "configured filesystem UUID is mounted writable at its declared mount point"},
 		)
 		for index := len(changes) - 3; index < len(changes); index++ {
 			rootBlocked(&changes[index], host.SudoAvailable)
@@ -60,7 +60,7 @@ func (Storage) Verify(ctx context.Context, tr transport.Transport, cfg config.Co
 	case "storage.prepare-mountpoint":
 		return verify(ctx, tr, mountpointSafeScript(resource.Mount))
 	case "storage.configure-mount":
-		return verify(ctx, tr, fstabExactScript(resource))
+		return verify(ctx, tr, fstabConfiguredScript(resource))
 	case "storage.mount":
 		return verify(ctx, tr, storagepolicy.ReadyPrecondition(resource))
 	default:
@@ -85,17 +85,19 @@ func fstabExactScript(resource config.StorageResource) string {
 	return "grep -Fqx -- " + transport.ShellQuote(fstabLine(resource)) + " /etc/fstab"
 }
 
+func fstabConfiguredScript(resource config.StorageResource) string {
+	return "state=$(\n" + storagepolicy.MountConfigProbe(resource) + "\n)\ntest \"$state\" = exact -o \"$state\" = external"
+}
+
 func fstabSafeScript(resource config.StorageResource) string {
-	mount := transport.ShellQuote(resource.Mount)
-	line := transport.ShellQuote(fstabLine(resource))
-	return "if grep -Fqx -- " + line + " /etc/fstab; then exit 0; fi\nmount=" + mount + "\n! awk -v mount=\"$mount\" 'NF && $1 !~ /^#/ && $2 == mount { found=1 } END { exit found ? 0 : 1 }' /etc/fstab"
+	return "state=$(\n" + storagepolicy.MountConfigProbe(resource) + "\n)\ntest \"$state\" = absent -o \"$state\" = exact -o \"$state\" = external"
 }
 
 func fstabWriteScript(resource config.StorageResource) string {
 	line := transport.ShellQuote(fstabLine(resource))
 	return strings.Join([]string{
-		"if grep -Fqx -- " + line + " /etc/fstab; then exit 0; fi",
-		fstabSafeScript(resource),
+		"state=$(\n" + storagepolicy.MountConfigProbe(resource) + "\n)",
+		"case \"$state\" in exact|external) exit 0 ;; absent) ;; *) exit 1 ;; esac",
 		"temporary=$(mktemp /etc/.bebop-fstab.XXXXXX)",
 		"trap 'rm -f -- \"$temporary\"' EXIT",
 		"cat /etc/fstab > \"$temporary\"",
