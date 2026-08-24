@@ -27,12 +27,13 @@ import (
 const HelperImage = "busybox:1.36.1"
 
 type CreateRequest struct {
-	HostAlias string
-	Target    string
-	Host      facts.HostFacts
-	Config    config.Config
-	Service   string
-	Transport transport.Transport
+	HostAlias   string
+	Target      string
+	Host        facts.HostFacts
+	Config      config.Config
+	Service     string
+	Transport   transport.Transport
+	Maintenance *MaintenanceProvenance
 }
 
 type CreateResult struct {
@@ -78,6 +79,9 @@ func Create(ctx context.Context, repository Repository, request CreateRequest) (
 
 	stage, err := repository.Begin(Source{HostAlias: request.HostAlias, Target: request.Target, Identity: request.Host.Identity(), OS: request.Host.OS, Architecture: request.Host.Architecture}, buildinfo.Version)
 	if err != nil {
+		return result, err
+	}
+	if err := stage.SetMaintenance(request.Maintenance); err != nil {
 		return result, err
 	}
 	completed := false

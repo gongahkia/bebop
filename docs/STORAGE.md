@@ -82,3 +82,11 @@ managed release records a non-secret placement fingerprint. A subsequent
 storage-backed placement change is blocked before deployment/start; take a
 verified backup, restore into the new declared placement, then converge the
 service. M6 never moves live bind-path data automatically.
+
+## Scheduled backup interaction (M7)
+
+M7 schedules the existing M4 backup operation; it does not weaken M6 placement
+policy. A scheduled snapshot refuses missing mounts, root spill, UUID/type
+mismatch, read-only storage, and capacity/free-space policy failure before
+retention can run. A maintenance window is only a controller timing rule, never
+authorization to bypass placement safety.

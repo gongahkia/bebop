@@ -176,6 +176,52 @@ portability, but cross-host bind paths and applications can still require
 compatible ownership expectations. Architecture differences are reported as a
 warning, not a claim of application compatibility.
 
+## M7 unattended maintenance boundary
+
+Maintenance policy is controller-side, strict versioned TOML. Jobs are limited
+to typed `backup`, `doctor`, and `update-check` operations; it contains no
+arbitrary command, shell fragment, secret, scheduler environment file, restore,
+apply, recipe-upgrade, service-restart, package-upgrade, or reboot capability.
+Declaring policy never installs a timer: only explicit `bebop maintenance
+install` mutates the controller scheduler, and it never mutates a target.
+
+Linux M7 units run as the controller user, not root. Bebop records canonical
+absolute project/config/inventory/executable paths and generates direct,
+quoted `ExecStart` arguments—never `/bin/sh -c`. Unit job names are constrained
+identifiers, controller arguments reject control characters, and systemd
+specifier escaping is applied. Unit content is rechecked by `maintenance
+status`; a manual edit, binary move, project move, or policy change is stale
+until an explicit reinstall. Uninstall removes only unit files carrying the
+Bebop ownership marker, preserving policy, snapshots, and history.
+
+Every scheduled invocation rechecks enabled/window policy. A window controls
+only timing; it cannot bypass host identity, storage UUID, backup integrity,
+empty-only restore, SSH BatchMode, non-interactive sudo, target flock, or
+service health guarantees. A same-job controller advisory lock prevents
+duplicate timer/manual runs and releases with its process after crashes. The
+ordinary target flock still serializes stop-consistent backup with apply and
+restore.
+
+M7 history is immutable per-run controller JSON with a bounded count. It stores
+typed summary counts, IDs, fingerprints, and a safe error category, not raw
+stderr, command output, job TOML, secret env content, or SSH/sudo credentials.
+It is observational only: deleting history does not change job eligibility,
+snapshot validity, target state, or locking. Native scheduler logs stay in
+journald.
+
+Retention runs only after M4 reports a complete verified new snapshot. It can
+select only verified completed snapshots carrying the same M7 job scope;
+manual snapshots, other jobs, staging data, malformed repository directories,
+and corrupt candidates are not deleted. If backup fails, retention does not
+run. If retention itself cannot complete, the new verified snapshot remains and
+the run is recorded as a warning/failing scheduler invocation rather than
+pretending maintenance fully succeeded.
+
+`update-check` never installs an upgrade. It uses `apt-get -s upgrade`; optional
+`refresh_metadata = true` runs only `apt-get update` under the existing target
+lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
+timer cannot wait for an SSH host-key/password or sudo password prompt.
+
 ## M5 recipe authoring boundary
 
 Recipes are embedded reviewed data, not arbitrary executable extensions. Bebop

@@ -54,7 +54,21 @@ type Manifest struct {
 	CreatedAt     time.Time         `json:"created_at"`
 	Source        Source            `json:"source"`
 	Services      []ServiceManifest `json:"services"`
-	Digest        string            `json:"digest"`
+	// Maintenance is optional provenance for snapshots created by a declared
+	// M7 maintenance job. It never changes ordinary/manual backup semantics.
+	Maintenance *MaintenanceProvenance `json:"maintenance,omitempty"`
+	Digest      string                 `json:"digest"`
+}
+
+// MaintenanceProvenance scopes retention to declared automated snapshots. A
+// manual snapshot has no provenance and is therefore never selected by M7
+// retention. Scope is a deterministic non-secret digest of the job's logical
+// target/service identity, not a controller filesystem path.
+type MaintenanceProvenance struct {
+	Job            string `json:"job"`
+	Scope          string `json:"scope"`
+	RunID          string `json:"run_id"`
+	JobFingerprint string `json:"job_fingerprint"`
 }
 
 type ServiceManifest struct {
@@ -160,6 +174,21 @@ func (repository Repository) Begin(source Source, version string) (*Stage, error
 }
 
 func (stage *Stage) ID() string { return stage.id }
+
+// SetMaintenance records optional maintenance provenance before a snapshot is
+// populated. It is intentionally unavailable after completion.
+func (stage *Stage) SetMaintenance(value *MaintenanceProvenance) error {
+	if stage.closed {
+		return fmt.Errorf("backup staging snapshot is closed")
+	}
+	if value == nil {
+		stage.manifest.Maintenance = nil
+		return nil
+	}
+	copy := *value
+	stage.manifest.Maintenance = &copy
+	return validateManifest(stage.manifest)
+}
 
 func (stage *Stage) AddService(service ServiceManifest) error {
 	if stage.closed {
@@ -317,6 +346,26 @@ func (repository Repository) Verify(snapshotID string) (Manifest, error) {
 	return manifest, nil
 }
 
+// Delete removes one verified, completed Bebop snapshot. It intentionally
+// accepts only a validated snapshot ID and refuses corrupt/tampered snapshots;
+// retention callers select IDs while this method owns repository path safety.
+func (repository Repository) Delete(snapshotID string) error {
+	directory, err := repository.snapshotPath(snapshotID)
+	if err != nil {
+		return err
+	}
+	if _, err := repository.Verify(snapshotID); err != nil {
+		return err
+	}
+	if err := setDirectoriesWritable(directory); err != nil {
+		return errs.New(errs.VerificationFailed, "prepare verified backup snapshot for deletion", err)
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return errs.New(errs.ConfigInvalid, "remove verified backup snapshot", err)
+	}
+	return nil
+}
+
 func (repository Repository) OpenArchive(snapshotID string, resource ResourceManifest) (*os.File, error) {
 	directory, err := repository.snapshotPath(snapshotID)
 	if err != nil {
@@ -377,6 +426,11 @@ func validateManifest(manifest Manifest) error {
 	if !validSnapshotID(manifest.SnapshotID) || manifest.CreatedAt.IsZero() || manifest.BebopVersion == "" || manifest.Source.Target == "" {
 		return fmt.Errorf("invalid backup snapshot manifest")
 	}
+	if manifest.Maintenance != nil {
+		if !validMaintenanceProvenance(*manifest.Maintenance) {
+			return fmt.Errorf("invalid backup maintenance provenance")
+		}
+	}
 	previousService := ""
 	for _, service := range manifest.Services {
 		if service.Name == "" || service.Name <= previousService || (service.Consistency != "stop" && service.Consistency != "live") {
@@ -398,6 +452,31 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	return nil
+}
+
+func validMaintenanceProvenance(value MaintenanceProvenance) bool {
+	if !validMaintenanceIdentifier(value.Job) || !validMaintenanceIdentifier(value.RunID) || len(value.Scope) != 64 || len(value.JobFingerprint) != 64 {
+		return false
+	}
+	if _, err := hex.DecodeString(value.Scope); err != nil {
+		return false
+	}
+	if _, err := hex.DecodeString(value.JobFingerprint); err != nil {
+		return false
+	}
+	return true
+}
+
+func validMaintenanceIdentifier(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func manifestDigest(manifest Manifest) (string, error) {

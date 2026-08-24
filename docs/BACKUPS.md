@@ -66,3 +66,19 @@ Restore is `empty-only`: missing volumes receive expected Compose labels, existi
 Migration is backup then restore: `hello/app-data` maps to a destination declaration with the same logical identity, followed by normal convergence. amd64/arm64 mismatch is a warning; numeric ownership and application format compatibility remain operator responsibilities.
 
 The fixed `busybox:1.36.1` helper supports Linux amd64/arm64 and is unprivileged, socket-free, network-free, and mounted only to the declared resource (read-only for backup). It may pull once when absent and works offline when cached. M4 excludes Compose releases, `/var/lib/docker`, images, containers, Docker metadata, host roots/disks, controller secret env files, the M3 HMAC key, inventory credentials, and undeclared paths. Use encrypted storage beneath the destination when encryption at rest is required.
+
+## Scheduled retention (M7)
+
+An M7 `type = "backup"` maintenance job calls this exact backup path with no
+new target execution engine. Its optional `retention.keep_last` runs only after
+the new snapshot completes and `backup verify` succeeds. Bebop tags that
+snapshot with non-secret maintenance provenance and a deterministic scope made
+from the job name, resolved target, and selected service. Retention orders
+matching verified snapshots by creation time then snapshot ID and removes only
+the oldest excess snapshots through the same repository-safe deletion method.
+
+Manual `bebop backup create` snapshots have no maintenance provenance and are
+not selected. Another maintenance job, target, or service has a different
+scope. Staging directories, malformed entries, and corrupt snapshots are not
+retention candidates; a detected corrupt job snapshot is retained and produces
+a maintenance warning. Failed backups never invoke retention.

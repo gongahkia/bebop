@@ -1,5 +1,23 @@
 # Roadmap
 
+## Implemented in M7: scheduled operations and unattended maintenance
+
+- Strict controller-side typed maintenance policy for backup, doctor, and
+  Debian apt update-awareness jobs; portable schedules, windows, job
+  fingerprints, explicit Linux user-timer installation, and structured local
+  history.
+- Reuse of M4 backup/M6 storage safety under existing locks, with verified
+  per-job `keep_last` retention that never selects manual or other-job snapshots.
+- No daemon, target agent, arbitrary commands, scheduled restore/apply, package
+  upgrade, image update, or notification integration.
+
+## Implemented in M6: storage workflows and placement policy
+
+- UUID-verified existing-filesystem declarations, discovery/adoption, optional
+  marker-scoped managed mounts, root-spill guards, and capacity policy.
+- Portable logical persistent bind-path placement which M3 service convergence
+  and M4 backup/restore/migration respect without disk provisioning.
+
 ## Implemented in M5: deterministic service recipes
 
 - Small embedded, schema-validated, offline corpus of reviewable Compose recipe
@@ -62,13 +80,11 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M6: explicit storage workflows and placement policy.
-- M7: broader Linux distribution support; M8: macOS/Windows target adapters.
-- Broad application catalog, automated recipe update discovery, notifications,
-  and richer drift controls.
-- M7 — scheduled operations and unattended maintenance: scheduled backups,
-  doctor/health checks, retention execution, maintenance windows, and explicit
-  notifications, retaining the existing manifest/placement safety model.
+- M8: local-first notification integrations over M7's structured operation
+  results and history, without adding arbitrary command hooks or cloud accounts.
+- Broader Linux distribution support, then macOS/Windows target adapters.
+- Broad application catalog, automated recipe update discovery, and richer
+  drift controls.
 - Signed plans, generalized rollback, and transactions.
 - Deterministic agent/MCP integration surfaces that call Bebop APIs, never an
   LLM inside Bebop.

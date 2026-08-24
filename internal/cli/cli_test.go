@@ -90,6 +90,49 @@ func TestInitWritesLocalStarterWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
+func TestMaintenancePolicyCommandsAreControllerLocalAndJSONSafe(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "bebop.toml")
+	contents := `version = 1
+[maintenance]
+version = 1
+
+[[maintenance.jobs]]
+name = "disabled-doctor"
+type = "doctor"
+target = "local"
+enabled = false
+schedule = "daily@03:00"
+`
+	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: bebop.NewService(), In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"maintenance", "list", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"disabled-doctor"`) {
+		t.Fatalf("maintenance list failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".bebop", "history")); !os.IsNotExist(err) {
+		t.Fatalf("read-only maintenance list created history: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"maintenance", "run", "disabled-doctor", "--config", configPath, "--json"}); code != 0 {
+		t.Fatalf("disabled maintenance run failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var record struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil || record.Result != "skipped" {
+		t.Fatalf("disabled maintenance result = %#v %v output=%s", record, err, stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"maintenance", "history", "disabled-doctor", "--config", configPath, "--json"}); code != 0 || !strings.Contains(stdout.String(), `"result": "skipped"`) {
+		t.Fatalf("maintenance history failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestStorageAdoptRecordsObservedMountedFilesystemWithoutTargetMutation(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "bebop.toml")
 	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {

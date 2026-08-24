@@ -179,3 +179,12 @@ deployment inputs and are never part of M4 data snapshots. See [BACKUPS.md](BACK
 Recipe-declared persistent resources compile to exactly these same M4
 declarations. They remain opt-in backup authorization, not an instruction to
 back up every Docker volume used by an application.
+
+## Scheduled service backups (M7)
+
+Maintenance jobs name an ordinary materialized service, not a recipe ID. A
+scheduled backup therefore uses the same declared data resources, `stop`/`live`
+consistency policy, M4 target lock, and health verification described above.
+M7 does not schedule Compose apply, recipe upgrades, generic restarts, image
+updates, or arbitrary service commands. A service selected by a maintenance
+backup must still be declared in the target's resolved config.

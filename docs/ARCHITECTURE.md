@@ -224,6 +224,57 @@ The optional storage module has only mount-point, fstab-entry, and mount
 actions, ordered before dependent services and covered by the ordinary apply
 lock. It has no formatting or device-management action. See [STORAGE.md](STORAGE.md).
 
+## M7 scheduled operations and history
+
+M7 is a controller-side adapter around existing operations. A strict optional
+`[maintenance]` policy normalizes a small typed job model (`backup`, `doctor`,
+or `update-check`), a portable schedule, optional local-time maintenance
+window, retention policy, and deterministic job fingerprint. It is not target
+desired state and is deliberately excluded from ordinary convergence-plan
+fingerprints.
+
+```text
+maintenance TOML -> normalized job -> systemd-user adapter --+-> generated user timer
+                              |                                |
+                              +-> manual maintenance run <------+ 
+                                                               |
+                                                   eligibility + local job lock
+                                                               |
+                           +--------------- existing Bebop operation layers ----------------+
+                           |                         |                                      |
+                        backup.Create             preflight.Run                    apt simulation
+                           |                         |                                      |
+                     target apply flock       read-only SSH inspection       optional locked apt update
+                           |                                                                |
+                           +---------------- typed result -----------------------------------+
+                                                               |
+                                                    immutable local history record
+```
+
+The Linux systemd adapter generates one `Type=oneshot` user service and one
+`Persistent=true` timer for each enabled job. `ExecStart` is a correctly quoted
+absolute Bebop executable plus `maintenance run --scheduled`, absolute config,
+absolute inventory, and safe job name; it does not use a shell wrapper, copy
+secrets, or rely on scheduler `PATH`/cwd. The unit content is the scheduler
+fingerprint: status compares exact desired bytes to detect policy, project,
+binary, and manual-edit drift. Installation/reconciliation is explicit and
+only manages files with Bebop's owned marker.
+
+`internal/maintenance.Runner` is the common manual/scheduled entrypoint. It
+checks enabled/window policy before target access, holds a controller-local
+advisory lock only for the selected job, delegates to the existing target
+operation, then atomically writes a bounded per-run JSON history record. The
+target apply flock remains the mutation authority for backups and optional
+metadata refresh; read-only jobs do not acquire it. History is provenance, not
+correctness state.
+
+Scheduled backup passes M7 job provenance to M4's existing immutable manifest.
+After a successful verified snapshot only, `backup.Repository` deterministically
+selects and safely deletes older verified snapshots with the same logical
+job/target/service scope. Manual snapshots and another job's snapshots carry no
+matching scope and cannot be selected. A corrupt candidate is retained and
+reported rather than automatically removed.
+
 ## M5 deterministic recipe authoring
 
 M5 deliberately sits **before** normal configuration and source resolution; it

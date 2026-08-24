@@ -136,3 +136,11 @@ M3/M4. Recipe images publish the listed architectures, but their applications,
 numeric ownership assumptions, data formats, and secret values remain the
 operator's responsibility. Persistent data migration maps by the normal logical
 resource name, never by a source runtime Docker volume name.
+
+## Maintenance (M7)
+
+Scheduled maintenance addresses the materialized service name after recipe
+authoring is complete. It never names a recipe ID, materializes a recipe,
+checks a registry, upgrades a recipe, or changes a pinned image. A stateful
+recipe's existing logical M4 data declarations remain the only backup
+authorization boundary.

@@ -7,7 +7,7 @@ your existing OpenSSH setup, compares each with a small declarative
 is a CLI, not a dashboard, app store, cloud service, or bespoke operating
 system.
 
-M0/M3 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
+M0–M7 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
 Debian 12/13 as targets. The controller cross-builds for Linux, macOS, and
 Windows remote-SSH workflows; macOS and Windows targets are deliberately
 unsupported.
@@ -248,6 +248,70 @@ checking health; already stopped services remain stopped. Restore is planned,
 identity/config/snapshot/destination-state guarded, and `empty-only`: Bebop
 refuses to overwrite non-empty data. See [backup documentation](docs/BACKUPS.md).
 
+## Scheduled maintenance (M7)
+
+M7 makes a small set of existing safe operations repeatable from the
+**controller**. It does not add a Bebop daemon, a target agent, arbitrary cron
+commands, scheduled apply/restore, package upgrades, or notifications. An
+optional strict policy declares typed jobs:
+
+```toml
+[maintenance]
+version = 1
+history_dir = ".bebop/history"
+history_max_entries = 500
+
+[[maintenance.jobs]]
+name = "nightly-backup"
+type = "backup"
+target = "pi"
+service = "hello"
+schedule = "daily@03:00"
+
+[maintenance.jobs.window]
+start = "02:00"
+end = "05:00"
+
+[maintenance.jobs.retention]
+keep_last = 7
+
+[[maintenance.jobs]]
+name = "weekly-doctor"
+type = "doctor"
+target = "pi"
+schedule = "weekly@sun@08:00"
+
+[[maintenance.jobs]]
+name = "updates"
+type = "update-check"
+target = "pi"
+schedule = "daily@09:00"
+refresh_metadata = false
+```
+
+`schedule` is `hourly`, `daily@HH:MM`, or `weekly@mon@HH:MM` through
+`weekly@sun@HH:MM`, in the controller's local timezone. Windows are optional,
+start-inclusive/end-exclusive, and may cross midnight. Every delayed timer
+invocation rechecks its policy before target access.
+
+```sh
+./bin/bebop maintenance list
+./bin/bebop maintenance show nightly-backup
+./bin/bebop maintenance run nightly-backup
+./bin/bebop maintenance install --dry-run
+./bin/bebop maintenance install
+./bin/bebop maintenance status
+./bin/bebop maintenance history nightly-backup
+./bin/bebop maintenance uninstall --yes
+```
+
+On Linux controllers, explicit installation writes deterministic systemd
+**user** services/timers with absolute project, config, inventory, and Bebop
+paths. `maintenance status` detects stale project/binary/policy/unit content.
+macOS and Windows retain manual `maintenance run` where underlying operations
+work, but M7 has no native scheduler adapter for them. See
+[MAINTENANCE.md](docs/MAINTENANCE.md).
+
 ## Current desired state
 
 The generated configuration is intentionally small:
@@ -296,11 +360,12 @@ Bebop validates a temporary candidate before replacing only its own drop-in;
 it verifies the effective `sshd -T` values, and it blocks root-only SSH sessions
 rather than disable their recovery path.
 
-M0/M3 does not partition, format, resize, mount, or erase disks; alter routers,
+M0–M7 does not partition, format, resize, mount, or erase disks; alter routers,
 DNS, or firewall rules; install an OS; collect telemetry; or use AI/LLM APIs.
-M3 may manage only declared Compose projects under its target deployment root;
+M3+ may manage only declared Compose projects under its target deployment root;
 it never removes Compose volumes, arbitrary persistent data, router state, or
-unrelated Docker projects. See
+unrelated Docker projects. M7 never schedules arbitrary commands, restore,
+apply, or package upgrades. See
 [docs/SAFETY.md](docs/SAFETY.md) for the exact boundary.
 
 `doctor` and `status` report unmounted whole disks discovered through structured
@@ -319,7 +384,12 @@ make test-integration
 make test-ssh-integration
 make test-compose-integration
 make test-backup-integration
+make test-migration-integration
 make test-recipe-integration
+make test-storage
+make test-storage-integration
+make test-maintenance
+make test-maintenance-integration
 make recipe-validate
 ```
 
@@ -337,6 +407,8 @@ rather than a full Debian/Ubuntu systemd VM.
 Read [the architecture](docs/ARCHITECTURE.md), [safety policy](docs/SAFETY.md),
 [M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md),
 [M3 scope](docs/MILESTONE-3.md), [M4 scope](docs/MILESTONE-4.md),
-[M5 scope](docs/MILESTONE-5.md), [services](docs/SERVICES.md),
-[backups](docs/BACKUPS.md), [recipes](docs/RECIPES.md), and [roadmap](docs/ROADMAP.md) before
+[M5 scope](docs/MILESTONE-5.md), [M6 scope](docs/MILESTONE-6.md),
+[M7 scope](docs/MILESTONE-7.md), [services](docs/SERVICES.md),
+[backups](docs/BACKUPS.md), [recipes](docs/RECIPES.md),
+[maintenance](docs/MAINTENANCE.md), and [roadmap](docs/ROADMAP.md) before
 extending Bebop.
