@@ -116,6 +116,9 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 func serviceStoragePolicy(host facts.HostFacts, cfg config.Config, deployment services.Deployment) ([]string, []plan.Precondition, string) {
 	dependencies := []string{}
 	preconditions := []plan.Precondition{}
+	if deployment.State == "absent" {
+		return dependencies, preconditions, ""
+	}
 	seen := map[string]bool{}
 	for _, data := range deployment.Data {
 		if data.Type != "path" || data.Storage == "" || seen[data.Storage] {
@@ -331,7 +334,7 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 	if deployment.SecretConfigured {
 		fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = 600\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretFingerprintName), transport.ShellQuote(deployment.SecretFingerprint))
 	}
-	fmt.Fprintf(&script, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
+	fmt.Fprintf(&script, "env -i %sPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", composeEnvironment(deployment), transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
 	script.WriteString("if test -e \"$release\"; then rm -rf -- \"$release\"; fi\nmv -- \"$stage\" \"$release\"\nlink=$(mktemp \"$root/.current.XXXXXX\")\nrm -f -- \"$link\"\nln -s -- \"releases/")
 	script.WriteString(deployment.SourceDigest)
 	script.WriteString("\" \"$link\"\nmv -Tf -- \"$link\" \"$root/current\"\ntrap - EXIT\n")
@@ -343,7 +346,16 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 // same project identity and controller-environment boundary as normal apply.
 func ComposeCommand(dataRoot string, deployment services.Deployment, command string) string {
 	current := path.Join(dataRoot, "services", deployment.Name, "current")
-	return "current=" + transport.ShellQuote(current) + "\ntest -L \"$current\"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name " + transport.ShellQuote(deployment.Project) + " --project-directory \"$current\" -f \"$current\"/" + transport.ShellQuote(deployment.ComposeFile) + " " + command
+	return "current=" + transport.ShellQuote(current) + "\ntest -L \"$current\"\nenv -i " + composeEnvironment(deployment) + "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name " + transport.ShellQuote(deployment.Project) + " --project-directory \"$current\" -f \"$current\"/" + transport.ShellQuote(deployment.ComposeFile) + " " + command
+}
+
+func composeEnvironment(deployment services.Deployment) string {
+	var result strings.Builder
+	for _, value := range deployment.StorageEnvironment {
+		result.WriteString(transport.ShellQuote(value.Name + "=" + value.Value))
+		result.WriteByte(' ')
+	}
+	return result.String()
 }
 
 func removeScript(dataRoot string, deployment services.Deployment) string {

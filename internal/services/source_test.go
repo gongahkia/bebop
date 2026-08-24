@@ -318,6 +318,45 @@ path = "/srv/hello/other"
 	}
 }
 
+func TestStorageRelativeBindPathUsesDeclaredComposeInterpolation(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", `services:
+  hello:
+    image: busybox:1.36.1
+    volumes:
+      - type: bind
+        source: ${BEBOP_STORAGE_BULK}/media
+        target: /data
+`)
+	writeFixture(t, root, "bebop.toml", `version = 1
+[storage.resources.bulk]
+mount = "/mnt/bulk"
+filesystem_uuid = "11111111-2222-3333-4444-555555555555"
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "media"
+type = "path"
+storage = "bulk"
+path = "media"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := ResolveOne(cfg, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deployment.Data[0].Path; got != "/mnt/bulk/media" {
+		t.Fatalf("resolved storage path = %q", got)
+	}
+	if len(deployment.StorageEnvironment) != 1 || deployment.StorageEnvironment[0].Name != "BEBOP_STORAGE_BULK" {
+		t.Fatalf("storage environment = %#v", deployment.StorageEnvironment)
+	}
+}
+
 func writeFixture(t *testing.T, root, name, contents string) {
 	t.Helper()
 	filename := filepath.Join(root, filepath.FromSlash(name))

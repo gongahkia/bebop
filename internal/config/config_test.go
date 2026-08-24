@@ -127,3 +127,45 @@ consistency = "live"
 		}
 	}
 }
+
+func TestStorageResourcesAndRelativePersistentPaths(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(`version = 1
+
+[storage.resources.bulk]
+mount = "/mnt/bulk"
+filesystem_uuid = "11111111-2222-3333-4444-555555555555"
+filesystem_type = "ext4"
+minimum_capacity_bytes = 100
+minimum_free_bytes = 10
+managed_mount = true
+
+[services.hello]
+type = "compose"
+source = "services/hello"
+
+[[services.hello.data]]
+name = "media"
+type = "path"
+storage = "bulk"
+path = "media"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Storage.Resources) != 1 || cfg.Storage.Resources[0].Name != "bulk" || cfg.Services[0].Data[0].Storage != "bulk" {
+		t.Fatalf("storage declaration did not decode: %#v", cfg)
+	}
+	resolved, err := ResolveDataPath(cfg.Storage, cfg.Services[0].Data[0])
+	if err != nil || resolved != "/mnt/bulk/media" {
+		t.Fatalf("relative placement = %q, %v", resolved, err)
+	}
+	for _, contents := range []string{
+		"version=1\n[storage.resources.bulk]\nmount='/'\nfilesystem_uuid='11111111-2222-3333-4444-555555555555'\n",
+		"version=1\n[storage.resources.bulk]\nmount='/mnt/bulk'\nfilesystem_uuid='11111111-2222-3333-4444-555555555555'\n[storage.resources.other]\nmount='/mnt/bulk/child'\nfilesystem_uuid='22222222-2222-3333-4444-555555555555'\n",
+		"version=1\n[services.hello]\ntype='compose'\nsource='services/hello'\n[[services.hello.data]]\nname='media'\ntype='path'\nstorage='bulk'\npath='../escape'\n",
+	} {
+		if _, err := Decode(strings.NewReader(contents)); err == nil {
+			t.Fatalf("unsafe storage declaration was accepted: %s", contents)
+		}
+	}
+}

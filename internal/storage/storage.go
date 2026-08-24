@@ -147,6 +147,23 @@ func ValidateResolvedPlacement(cfg config.Storage, host facts.HostFacts, name, r
 	return assessment, nil
 }
 
+// RequireFreeCapacity performs a conservative current-space check for an
+// allocation operation such as restore. A zero/unknown available value is not
+// treated as a guarantee; callers may proceed only when inspection supplied a
+// positive value large enough for the known archive size.
+func RequireFreeCapacity(assessment Assessment, bytes int64) error {
+	if bytes <= 0 {
+		return nil
+	}
+	if assessment.Mount.AvailableBytes <= 0 {
+		return fmt.Errorf("available space for storage %s is unavailable", assessment.Resource.Name)
+	}
+	if assessment.Mount.AvailableBytes < bytes {
+		return fmt.Errorf("storage %s has %d available bytes but restore requires at least %d bytes", assessment.Resource.Name, assessment.Mount.AvailableBytes, bytes)
+	}
+	return nil
+}
+
 // ReadyPrecondition narrows target fact inspection to mutation races. It
 // checks the stable mount target/UUID/type and writeability, not volatile free
 // space. Threshold capacity is rechecked by callers that make allocations.

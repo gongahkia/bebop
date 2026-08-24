@@ -780,6 +780,9 @@ func (r *Runner) status(arguments []string) error {
 		return writeJSON(r.Out, report)
 	}
 	storage := "no unconfigured disks detected"
+	if !report.StorageAvailable {
+		storage = "storage topology unavailable"
+	}
 	if len(report.UnconfiguredStorage) > 0 {
 		storage = "unconfigured disks detected; Bebop M0 will not modify them"
 	}

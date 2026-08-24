@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration recipe-validate format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage recipe-validate format check run cross
 
 build:
 	@mkdir -p bin
@@ -46,6 +46,9 @@ test-recipe-integration:
 	else \
 		echo "Docker daemon unavailable; skipping recipe integration tests."; \
 	fi
+
+test-storage:
+	go test ./internal/storage ./internal/modules ./internal/config ./internal/services
 
 recipe-validate:
 	go run ./cmd/bebop recipe validate

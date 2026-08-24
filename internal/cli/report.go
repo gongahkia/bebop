@@ -31,6 +31,7 @@ type StatusReport struct {
 	DataRoot            string                `json:"data_root"`
 	Services            []ServiceStatus       `json:"services,omitempty"`
 	UnconfiguredStorage []facts.StorageDevice `json:"unconfigured_storage,omitempty"`
+	StorageAvailable    bool                  `json:"storage_available"`
 	Overall             string                `json:"overall"`
 }
 
@@ -43,7 +44,7 @@ type ServiceStatus struct {
 }
 
 func statusReport(host facts.HostFacts) StatusReport {
-	report := StatusReport{Host: host.Hostname, OS: host.OS.Display(), Architecture: host.Architecture, Docker: dockerState(host), Tailscale: tailscaleState(host), Updates: "disabled", SSH: "not hardened", DataRoot: "missing", UnconfiguredStorage: host.UnconfiguredStorage, Overall: "needs attention"}
+	report := StatusReport{Host: host.Hostname, OS: host.OS.Display(), Architecture: host.Architecture, Docker: dockerState(host), Tailscale: tailscaleState(host), Updates: "disabled", SSH: "not hardened", DataRoot: "missing", UnconfiguredStorage: host.UnconfiguredStorage, StorageAvailable: host.Storage.Available, Overall: "needs attention"}
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled {
 		report.Updates = "enabled"
 	}

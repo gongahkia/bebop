@@ -15,6 +15,7 @@ import (
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/services"
+	storagepolicy "github.com/bebop-home/bebop/internal/storage"
 	"github.com/bebop-home/bebop/internal/target"
 	"github.com/bebop-home/bebop/internal/transport"
 )
@@ -66,6 +67,9 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.Storage = inspectStorage(ctx, tr)
+	for _, assessment := range storagepolicy.AssessAll(cfg.Storage, f.Storage) {
+		f.Storage.Policy = append(f.Storage.Policy, facts.StoragePolicy{Name: assessment.Resource.Name, State: string(assessment.State)})
+	}
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
 }

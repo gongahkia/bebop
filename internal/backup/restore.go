@@ -112,8 +112,12 @@ func BuildRestorePlan(ctx context.Context, repository Repository, request Restor
 				return RestorePlan{}, errs.New(errs.PlanBlocked, "destination service "+selectedService.deployment.Name+" does not declare compatible resource "+sourceResource.Name, nil)
 			}
 			if destination.Type == "path" && destination.Storage != "" {
-				if _, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, destination.Storage, destination.Path); err != nil {
+				assessment, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, destination.Storage, destination.Path)
+				if err != nil {
 					return RestorePlan{}, errs.New(errs.PlanBlocked, "destination storage placement for "+selectedService.deployment.Name+"/"+destination.Name+" is not ready", err)
+				}
+				if err := storagepolicy.RequireFreeCapacity(assessment, sourceResource.UncompressedSize); err != nil {
+					return RestorePlan{}, errs.New(errs.PlanBlocked, "destination storage capacity for "+selectedService.deployment.Name+"/"+destination.Name+" is insufficient", err)
 				}
 			}
 			state, err := destinationState(ctx, request.Transport, selectedService.deployment, destination)
@@ -427,8 +431,21 @@ func ApplyRestore(ctx context.Context, repository Repository, reviewed RestorePl
 		stopped := false
 		for _, resource := range selectedService.deployment.Data {
 			if resource.Type == "path" && resource.Storage != "" {
-				if _, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, resource.Storage, resource.Path); err != nil {
+				assessment, err := storagepolicy.ValidateResolvedPlacement(request.Config.Storage, request.Host, resource.Storage, resource.Path)
+				if err != nil {
 					return result, errs.New(errs.PlanStale, "destination storage placement changed after restore review", err)
+				}
+				for _, plannedService := range reviewed.Services {
+					if plannedService.Name != selectedService.deployment.Name {
+						continue
+					}
+					for _, plannedResource := range plannedService.Resources {
+						if plannedResource.Name == resource.Name {
+							if err := storagepolicy.RequireFreeCapacity(assessment, plannedResource.StoredSize); err != nil {
+								return result, errs.New(errs.PlanStale, "destination storage capacity changed after restore review", err)
+							}
+						}
+					}
 				}
 			}
 		}

@@ -52,20 +52,28 @@ type Port struct {
 // Deployment is resolved controller-only input. Payload and Secret are never
 // serialized into a plan, artifact, report, or history record.
 type Deployment struct {
-	Name              string
-	Project           string
-	State             string
-	ComposeFile       string
-	SourceDirectory   string
-	Files             []File
-	SourceDigest      string
-	SecretFingerprint string
-	InputFingerprint  string
-	SecretConfigured  bool
-	Ports             []Port
-	Data              []PersistentResource
-	BackupConsistency string
-	Payload           []byte
+	Name               string
+	Project            string
+	State              string
+	ComposeFile        string
+	SourceDirectory    string
+	Files              []File
+	SourceDigest       string
+	SecretFingerprint  string
+	InputFingerprint   string
+	SecretConfigured   bool
+	Ports              []Port
+	Data               []PersistentResource
+	BackupConsistency  string
+	StorageEnvironment []Environment
+	Payload            []byte
+}
+
+// Environment is a fixed, non-secret Compose interpolation value generated
+// from a declared storage resource. It is not an arbitrary user environment.
+type Environment struct {
+	Name  string
+	Value string
 }
 
 // PersistentResource is the target-side resolution of one explicitly
@@ -177,13 +185,15 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" source is unsafe", err)
 	}
-	validation, err := validateCompose(filepath.Join(source, filepath.FromSlash(composeFile)), files, service.SecretEnvFile != "", deployment.Project)
+	storageEnvironment := StorageEnvironment(cfg.Storage)
+	validation, err := validateCompose(filepath.Join(source, filepath.FromSlash(composeFile)), files, service.SecretEnvFile != "", deployment.Project, environmentMap(storageEnvironment))
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" Compose source is unsupported", err)
 	}
 	deployment.SourceDirectory, deployment.Files, deployment.ComposeFile = source, files, composeFile
 	deployment.SourceDigest = sourceDigest
 	deployment.Ports = validation.Ports
+	deployment.StorageEnvironment = storageEnvironment
 	deployment.Data, err = resolvePersistentResources(cfg.Storage, service.Data, validation.Volumes, validation.Paths)
 	if err != nil {
 		return Deployment{}, errs.New(errs.ConfigInvalid, "service."+service.Name+" persistent data is invalid", err)
@@ -217,6 +227,27 @@ func resolveOne(cfg config.Config, service config.Service) (Deployment, error) {
 		return Deployment{}, fmt.Errorf("Compose source has no files")
 	}
 	return deployment, nil
+}
+
+// StorageEnvironment makes a storage-relative bind source portable in Compose
+// without repeating the mount prefix. A source may use, for example,
+// ${BEBOP_STORAGE_BULK}/media for storage resource "bulk".
+func StorageEnvironment(storage config.Storage) []Environment {
+	result := make([]Environment, 0, len(storage.Resources))
+	for _, resource := range storage.Resources {
+		name := "BEBOP_STORAGE_" + strings.ToUpper(strings.ReplaceAll(resource.Name, "-", "_"))
+		result = append(result, Environment{Name: name, Value: resource.Mount})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
+}
+
+func environmentMap(values []Environment) map[string]string {
+	result := make(map[string]string, len(values))
+	for _, value := range values {
+		result[value.Name] = value.Value
+	}
+	return result
 }
 
 // InputsFingerprint is a stable semantic digest for saved-plan validation. It
@@ -513,7 +544,7 @@ func writeArchiveFile(writer *tar.Writer, name string, mode int64, contents []by
 	return err
 }
 
-func validateCompose(filename string, files []File, secretConfigured bool, project string) (composeValidation, error) {
+func validateCompose(filename string, files []File, secretConfigured bool, project string, storageEnvironment map[string]string) (composeValidation, error) {
 	contents, err := os.ReadFile(filename)
 	if err != nil {
 		return composeValidation{}, err
@@ -557,7 +588,7 @@ func validateCompose(filename string, files []File, secretConfigured bool, proje
 		if err := validateEnvFiles(mappingValue(definition, "env_file"), fileSet, secretConfigured); err != nil {
 			return composeValidation{}, fmt.Errorf("service %q: %w", serviceName.Value, err)
 		}
-		volumeKeys, bindPaths, err := validateVolumes(mappingValue(definition, "volumes"))
+		volumeKeys, bindPaths, err := validateVolumes(mappingValue(definition, "volumes"), storageEnvironment)
 		if err != nil {
 			return composeValidation{}, fmt.Errorf("service %q: %w", serviceName.Value, err)
 		}
@@ -704,7 +735,7 @@ func validateEnvFiles(node *yaml.Node, sourceFiles map[string]bool, secretConfig
 // Releases are replaceable deployment content. A relative bind mount would
 // make a service write persistent data below that replaceable tree, so M3
 // requires named volumes or deliberate absolute target paths instead.
-func validateVolumes(node *yaml.Node) ([]string, []string, error) {
+func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]string, []string, error) {
 	if node == nil {
 		return nil, nil, nil
 	}
@@ -717,12 +748,22 @@ func validateVolumes(node *yaml.Node) ([]string, []string, error) {
 		switch value.Kind {
 		case yaml.ScalarNode:
 			source, _, found := strings.Cut(value.Value, ":")
+			resolved, interpolation, err := resolveStorageInterpolation(source, storageEnvironment)
+			if err != nil {
+				return nil, nil, err
+			}
 			if found && (source == "." || source == ".." || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../")) {
 				return nil, nil, fmt.Errorf("relative bind mount %q is unsafe; use a named volume or absolute target path", value.Value)
 			}
-			if found && strings.HasPrefix(source, "/") {
-				paths = append(paths, source)
+			if found && (strings.HasPrefix(source, "/") || interpolation) {
+				if !strings.HasPrefix(resolved, "/") {
+					return nil, nil, fmt.Errorf("storage bind mount %q did not resolve to an absolute target path", value.Value)
+				}
+				paths = append(paths, resolved)
 			} else if found && source != "" {
+				if strings.Contains(source, "$") {
+					return nil, nil, fmt.Errorf("bind mount interpolation is only allowed for declared Bebop storage resources")
+				}
 				keys = append(keys, source)
 			}
 		case yaml.MappingNode:
@@ -739,15 +780,33 @@ func validateVolumes(node *yaml.Node) ([]string, []string, error) {
 				continue
 			}
 			sourceNode := mappingValue(value, "source")
-			if sourceNode == nil || sourceNode.Kind != yaml.ScalarNode || !strings.HasPrefix(sourceNode.Value, "/") {
+			if sourceNode == nil || sourceNode.Kind != yaml.ScalarNode {
 				return nil, nil, fmt.Errorf("bind mounts require an absolute target source path")
 			}
-			paths = append(paths, sourceNode.Value)
+			resolved, interpolation, err := resolveStorageInterpolation(sourceNode.Value, storageEnvironment)
+			if err != nil || (!strings.HasPrefix(sourceNode.Value, "/") && !interpolation) || !strings.HasPrefix(resolved, "/") {
+				return nil, nil, fmt.Errorf("bind mounts require an absolute target source path or declared Bebop storage interpolation")
+			}
+			paths = append(paths, resolved)
 		default:
 			return nil, nil, fmt.Errorf("volume must use string or long mapping syntax")
 		}
 	}
 	return keys, paths, nil
+}
+
+func resolveStorageInterpolation(source string, storageEnvironment map[string]string) (string, bool, error) {
+	if !strings.HasPrefix(source, "$") {
+		return source, false, nil
+	}
+	for name, value := range storageEnvironment {
+		for _, prefix := range []string{"${" + name + "}", "$" + name} {
+			if strings.HasPrefix(source, prefix) {
+				return value + strings.TrimPrefix(source, prefix), true, nil
+			}
+		}
+	}
+	return "", false, fmt.Errorf("unknown storage interpolation %q", source)
 }
 
 func parsePorts(node *yaml.Node) ([]Port, error) {
