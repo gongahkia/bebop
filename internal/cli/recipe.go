@@ -178,7 +178,12 @@ func (r *Runner) recipeInit(arguments []string) error {
 		return err
 	}
 	if *dryRun {
-		return r.renderRecipeMaterialization(materialization, recipes.WriteResult{ConfigPath: *configPath}, true, *jsonOutput)
+		preview := recipes.WriteResult{ConfigPath: *configPath, Created: []string{filepath.Join(materialization.Source, recipes.ComposeFilename), filepath.Join(materialization.Source, recipes.ProvenanceFilename)}, Updated: []string{*configPath}}
+		if len(materialization.SecretExample) > 0 {
+			preview.SecretExample = materialization.Provenance.SecretFile + ".example"
+			preview.Created = append(preview.Created, preview.SecretExample)
+		}
+		return r.renderRecipeMaterialization(materialization, preview, true, *jsonOutput)
 	}
 	result, err := recipes.Initialize(*configPath, current, materialization)
 	if err != nil {
@@ -247,7 +252,7 @@ func (r *Runner) recipeUpgrade(arguments []string) error {
 		return err
 	}
 	if *dryRun {
-		return r.renderRecipeUpgrade(previous, materialization, recipes.WriteResult{ConfigPath: *configPath}, true, *jsonOutput)
+		return r.renderRecipeUpgrade(previous, materialization, recipes.WriteResult{ConfigPath: *configPath, Updated: []string{filepath.Join(materialization.Source, recipes.ComposeFilename), filepath.Join(materialization.Source, recipes.ProvenanceFilename)}}, true, *jsonOutput)
 	}
 	result, err := recipes.Upgrade(*configPath, current, source, provenance, materialization)
 	if err != nil {
@@ -298,7 +303,17 @@ func (r *Runner) renderRecipeMaterialization(materialization recipes.Materializa
 	fmt.Fprintf(r.Out, "Recipe      %s@%s\nService     %s\nSource      %s\n", materialization.Recipe.ID, materialization.Recipe.Version, materialization.Service.Name, materialization.Source)
 	if dryRun {
 		fmt.Fprintln(r.Out, "\nDry run: no local files were written.")
-		fmt.Fprintf(r.Out, "Would create:\n  %s/%s\n  %s/%s\nWould update:\n  %s\n", materialization.Source, recipes.ComposeFilename, materialization.Source, recipes.ProvenanceFilename, result.ConfigPath)
+		fmt.Fprintln(r.Out, "Would create:")
+		for _, filename := range result.Created {
+			fmt.Fprintf(r.Out, "  %s\n", filename)
+		}
+		fmt.Fprintln(r.Out, "Would update:")
+		for _, filename := range result.Updated {
+			fmt.Fprintf(r.Out, "  %s\n", filename)
+		}
+		if result.SecretExample != "" {
+			fmt.Fprintf(r.Out, "Would create secret template: %s\n", result.SecretExample)
+		}
 		return nil
 	}
 	fmt.Fprintln(r.Out, "Created:")
@@ -328,6 +343,9 @@ func (r *Runner) renderRecipeUpgrade(previous recipes.Recipe, next recipes.Mater
 	fmt.Fprintf(r.Out, "Recipe upgrade %s: %s -> %s\nService: %s\n", previous.ID, previous.Version, next.Recipe.Version, next.Service.Name)
 	if dryRun {
 		fmt.Fprintln(r.Out, "Dry run: no local files were written.")
+		for _, filename := range result.Updated {
+			fmt.Fprintf(r.Out, "Would update: %s\n", filename)
+		}
 		return nil
 	}
 	for _, filename := range result.Updated {

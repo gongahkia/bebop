@@ -103,6 +103,14 @@ func TestRecipeCommandsMaterializeAndUpgradeWithoutTargetAccess(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
+	if code := runner.Run([]string{"recipe", "init", "vaultwarden", "--service", "passwords", "--config", configPath, "--secret-file", "secrets/passwords.env", "--dry-run", "--json"}); code != 0 || !strings.Contains(stdout.String(), `"secret_example": "secrets/passwords.env.example"`) {
+		t.Fatalf("recipe secret dry run failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "services", "passwords")); !os.IsNotExist(err) {
+		t.Fatalf("recipe dry run wrote service source: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
 	if code := runner.Run([]string{"recipe", "init", "whoami", "--version", "1.0.0", "--service", "echo", "--param", "port=8181", "--config", configPath, "--json"}); code != 0 {
 		t.Fatalf("recipe init failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
