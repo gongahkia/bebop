@@ -43,3 +43,5 @@ cross:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/bebop-linux-arm64 ./cmd/bebop
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o bin/bebop-darwin-amd64 ./cmd/bebop
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/bebop-darwin-arm64 ./cmd/bebop
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/bebop-windows-amd64.exe ./cmd/bebop
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -o bin/bebop-windows-arm64.exe ./cmd/bebop

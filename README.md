@@ -8,8 +8,9 @@ is a CLI, not a dashboard, app store, cloud service, or bespoke operating
 system.
 
 M0/M2 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
-Debian 12/13 as targets. The controller builds for Linux and macOS; macOS and
-Windows targets are deliberately unsupported.
+Debian 12/13 as targets. The controller cross-builds for Linux, macOS, and
+Windows remote-SSH workflows; macOS and Windows targets are deliberately
+unsupported.
 
 ## Quick start
 

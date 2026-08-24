@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -24,7 +23,7 @@ func (l *Local) Description() string { return "local" }
 func (l *Local) Run(ctx context.Context, request Request) (Result, error) {
 	args := []string{"-ceu", request.Script}
 	program := "sh"
-	if request.Privileged && os.Geteuid() != 0 {
+	if request.Privileged && requiresLocalSudo() {
 		program = "sudo"
 		args = append([]string{"-n", "sh"}, args...)
 	}
@@ -65,7 +64,7 @@ func (l *Local) FileExists(ctx context.Context, path string) (bool, error) {
 func (l *Local) AcquireApplyLock(ctx context.Context) (ApplyLock, error) {
 	program := "sh"
 	arguments := []string{"-ceu", lockScript(l.lockPath)}
-	if l.lockPrivileged && os.Geteuid() != 0 {
+	if l.lockPrivileged && requiresLocalSudo() {
 		program = "sudo"
 		arguments = append([]string{"-n", "sh"}, arguments...)
 	}
