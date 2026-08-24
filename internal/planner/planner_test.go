@@ -38,6 +38,17 @@ func TestPlanIsCanonicalAndIdempotentAfterTransitions(t *testing.T) {
 	if len(first.Changes) != 7 {
 		t.Fatalf("expected seven changes, got %d: %#v", len(first.Changes), first.Changes)
 	}
+	for _, id := range []string{"base.data-root", "docker.engine", "tailscale.package"} {
+		found := false
+		for _, change := range first.Changes {
+			if change.ID == id && len(change.Preconditions) == 1 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected module-level precondition for %s: %#v", id, first.Changes)
+		}
+	}
 	transition(&host, first)
 	converged, err := p.Build(host, cfg)
 	if err != nil {
@@ -61,7 +72,11 @@ func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Verified) != len(reviewed.Changes) || tr.mutations != len(reviewed.Changes)+len(reviewed.Changes) {
+	expectedOperations := len(reviewed.Changes) + len(reviewed.Changes)
+	for _, change := range reviewed.Changes {
+		expectedOperations += len(change.Preconditions)
+	}
+	if len(result.Verified) != len(reviewed.Changes) || tr.mutations != expectedOperations {
 		t.Fatalf("apply/verify mismatch: %#v mutations=%d", result, tr.mutations)
 	}
 	before := tr.mutations

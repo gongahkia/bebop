@@ -2,6 +2,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -159,4 +162,19 @@ firewall = %q
 [storage]
 data_root = %q
 `, config.Version, config.Server.Name, config.Features.AutomaticUpdates, config.Features.SSHHardening, config.Features.Docker, config.Features.Tailscale, config.Network.Firewall, config.Storage.DataRoot)
+}
+
+// Fingerprint hashes the normalized semantic configuration, not the source
+// TOML bytes. Whitespace, key order, and omitted default values therefore do
+// not invalidate a reviewed plan, while a desired-state change does.
+func Fingerprint(config Config) (string, error) {
+	if err := Validate(config); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
 }

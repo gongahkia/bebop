@@ -24,21 +24,31 @@ type Action struct {
 	Script   string `json:"script"`
 }
 
+// Precondition is a narrow, module-defined check that is evaluated immediately
+// before an action. It reduces the remaining inspect-to-mutate race window;
+// it is not a claim of distributed transactionality.
+type Precondition struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Script      string `json:"script"`
+}
+
 // Change is both reviewable plan data and the sole executable input to apply.
 // Scripts contain only static module templates plus shell-quoted validated data.
 type Change struct {
-	ID           string   `json:"id"`
-	Module       string   `json:"module"`
-	Summary      string   `json:"summary"`
-	Reason       string   `json:"reason"`
-	Risk         Risk     `json:"risk"`
-	RequiresRoot bool     `json:"requires_root"`
-	Current      string   `json:"current"`
-	Desired      string   `json:"desired"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Action       Action   `json:"action"`
-	Verification string   `json:"verification"`
-	Blocked      string   `json:"blocked,omitempty"`
+	ID            string         `json:"id"`
+	Module        string         `json:"module"`
+	Summary       string         `json:"summary"`
+	Reason        string         `json:"reason"`
+	Risk          Risk           `json:"risk"`
+	RequiresRoot  bool           `json:"requires_root"`
+	Current       string         `json:"current"`
+	Desired       string         `json:"desired"`
+	Dependencies  []string       `json:"dependencies,omitempty"`
+	Preconditions []Precondition `json:"preconditions,omitempty"`
+	Action        Action         `json:"action"`
+	Verification  string         `json:"verification"`
+	Blocked       string         `json:"blocked,omitempty"`
 }
 
 type Warning struct {

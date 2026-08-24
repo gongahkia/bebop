@@ -10,11 +10,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/bebop-home/bebop/internal/apply"
+	"github.com/bebop-home/bebop/internal/artifact"
 	"github.com/bebop-home/bebop/internal/bebop"
+	"github.com/bebop-home/bebop/internal/buildinfo"
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
 	"github.com/bebop-home/bebop/internal/facts"
@@ -22,9 +25,10 @@ import (
 	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/preflight"
 	"github.com/bebop-home/bebop/internal/resolve"
+	"github.com/bebop-home/bebop/internal/savedplan"
 )
 
-const Version = "0.1.0"
+const Version = buildinfo.Version
 
 type Runner struct {
 	Service *bebop.Service
@@ -375,6 +379,7 @@ func (r *Runner) plan(arguments []string) error {
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
 	showCommands := fs.Bool("show-commands", false, "include exact planned shell scripts in human output")
+	out := fs.String("out", "", "write a portable plan artifact to this path")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
@@ -389,9 +394,22 @@ func (r *Runner) plan(arguments []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
-	_, _, result, err := r.Service.Plan(ctx, resolution.Target, cfg)
+	host, _, result, err := r.Service.Plan(ctx, resolution.Target, cfg)
 	if err != nil {
 		return err
+	}
+	if *out != "" {
+		configSource, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("resolve plan configuration path: %w", err)
+		}
+		saved, err := artifact.New(resolution.Alias, configSource, resolution.Target, cfg, host, result)
+		if err != nil {
+			return err
+		}
+		if err := artifact.WriteFile(*out, saved); err != nil {
+			return err
+		}
 	}
 	if common.json {
 		if err := writeJSON(r.Out, result); err != nil {
@@ -399,6 +417,9 @@ func (r *Runner) plan(arguments []string) error {
 		}
 	} else {
 		renderPlan(r.Out, result, *showCommands)
+		if *out != "" {
+			fmt.Fprintf(r.Out, "\nWrote portable plan artifact: %s\n", *out)
+		}
 	}
 	if blocked(result) {
 		return errs.New(errs.PlanBlocked, "plan contains blocked changes", nil)
@@ -411,16 +432,23 @@ func (r *Runner) apply(arguments []string) error {
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
+	planPath := fs.String("plan", "", "apply a saved portable plan artifact")
 	yes := fs.Bool("yes", false, "apply without interactive confirmation")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
 		return err
 	}
+	if common.json && !*yes {
+		return fmt.Errorf("apply --json requires --yes because prompts would corrupt JSON output")
+	}
+	if *planPath != "" {
+		if fs.NArg() != 0 || common.target != "" {
+			return fmt.Errorf("apply --plan cannot be combined with a host reference or --target")
+		}
+		return r.applySaved(*planPath, *configPath, flagWasSet(fs, "config"), common, *yes)
+	}
 	resolution, err := resolveTarget(fs, common)
 	if err != nil {
 		return err
-	}
-	if common.json && !*yes {
-		return fmt.Errorf("apply --json requires --yes because prompts would corrupt JSON output")
 	}
 	path := configured(fs, resolution, *configPath)
 	cfg, err := config.LoadFile(path)
@@ -489,6 +517,120 @@ func (r *Runner) apply(arguments []string) error {
 	}
 	fmt.Fprintln(r.Out, "Convergence verified. A new plan has no executable changes.")
 	return nil
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(current *flag.Flag) {
+		if current.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
+func (r *Runner) applySaved(filename, requestedConfig string, configExplicit bool, common *commonFlags, yes bool) error {
+	saved, err := artifact.LoadFile(filename)
+	if err != nil {
+		return err
+	}
+	if err := validateSavedInventory(saved, common.inventory); err != nil {
+		return err
+	}
+	configSource := saved.ConfigPath
+	if configExplicit {
+		configSource = requestedConfig
+	}
+	if configSource == "" {
+		return errs.New(errs.PlanInvalid, "saved plan does not record a configuration path; provide --config to validate desired state", nil)
+	}
+	cfg, err := config.LoadFile(configSource)
+	if err != nil {
+		return err
+	}
+	// Validate local desired state before making any target connection.
+	if err := savedplan.ValidateConfig(saved, cfg); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout(common.timeout))
+	defer cancel()
+	prepared, err := savedplan.Prepare(ctx, r.Service, saved, cfg)
+	if err != nil {
+		return err
+	}
+	reviewed := prepared.Plan
+	if !common.json {
+		renderPlan(r.Out, reviewed, false)
+	}
+	if blocked(reviewed) {
+		if common.json {
+			_ = writeJSON(r.Out, struct {
+				Plan plan.Plan `json:"plan"`
+			}{reviewed})
+		}
+		return errs.New(errs.PlanBlocked, "saved plan contains blocked changes; no mutation attempted", nil)
+	}
+	if len(reviewed.Changes) == 0 {
+		if common.json {
+			return writeJSON(r.Out, struct {
+				Plan   plan.Plan    `json:"plan"`
+				Result apply.Result `json:"result"`
+			}{reviewed, apply.Result{Final: reviewed}})
+		}
+		fmt.Fprintln(r.Out, "No changes. Target already matches the desired state.")
+		return nil
+	}
+	if !yes {
+		fmt.Fprint(r.Out, "\nApply these reviewed changes? [y/N] ")
+		answer, readErr := bufio.NewReader(r.In).ReadString('\n')
+		if readErr != nil && len(answer) == 0 {
+			return fmt.Errorf("read confirmation: %w", readErr)
+		}
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" && strings.ToLower(strings.TrimSpace(answer)) != "yes" {
+			fmt.Fprintln(r.Out, "Aborted.")
+			return nil
+		}
+	}
+	result, err := apply.Execute(ctx, reviewed, prepared.Transport, r.Service.Planner.Modules(), func(replanContext context.Context) (plan.Plan, error) {
+		_, _, next, buildErr := r.Service.Plan(replanContext, prepared.Target, cfg)
+		return next, buildErr
+	})
+	if err != nil {
+		return err
+	}
+	if common.json {
+		return writeJSON(r.Out, struct {
+			Plan   plan.Plan    `json:"plan"`
+			Result apply.Result `json:"result"`
+		}{reviewed, result})
+	}
+	fmt.Fprintf(r.Out, "\nTarget        %s\nPlan          %s\nActions       %d\nVerified      %d\nResult        converged\n", prepared.Target.String(), shortFingerprint(reviewed.Fingerprint), len(result.Applied), len(result.Verified))
+	return nil
+}
+
+func validateSavedInventory(saved artifact.Artifact, inventoryPath string) error {
+	if saved.HostAlias == "" {
+		return nil
+	}
+	loaded, err := inventory.LoadFile(inventoryPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // a plan remains portable after inventory metadata is removed
+		}
+		return err
+	}
+	host, exists := loaded.Hosts[saved.HostAlias]
+	if exists && host.Target != saved.Target {
+		return errs.New(errs.TargetIdentityMismatch, "inventory alias "+saved.HostAlias+" no longer resolves to the target reviewed by this plan", nil)
+	}
+	return nil
+}
+
+func shortFingerprint(fingerprint string) string {
+	if len(fingerprint) <= 12 {
+		return fingerprint
+	}
+	return fingerprint[:12]
 }
 
 func (r *Runner) doctor(arguments []string) error {

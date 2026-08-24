@@ -1,6 +1,13 @@
 // Package facts contains normalized, transport-independent target observations.
 package facts
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"sort"
+)
+
 type HostFacts struct {
 	Target              string           `json:"target"`
 	Hostname            string           `json:"hostname"`
@@ -104,4 +111,66 @@ type Directory struct {
 	UID      int    `json:"uid,omitempty"`
 	GID      int    `json:"gid,omitempty"`
 	Writable bool   `json:"writable"`
+}
+
+// Identity identifies a host independently of an SSH endpoint. Machine ID is
+// preferred; hostname and OS are a conservative fallback for unusual targets
+// where /etc/machine-id is unavailable.
+type Identity struct {
+	MachineID string `json:"machine_id,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	OSID      string `json:"os_id"`
+	OSVersion string `json:"os_version"`
+}
+
+func (host HostFacts) Identity() Identity {
+	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: host.OS.VersionID}
+}
+
+func (identity Identity) Matches(current Identity) bool {
+	if identity.MachineID != "" {
+		return current.MachineID != "" && identity.MachineID == current.MachineID
+	}
+	return identity.Hostname != "" && identity.Hostname == current.Hostname && identity.OSID == current.OSID && identity.OSVersion == current.OSVersion
+}
+
+// ConvergenceSnapshot contains only facts consumed by M0/M2 planning or its
+// warnings. Volatile telemetry such as kernel, memory, filesystem free space,
+// and transport timing is deliberately omitted from stale-plan protection.
+type ConvergenceSnapshot struct {
+	OS                  OS               `json:"os"`
+	Architecture        string           `json:"architecture"`
+	ArchitectureKnown   bool             `json:"architecture_known"`
+	PackageManager      string           `json:"package_manager"`
+	Systemd             bool             `json:"systemd"`
+	EffectiveUser       string           `json:"effective_user"`
+	SudoAvailable       bool             `json:"sudo_available"`
+	SSH                 SSH              `json:"ssh"`
+	Docker              Docker           `json:"docker"`
+	Tailscale           Tailscale        `json:"tailscale"`
+	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
+	Firewall            Firewall         `json:"firewall"`
+	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
+	DataRoot            Directory        `json:"data_root"`
+}
+
+func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
+	storage := append([]StorageDevice(nil), host.UnconfiguredStorage...)
+	sort.Slice(storage, func(i, j int) bool { return storage[i].Name < storage[j].Name })
+	return ConvergenceSnapshot{
+		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
+		PackageManager: host.PackageManager, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
+		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
+		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, Firewall: host.Firewall,
+		UnconfiguredStorage: storage, DataRoot: host.DataRoot,
+	}
+}
+
+func (host HostFacts) ConvergenceFingerprint() (string, error) {
+	encoded, err := json.Marshal(host.ConvergenceSnapshot())
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
 }

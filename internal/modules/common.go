@@ -19,6 +19,14 @@ func runAction(ctx context.Context, tr transport.Transport, change plan.Change, 
 	if !found || change.Action.Script == "" {
 		return fmt.Errorf("module refuses unexpected action %q", change.Action.Kind)
 	}
+	for _, precondition := range change.Preconditions {
+		if precondition.ID == "" || precondition.Script == "" {
+			return fmt.Errorf("module refuses invalid precondition for %q", change.ID)
+		}
+		if _, err := tr.Run(ctx, transport.Request{Script: precondition.Script, Privileged: change.RequiresRoot}); err != nil {
+			return fmt.Errorf("precondition %s (%s) failed: %w", precondition.ID, precondition.Description, err)
+		}
+	}
 	_, err := tr.Run(ctx, transport.Request{Script: change.Action.Script, Privileged: change.RequiresRoot})
 	return err
 }

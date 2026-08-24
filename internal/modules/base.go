@@ -18,7 +18,7 @@ func (Base) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan
 	root := cfg.Storage.DataRoot
 	quoted := transport.ShellQuote(root)
 	if !host.DataRoot.Exists {
-		change := plan.Change{ID: "base.data-root", Module: "base", Summary: "create Bebop data root", Reason: fmt.Sprintf("%s does not exist", root), Risk: plan.Privileged, RequiresRoot: true, Current: "absent", Desired: "directory mode 0750 owned by root:root", Action: plan.Action{Kind: "base.create-data-root", Resource: root, Script: "install -d -m 0750 -o root -g root -- " + quoted}, Verification: "directory exists with mode 0750 and root ownership"}
+		change := plan.Change{ID: "base.data-root", Module: "base", Summary: "create Bebop data root", Reason: fmt.Sprintf("%s does not exist", root), Risk: plan.Privileged, RequiresRoot: true, Current: "absent", Desired: "directory mode 0750 owned by root:root", Preconditions: []plan.Precondition{{ID: "base.data-root-absent", Description: "the configured data root is still absent", Script: "test ! -e -- " + quoted}}, Action: plan.Action{Kind: "base.create-data-root", Resource: root, Script: "install -d -m 0750 -o root -g root -- " + quoted}, Verification: "directory exists with mode 0750 and root ownership"}
 		rootBlocked(&change, host.SudoAvailable)
 		return []plan.Change{change}, nil, nil
 	}

@@ -124,6 +124,42 @@ func TestHostCommandsAndAliasPlanUseInventoryConfig(t *testing.T) {
 	}
 }
 
+func TestPortablePlanCanBeWrittenAndAppliedWithFreshPlanSemantics(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "bebop.toml")
+	artifactPath := filepath.Join(t.TempDir(), "pi.plan.json")
+	if err := os.WriteFile(configPath, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &cliFakeTransport{}
+	service := bebop.NewService()
+	service.TransportFactory = func(target.Target) (transport.Transport, error) { return fake, nil }
+	var stdout, stderr bytes.Buffer
+	runner := &Runner{Service: service, In: strings.NewReader(""), Out: &stdout, Err: &stderr}
+	if code := runner.Run([]string{"plan", "--config", configPath, "--out", artifactPath, "--json"}); code != 0 {
+		t.Fatalf("saved plan creation failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Fatalf("saved plan was not written: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"apply", "--plan", artifactPath, "--yes", "--json"}); code != 0 {
+		t.Fatalf("saved plan apply failed: %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	contents, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, bytes.Replace(contents, []byte(`"target": "local"`), []byte(`"target": "ssh://pi@other"`), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"apply", "--plan", artifactPath, "--yes", "--json"}); code == 0 || !strings.Contains(stderr.String(), "does not match") {
+		t.Fatalf("tampered saved plan was accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 type cliFakeTransport struct{ privileged bool }
 
 func (f *cliFakeTransport) Description() string                              { return "fake" }
