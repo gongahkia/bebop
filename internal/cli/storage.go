@@ -32,35 +32,38 @@ func (r *Runner) storage(arguments []string) error {
 	}
 }
 
-func (r *Runner) storageTarget(arguments []string, usage string) (config.Config, facts.HostFacts, error) {
+func (r *Runner) storageTarget(arguments []string, usage string) (config.Config, facts.HostFacts, bool, error) {
 	fs := flag.NewFlagSet(usage, flag.ContinueOnError)
 	fs.SetOutput(r.Err)
 	common := addCommon(fs, true)
 	configPath := fs.String("config", "bebop.toml", "path to bebop.toml")
 	if err := fs.Parse(normalizeArguments(fs, arguments)); err != nil {
-		return config.Config{}, facts.HostFacts{}, err
+		return config.Config{}, facts.HostFacts{}, false, err
 	}
 	resolution, err := resolveTarget(fs, common)
 	if err != nil {
-		return config.Config{}, facts.HostFacts{}, err
+		return config.Config{}, facts.HostFacts{}, false, err
 	}
 	path := configured(fs, resolution, *configPath)
 	cfg, err := config.LoadFile(path)
 	if err != nil {
-		return config.Config{}, facts.HostFacts{}, err
+		return config.Config{}, facts.HostFacts{}, false, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), common.timeout)
 	defer cancel()
 	host, _, err := r.Service.Inspect(ctx, resolution.Target, cfg)
-	return cfg, host, err
+	return cfg, host, common.json, err
 }
 
 func (r *Runner) storageList(arguments []string) error {
-	cfg, host, err := r.storageTarget(arguments, "storage list")
+	cfg, host, jsonOutput, err := r.storageTarget(arguments, "storage list")
 	if err != nil {
 		return err
 	}
 	assessments := storagepolicy.AssessAll(cfg.Storage, host.Storage)
+	if jsonOutput {
+		return writeJSON(r.Out, assessments)
+	}
 	writer := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(writer, "NAME\tMOUNT\tUUID\tSTATE\tDETAIL")
 	for _, assessment := range assessments {
@@ -78,7 +81,7 @@ func (r *Runner) storageShow(arguments []string) error {
 		return fmt.Errorf("storage show requires a storage resource name")
 	}
 	name := arguments[0]
-	cfg, host, err := r.storageTarget(arguments[1:], "storage show")
+	cfg, host, jsonOutput, err := r.storageTarget(arguments[1:], "storage show")
 	if err != nil {
 		return err
 	}
@@ -87,12 +90,15 @@ func (r *Runner) storageShow(arguments []string) error {
 		return fmt.Errorf("unknown declared storage resource %q", name)
 	}
 	assessment := storagepolicy.Assess(resource, host.Storage)
+	if jsonOutput {
+		return writeJSON(r.Out, assessment)
+	}
 	fmt.Fprintf(r.Out, "Storage     %s\nMount       %s\nUUID        %s\nState       %s\nDetail      %s\n", resource.Name, resource.Mount, resource.FilesystemUUID, assessment.State, assessment.Detail)
 	return nil
 }
 
 func (r *Runner) storageInspect(arguments []string) error {
-	_, host, err := r.storageTarget(arguments, "storage inspect")
+	_, host, _, err := r.storageTarget(arguments, "storage inspect")
 	if err != nil {
 		return err
 	}
@@ -100,11 +106,14 @@ func (r *Runner) storageInspect(arguments []string) error {
 }
 
 func (r *Runner) storageDoctor(arguments []string) error {
-	cfg, host, err := r.storageTarget(arguments, "storage doctor")
+	cfg, host, jsonOutput, err := r.storageTarget(arguments, "storage doctor")
 	if err != nil {
 		return err
 	}
 	assessments := storagepolicy.AssessAll(cfg.Storage, host.Storage)
+	if jsonOutput {
+		return writeJSON(r.Out, assessments)
+	}
 	failed := 0
 	for _, assessment := range assessments {
 		status := "PASS"
