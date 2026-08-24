@@ -185,9 +185,9 @@ func appendDependency(dependencies []string, value string) []string {
 func deploymentPreconditions(dataRoot string, deployment services.Deployment, current facts.Service) []plan.Precondition {
 	currentPath := path.Join(dataRoot, "services", deployment.Name, "current")
 	if !current.DeploymentPresent {
-		return []plan.Precondition{{ID: "service." + deployment.Name + ".deployment-absent", Description: "the active deployment path is still absent", Script: "test ! -e -- " + transport.ShellQuote(currentPath)}}
+		return []plan.Precondition{{ID: "service." + deployment.Name + ".deployment-absent", Description: "the active deployment path is still absent", Script: "test ! -e " + transport.ShellQuote(currentPath)}}
 	}
-	return []plan.Precondition{{ID: "service." + deployment.Name + ".deployment-stable", Description: "the active deployment digest has not changed", Script: deploymentDigestCheck(dataRoot, deployment.Name, deployment.SourceDigest)}}
+	return []plan.Precondition{{ID: "service." + deployment.Name + ".deployment-stable", Description: "the active deployment digest has not changed", Script: deploymentDigestCheck(dataRoot, deployment.Name, current.DeploymentDigest)}}
 }
 
 func (Compose) Apply(ctx context.Context, tr transport.Transport, cfg config.Config, change plan.Change) error {
@@ -267,12 +267,12 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 	fmt.Fprintf(&script, "root=%s\nreleases=%s\nrelease=%s\n", transport.ShellQuote(root), transport.ShellQuote(releases), transport.ShellQuote(release))
 	script.WriteString("install -d -m 0750 -o root -g root -- \"$root\" \"$releases\"\nstage=$(mktemp -d \"$root/.stage.XXXXXX\")\ntrap 'rm -rf -- \"$stage\"' EXIT\ntar -x -f - -C \"$stage\"\n")
 	for _, file := range deployment.Files {
-		fmt.Fprintf(&script, "test -f -- \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = %s\ntest \"$(sha256sum -- \"$stage\"/%s | awk '{print $1}')\" = %s\n", transport.ShellQuote(file.Path), transport.ShellQuote(file.Path), transport.ShellQuote(file.Mode), transport.ShellQuote(file.Path), transport.ShellQuote(file.Digest))
+		fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = %s\ntest \"$(sha256sum -- \"$stage\"/%s | awk '{print $1}')\" = %s\n", transport.ShellQuote(file.Path), transport.ShellQuote(file.Path), transport.ShellQuote(file.Mode), transport.ShellQuote(file.Path), transport.ShellQuote(file.Digest))
 	}
 	if deployment.SecretConfigured {
-		fmt.Fprintf(&script, "test -f -- \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = 600\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretFingerprintName), transport.ShellQuote(deployment.SecretFingerprint))
+		fmt.Fprintf(&script, "test -f \"$stage\"/%s\ntest \"$(stat -c '%%a' -- \"$stage\"/%s)\" = 600\ntest \"$(tr -d '\\n' < \"$stage\"/%s)\" = %s\n", transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretEnvName), transport.ShellQuote(services.SecretFingerprintName), transport.ShellQuote(deployment.SecretFingerprint))
 	}
-	fmt.Fprintf(&script, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
+	fmt.Fprintf(&script, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name %s --project-directory \"$stage\" -f \"$stage\"/%s config -q\n", transport.ShellQuote(deployment.Project), transport.ShellQuote(deployment.ComposeFile))
 	script.WriteString("if test -e -- \"$release\"; then rm -rf -- \"$release\"; fi\nmv -- \"$stage\" \"$release\"\nlink=$(mktemp \"$root/.current.XXXXXX\")\nrm -f -- \"$link\"\nln -s -- \"releases/")
 	script.WriteString(deployment.SourceDigest)
 	script.WriteString("\" \"$link\"\nmv -Tf -- \"$link\" \"$root/current\"\ntrap - EXIT\n")
@@ -281,27 +281,27 @@ func deployScript(dataRoot string, deployment services.Deployment) string {
 
 func composeCommand(dataRoot string, deployment services.Deployment, command string) string {
 	current := path.Join(dataRoot, "services", deployment.Name, "current")
-	return "current=" + transport.ShellQuote(current) + "\ntest -L -- \"$current\"\nenv -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name " + transport.ShellQuote(deployment.Project) + " --project-directory \"$current\" -f \"$current\"/" + transport.ShellQuote(deployment.ComposeFile) + " " + command
+	return "current=" + transport.ShellQuote(current) + "\ntest -L \"$current\"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name " + transport.ShellQuote(deployment.Project) + " --project-directory \"$current\" -f \"$current\"/" + transport.ShellQuote(deployment.ComposeFile) + " " + command
 }
 
 func removeScript(dataRoot string, deployment services.Deployment) string {
 	current := path.Join(dataRoot, "services", deployment.Name, "current")
 	return `current=` + transport.ShellQuote(current) + `
-if test -L -- "$current"; then
+if test -L "$current"; then
   compose_file=''
   for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
-    if test -f -- "$current"/"$candidate"; then compose_file=$candidate; break; fi
+    if test -f "$current"/"$candidate"; then compose_file=$candidate; break; fi
   done
   if test -n "$compose_file"; then
-    env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name ` + transport.ShellQuote(deployment.Project) + ` --project-directory "$current" -f "$current"/"$compose_file" down --remove-orphans
+    env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose --project-name ` + transport.ShellQuote(deployment.Project) + ` --project-directory "$current" -f "$current"/"$compose_file" down --remove-orphans
   else
-    ids=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=` + transport.ShellQuote(deployment.Project) + `)
-    if test -n "$ids"; then env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default rm -f -- $ids; fi
+    ids=$(env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=` + transport.ShellQuote(deployment.Project) + `)
+    if test -n "$ids"; then env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default rm -f -- $ids; fi
   fi
   rm -f -- "$current"
 else
-  ids=$(env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=` + transport.ShellQuote(deployment.Project) + `)
-  if test -n "$ids"; then env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default rm -f -- $ids; fi
+  ids=$(env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=` + transport.ShellQuote(deployment.Project) + `)
+  if test -n "$ids"; then env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default rm -f -- $ids; fi
 fi`
 }
 
@@ -310,7 +310,7 @@ func deploymentDigestCheck(dataRoot, name, digest string) string {
 	current := path.Join(root, "current")
 	return `root=` + transport.ShellQuote(root) + `
 current=` + transport.ShellQuote(current) + `
-test -L -- "$current"
+test -L "$current"
 resolved=$(readlink -f -- "$current")
 case "$resolved" in "$root"/releases/*) ;; *) exit 1;; esac
 actual=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
@@ -331,12 +331,12 @@ func secretFingerprintCheck(dataRoot string, deployment services.Deployment) str
 }
 
 func noRunningContainersScript(project string) string {
-	return "! env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(project) + " --filter status=running | grep -q ."
+	return "! env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(project) + " --filter status=running | grep -q ."
 }
 
 func removeVerifyScript(dataRoot string, deployment services.Deployment) string {
 	current := path.Join(dataRoot, "services", deployment.Name, "current")
-	return "test ! -e -- " + transport.ShellQuote(current) + "\n! env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(deployment.Project) + " | grep -q ."
+	return "test ! -e " + transport.ShellQuote(current) + "\n! env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(deployment.Project) + " | grep -q ."
 }
 
 func (provider Compose) waitForRunning(ctx context.Context, tr transport.Transport, cfg config.Config, deployment services.Deployment) error {
@@ -400,7 +400,7 @@ type composeContainerState struct {
 }
 
 func composeRuntime(ctx context.Context, tr transport.Transport, project string) (string, string, int, error) {
-	result, err := tr.Run(ctx, transport.Request{Script: "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(project), Privileged: true})
+	result, err := tr.Run(ctx, transport.Request{Script: "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --quiet --filter label=com.docker.compose.project=" + transport.ShellQuote(project), Privileged: true})
 	if err != nil {
 		return "unknown", "unknown", 0, err
 	}
@@ -410,7 +410,7 @@ func composeRuntime(ctx context.Context, tr transport.Transport, project string)
 	}
 	states := make([]composeContainerState, 0, len(ids))
 	for _, id := range ids {
-		result, err := tr.Run(ctx, transport.Request{Script: "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default inspect --format '{{json .State}}' -- " + transport.ShellQuote(id), Privileged: true})
+		result, err := tr.Run(ctx, transport.Request{Script: "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default inspect --format '{{json .State}}' -- " + transport.ShellQuote(id), Privileged: true})
 		if err != nil {
 			return "unknown", "unknown", len(ids), err
 		}

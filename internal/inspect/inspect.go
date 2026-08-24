@@ -102,8 +102,8 @@ func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool) fa
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
-if { test "$(id -u)" -eq 0 && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
-if { test "$(id -u)" -eq 0 && env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
 if apt-cache show docker-compose-plugin >/dev/null 2>&1; then printf 'compose_package=docker-compose-plugin\n'; elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then printf 'compose_package=docker-compose-v2\n'; else printf 'compose_package=\n'; fi
 `)
 	return facts.Docker{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
@@ -137,10 +137,10 @@ func deploymentProbeScript(root, current, composeFile string) string {
 	quotedCompose := transport.ShellQuote(composeFile)
 	return `root=` + quotedRoot + `
 current=` + quotedCurrent + `
-if test -L -- "$current" && test -d -- "$current"; then
+if test -L "$current" && test -d "$current"; then
   resolved=$(readlink -f -- "$current" 2>/dev/null || true)
   case "$resolved" in "$root"/releases/*) ;; *) printf 'unsafe=yes\n'; exit 0;; esac
-  if test ! -f -- "$current"/` + quotedCompose + `; then printf 'unsafe=yes\n'; exit 0; fi
+  if test ! -f "$current"/` + quotedCompose + `; then printf 'unsafe=yes\n'; exit 0; fi
   digest=$(cd -- "$current" && find . -type f ! -path './` + services.SecretEnvName + `' ! -path './` + services.SecretFingerprintName + `' -printf '%P\n' | LC_ALL=C sort | while IFS= read -r file; do
     test -n "$file" || continue
     mode=$(stat -c '%a' -- "$file")
@@ -149,8 +149,8 @@ if test -L -- "$current" && test -d -- "$current"; then
   done | sha256sum | awk '{print $1}')
   printf 'deployment=yes\n'
   printf 'digest=%s\n' "$digest"
-  if test -f -- "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + `; then tr -d '\n' < "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + ` | sed 's/^/secret_fingerprint=/'; else printf 'secret_fingerprint=\n'; fi
-elif test -e -- "$current"; then
+  if test -f "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + `; then tr -d '\n' < "$current"/` + transport.ShellQuote(services.SecretFingerprintName) + ` | sed 's/^/secret_fingerprint=/'; else printf 'secret_fingerprint=\n'; fi
+elif test -e "$current"; then
   printf 'unsafe=yes\n'
 else
   printf 'deployment=no\n'
@@ -158,13 +158,13 @@ fi`
 }
 
 func inspectServiceRuntime(ctx context.Context, tr transport.Transport, project string) (string, string, int) {
-	ids := strings.Fields(mustProbe(ctx, tr, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --filter label=com.docker.compose.project="+transport.ShellQuote(project)+" --format '{{.ID}}'"))
+	ids := strings.Fields(mustProbe(ctx, tr, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default ps --all --filter label=com.docker.compose.project="+transport.ShellQuote(project)+" --format '{{.ID}}'"))
 	if len(ids) == 0 {
 		return "missing", "missing", 0
 	}
 	states := make([]dockerContainerState, 0, len(ids))
 	for _, id := range ids {
-		output := mustProbe(ctx, tr, "env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default inspect --format '{{json .State}}' -- "+transport.ShellQuote(id))
+		output := mustProbe(ctx, tr, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default inspect --format '{{json .State}}' -- "+transport.ShellQuote(id))
 		var state dockerContainerState
 		if output == "" || json.Unmarshal([]byte(output), &state) != nil {
 			return "unknown", "unknown", len(ids)
