@@ -170,3 +170,31 @@ metadata preserves numeric UID/GID and basic modes for container volume
 portability, but cross-host bind paths and applications can still require
 compatible ownership expectations. Architecture differences are reported as a
 warning, not a claim of application compatibility.
+
+## M5 recipe authoring boundary
+
+Recipes are embedded reviewed data, not arbitrary executable extensions. Bebop
+loads a strict versioned schema, rejects unknown fields, unpinned/`latest`
+images, unsupported parameter types, unknown placeholders, YAML aliases, and
+rendered Compose files that diverge from the recipe's declared image set.
+Rendering replaces only declared non-secret typed parameter placeholders inside
+YAML string scalar values and serializes the resulting YAML; a parameter cannot
+become a key, Compose structure, image reference, shell fragment, or template
+expression.
+
+`recipe init` and `recipe upgrade` are controller-only filesystem operations.
+They never resolve a host, invoke Docker, acquire a target lock, or bypass the
+ordinary plan/apply safety boundary. Init refuses existing output and atomically
+extends the config only after staging generated source. Upgrade verifies
+provenance and generated Compose drift, preserves the existing data/secret
+contract, and atomically swaps only a known generated tree. Manual source
+changes or extra files block a recipe upgrade; deleting provenance is explicit
+ejection to normal generic service ownership rather than permission for Bebop
+to overwrite user content.
+
+Recipe secret declarations carry only required environment-key names. They
+require a controller-local M3 secret-file reference, write only a mode-`0600`
+example file, and never place secret values in generated Compose, provenance,
+plans, JSON, history, or logs. Recipe state declarations use M4's explicit
+logical volume/path authorization; a recipe never broadens backup to Docker
+runtime state or undeclared data.

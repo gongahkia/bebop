@@ -202,3 +202,47 @@ re-inspects the destination under the target flock, blocks non-empty resources
 by default, restores through a narrow helper, then delegates deployment/startup
 to the existing service planner and apply path. Source and destination runtime
 volume names may therefore differ without losing the logical mapping.
+
+## M5 deterministic recipe authoring
+
+M5 deliberately sits **before** normal configuration and source resolution; it
+does not add another target, planner, deployment, backup, or execution path.
+`internal/recipes` embeds a small versioned corpus and owns strict metadata
+validation, typed scalar parameter normalization, restricted YAML-scalar
+rendering, source/provenance materialization, and provenance-aware upgrades.
+
+```text
+embedded recipe corpus -- strict schema --> typed recipe + fingerprint
+                                              |
+recipe init / upgrade -- typed parameters ---> restricted rendered Compose
+                                              |
+                                        normal bebop.toml + services/<name>/
+                                              |
+                                              v
+                        existing services.Resolve -> Planner -> saved plan -> apply
+                                              |
+                                              +-> M3 lifecycle / M4 logical data backup
+```
+
+The corpus filesystem is compiled into the controller binary. It is deterministic
+and offline: no remote catalog lookup, registry API, plugin loader, arbitrary
+template expression, target probe, or target mutation is involved in recipe
+commands. Recipe image and architecture metadata are validated locally; for an
+intact generated source, normal planning/preflight classifies the recipe against
+fresh HostFacts architecture before a service action can be applied.
+
+`recipe init` writes a normal config service declaration and ordinary Compose
+source. Stateful recipe data compiles directly to M4 logical data declarations;
+recipe secrets compile only to M3's `secret_env_file` reference. Recipe
+provenance is generated metadata with a schema/self-fingerprint, recipe
+fingerprint, normalized non-secret parameters, secret names/references, and
+rendered Compose digest. It is not desired-state authority and carries no
+secret value, controller absolute path, host identity, target script, or target
+state.
+
+An upgrade requires valid provenance and unchanged generated source, validates
+parameter and service-data/secret compatibility, stages a new local source tree,
+and replaces it atomically. M3/M4 still own all target behavior. Deleting
+provenance intentionally ejects the source to generic user-managed Compose;
+normal service planning keeps working, while recipe management no longer claims
+authority to overwrite it.

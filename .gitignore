@@ -3,4 +3,6 @@ bin/
 .bebop/cache/
 .bebop/history/
 .bebop/backups/
+secrets/*.env
+!secrets/*.env.example
 coverage.out

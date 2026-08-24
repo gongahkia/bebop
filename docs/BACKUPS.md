@@ -2,6 +2,11 @@
 
 M4 snapshots only persistent resources explicitly declared by a Compose service. It is a controller-side filesystem repository, not a daemon, cloud backend, scheduler, disk imager, encryption product, or Docker-data-root copy.
 
+M5 recipe materialization may generate the same explicit logical resource
+declarations for a stateful service. A recipe does not widen this boundary:
+only its generated `[[services.NAME.data]]` entries are eligible, and recipe
+provenance, Compose releases, and controller secret inputs are still excluded.
+
 ```toml
 [backup]
 destination = ".bebop/backups"

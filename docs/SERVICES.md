@@ -1,8 +1,11 @@
 # Compose services
 
-M3 provides a generic deterministic Compose resource. Bebop supplies no
-application templates, registry, marketplace, plugin runtime, or application
-version policy. The user owns the Compose source and image references.
+M3 provides a generic deterministic Compose resource. Hand-authored sources
+remain the base model. M5 additionally supplies a small embedded set of
+deterministic recipe authoring inputs, but it adds no remote registry,
+marketplace, plugin runtime, arbitrary application version policy, or alternate
+service runtime. A materialized recipe becomes the same normal Compose source
+and service declaration described here.
 
 ## Declaration
 
@@ -26,6 +29,20 @@ minutes.
 the `bebop.toml` that declares it. It cannot be absolute or escape that
 directory. A source must contain exactly one root-level `compose.yaml`,
 `compose.yml`, `docker-compose.yaml`, or `docker-compose.yml`.
+
+## Recipe-generated services (M5)
+
+`bebop recipe init ID --service NAME` creates a normal declaration and source
+directory, then normal `plan`/`apply` owns target mutation. See
+[RECIPES.md](RECIPES.md) for the local catalog, typed parameters, secret
+templates, provenance, and upgrades. Recipe output has no privileged or SSH
+capability of its own.
+
+Generated `bebop.recipe.json` records provenance so `recipe upgrade NAME --to
+VERSION` can refuse manual source drift and incompatible persistent-data/secret
+changes. It is not required for normal service operation: remove it to eject the
+service to generic user-managed Compose source. Do not edit generated source
+and expect a recipe upgrade to overwrite it.
 
 Source traversal is deterministic and sorted. Bebop accepts regular files only,
 rejects symlinks and special files, retains just the executable bit (`0644` or
@@ -145,3 +162,7 @@ Path declarations are deliberately restricted to safe application-data roots.
 `[services.NAME.backup].consistency` accepts `stop` (default) or explicit
 `live`. Service sources and `secret_env_file` inputs remain controller-side
 deployment inputs and are never part of M4 data snapshots. See [BACKUPS.md](BACKUPS.md).
+
+Recipe-declared persistent resources compile to exactly these same M4
+declarations. They remain opt-in backup authorization, not an instruction to
+back up every Docker volume used by an application.

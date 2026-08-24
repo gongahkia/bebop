@@ -1,5 +1,16 @@
 # Roadmap
 
+## Implemented in M5: deterministic service recipes
+
+- Small embedded, schema-validated, offline corpus of reviewable Compose recipe
+  versions with pinned image metadata, architecture coverage, typed parameters,
+  logical persistent-resource declarations, and secret references.
+- Controller-only materialization into ordinary service config/source plus
+  generated provenance and compatible explicit upgrades; the existing M3/M4
+  runtime, saved-plan, backup, and restore paths remain authoritative.
+- Strict rendering/provenance drift boundaries and disposable Compose coverage
+  for materialized stateless convergence and stateful portable data migration.
+
 ## Implemented in M4: backup, restore, and host migration
 
 - Explicit logical Compose volume and safe absolute bind-path data declarations,
@@ -51,10 +62,10 @@
 - Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- M5: curated, deterministic service recipes built on the Compose and persistent
-  state primitives; M6: explicit storage workflows; M7: broader Linux
+- M6: explicit storage workflows; M7: broader Linux
   distribution support; M8: macOS/Windows target adapters.
-- Docker Compose application catalog, notifications, and richer drift controls.
+- Broad application catalog, automated recipe update discovery, notifications,
+  and richer drift controls.
 - Explicit storage workflows with no implicit disk automation.
 - Signed plans, generalized rollback, and transactions.
 - Deterministic agent/MCP integration surfaces that call Bebop APIs, never an
