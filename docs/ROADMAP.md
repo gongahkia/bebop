@@ -95,15 +95,14 @@
   TOML, immutable structured plans, apply verification, and no-op tests.
 - Debian, Ubuntu, Raspberry Pi OS, Fedora 43/44, Rocky Linux 9.8/10.2,
   AlmaLinux 9.8/10.2, CentOS Stream 9/10, openSUSE Leap 16.0, and openSUSE
-  Tumbleweed target recognition.
+  Tumbleweed, and official x86_64 Arch Linux target recognition.
 - Base filesystem, automatic updates, Docker, Tailscale package/service, and
   conservative SSH hardening.
 - Read-only diagnostics/status, JSON, CI, and opt-in disposable Debian inspect.
 
 ## Deliberately later
 
-- Arch targets; macOS targets through a Linux VM; Windows targets
-  through WSL2/VM.
+- macOS targets through a Linux VM; Windows targets through WSL2/VM.
 - Passive LAN discovery and a TUI.
 - Additional reviewed Linux distribution support, then macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, and richer

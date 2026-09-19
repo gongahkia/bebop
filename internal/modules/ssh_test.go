@@ -75,6 +75,17 @@ func TestSSHHardeningBlocksEarlierUnknownDropIn(t *testing.T) {
 	}
 }
 
+func TestArchSSHDropInKeepsDistroOwned99FileUntouched(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Systemd: true, EffectiveUser: "arch", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "sshd.service", ConfigValid: true, DropInSupported: true, FirstDropIn: "99-archlinux.conf", AuthorizedKeysPresent: true}}
+	changes, _, err := (SSH{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) != 1 || changes[0].Blocked != "" {
+		t.Fatalf("Arch SSH hardening plan = %#v, %v", changes, err)
+	}
+	if !strings.Contains(changes[0].Action.Resource, "00-bebop.conf") || strings.Contains(changes[0].Action.Script, "99-archlinux.conf") || !strings.Contains(changes[0].Action.Script, "systemctl reload sshd.service") {
+		t.Fatalf("Arch SSH action did not preserve the distro drop-in and service: %#v", changes[0])
+	}
+}
+
 func TestSSHHardeningRefusesRootOnlyRemoteAccess(t *testing.T) {
 	host := facts.HostFacts{EffectiveUser: "root", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}}
 	changes, _, err := (SSH{}).Plan(host, config.Defaults())

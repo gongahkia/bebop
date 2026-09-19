@@ -126,6 +126,9 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	if !cfg.Features.AutomaticUpdates {
 		return nil, nil, nil
 	}
+	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
+		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Arch rolling system upgrades", Reason: "automatic Arch system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Arch upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "arch"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Arch rolling system upgrades; perform a reviewed full pacman -Syu manually and retry without automatic_updates"}}, nil, nil
+	}
 	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" || host.AutomaticUpdates.ConfigState == "managed"
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled && managed && !host.AutomaticUpdates.ConflictingTimers {
 		return nil, nil, nil

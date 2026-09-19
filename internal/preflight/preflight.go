@@ -105,22 +105,34 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "os.unsupported", Message: "unsupported target OS: " + host.OS.Display()})
 	}
-	result.Architecture = host.ArchitectureKnown
+	result.Architecture = host.ArchitectureKnown && host.OS.SupportsArchitecture(host.Architecture)
 	if host.ArchitectureKnown {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "architecture.supported", Message: "supported target architecture: " + host.Architecture})
+		if result.Architecture {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: "architecture.supported", Message: "supported target architecture: " + host.Architecture})
+		} else {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "architecture.unsupported", Message: "unsupported or unknown target architecture: " + host.Architecture})
+		}
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "architecture.unsupported", Message: "unsupported or unknown target architecture: " + host.Architecture})
 	}
 	result.PackageManager = host.PackageManager
 	if facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
 		manager, database, _ := facts.RequiredPackageTools(host.OS)
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "package_manager." + manager, Message: manager + " and " + database + " package tools available"})
+		message := manager + " package tool available"
+		if database != "" {
+			message = manager + " and " + database + " package tools available"
+		}
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "package_manager." + manager, Message: message})
 	} else {
 		manager, database, known := facts.RequiredPackageTools(host.OS)
 		if !known {
 			manager, database = "reviewed", "package"
 		}
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "package_manager.unsupported", Message: "required " + manager + "/" + database + " package tools are unavailable"})
+		required := manager
+		if database != "" {
+			required += "/" + database
+		}
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "package_manager.unsupported", Message: "required " + required + " package tools are unavailable"})
 	}
 	result.Systemd = host.Systemd
 	if host.Systemd {

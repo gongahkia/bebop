@@ -243,9 +243,12 @@ pretending maintenance fully succeeded.
 Debian-family targets, `dnf5 -y check-upgrade` on Fedora, and `dnf -y
 check-update` on supported Enterprise Linux targets. On openSUSE Leap it uses
 `zypper --non-interactive patch-check`; on Tumbleweed it uses non-mutating
-`zypper --non-interactive --xmlout dup --dry-run`. Optional
+`zypper --non-interactive --xmlout dup --dry-run`. On official Arch Linux it
+uses `pacman-contrib`'s `checkupdates` against a Bebop-owned isolated database;
+it never synchronizes the live Pacman database. Optional
 `refresh_metadata = true` runs only `apt-get update`, `dnf5 -y makecache`,
-`dnf -y makecache`, or `zypper --non-interactive refresh` under the existing target lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
+`dnf -y makecache`, `zypper --non-interactive refresh`, or that isolated
+`checkupdates` refresh under the existing target lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
 timer cannot wait for an SSH host-key/password or sudo password prompt.
 
 ## M8 notification boundary

@@ -25,6 +25,9 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	if host.OS.Family == "opensuse" && host.PackageManager == "zypper" {
 		return planOpenSUSEDocker(host, cfg)
 	}
+	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
+		return planArchDocker(host, cfg)
+	}
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
 	}
@@ -60,6 +63,62 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 			change.Blocked = "the target apt repositories do not advertise a reviewed Docker Compose v2 package"
 		} else {
 			change.Action.Script = "export DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y " + host.Docker.ComposePackageAvailable
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+const archDockerPackagesAvailableScript = `LC_ALL=C pacman -Si docker 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'
+LC_ALL=C pacman -Si docker-compose 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker-compose" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'`
+
+// planArchDocker intentionally uses Pacman's already-synchronized database.
+// It must not add -y or turn capability installation into a system upgrade:
+// Arch does not support partial upgrades, and full upgrades remain explicit
+// operator work.
+func planArchDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	changes := []plan.Change{}
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Arch Docker package set is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "docker or docker-compose is not installed", Desired: "official Arch docker and docker-compose packages installed", Preconditions: []plan.Precondition{{ID: "docker.arch-packages-available", Description: "the existing Pacman sync database advertises the reviewed official packages", Script: archDockerPackagesAvailableScript}}, Action: plan.Action{Kind: "docker.install-engine", Resource: "arch", Script: "pacman -S --needed --noconfirm docker docker-compose"}, Verification: "official Arch Docker packages are installed"}
+		if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the current Pacman sync database does not advertise the reviewed docker and docker-compose packages; perform a reviewed full pacman -Syu manually and retry (Bebop never runs pacman -Sy)"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = []string{"docker.engine"}
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "service disabled, inactive, or daemon unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "docker.service is not ready", Desired: "docker.service enabled, active, and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "arch", Script: "systemctl enable --now docker.service"}, Verification: "docker.service is enabled and docker info succeeds as root"}
+		if needEngine && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Blocked = "Arch Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if len(cfg.Services) > 0 && !host.Docker.ComposeAvailable {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = append(dependencies, "docker.engine")
+		}
+		if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+			dependencies = append(dependencies, "docker.service")
+		}
+		change := plan.Change{ID: "docker.compose", Module: "docker", Summary: "install Docker Compose v2", Reason: "docker compose is unavailable", Risk: plan.Privileged, RequiresRoot: true, Current: "Compose v2 unavailable", Desired: "Docker Compose v2 available for managed services", Dependencies: dependencies, Action: plan.Action{Kind: "docker.install-compose", Resource: "arch", Script: "pacman -S --needed --noconfirm docker-compose"}, Verification: "docker compose version succeeds"}
+		if host.Docker.ComposePackageAvailable != "docker-compose" {
+			change.Action.Script = ""
+			change.Blocked = "the current Pacman sync database does not advertise official Arch docker-compose; perform a reviewed full pacman -Syu manually and retry"
+		} else if needEngine && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script = ""
+			change.Blocked = "Arch Docker package installation is blocked"
+		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
 		changes = append(changes, change)
@@ -314,6 +373,9 @@ func (Docker) Apply(ctx context.Context, tr transport.Transport, _ config.Config
 }
 func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "docker.install-engine" {
+		if change.Action.Resource == "arch" {
+			return verify(ctx, tr, "pacman -Q docker docker-compose >/dev/null")
+		}
 		if change.Action.Resource == "opensuse" {
 			return verify(ctx, tr, "rpm -q docker docker-compose >/dev/null")
 		}

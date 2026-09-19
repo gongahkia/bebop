@@ -46,6 +46,8 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 			changes = append(changes, enterpriseTailscaleChange(host))
 		} else if host.OS.Family == "opensuse" && host.PackageManager == "zypper" {
 			changes = append(changes, openSUSETailscaleChange(host))
+		} else if host.OS.Family == "arch" && host.PackageManager == "pacman" {
+			changes = append(changes, archTailscaleChange(host))
 		} else if distribution, codename, ok := tailscaleRepository(host.OS); !ok {
 			changes = append(changes, plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Action: plan.Action{Kind: "tailscale.install", Resource: host.OS.ID}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale repository mapping for " + host.OS.Display()})
 		} else {
@@ -73,6 +75,19 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
 	}
 	return changes, warnings, nil
+}
+
+const archTailscalePackageAvailableScript = "LC_ALL=C pacman -Si tailscale 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != \"\") { if (name == \"tailscale\" && (repository == \"core\" || repository == \"extra\" || repository == \"multilib\")) count++; else invalid=1; name=\"\"; repository=\"\" } } $1 == \"Repository\" { finish(); repository=$2 } $1 == \"Name\" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'"
+
+func archTailscaleChange(host facts.HostFacts) plan.Change {
+	change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "official Arch tailscale package installed", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! pacman -Q tailscale >/dev/null 2>&1"}, {ID: "tailscale.arch-package-available", Description: "the existing Pacman sync database advertises the official tailscale package", Script: archTailscalePackageAvailableScript}}, Action: plan.Action{Kind: "tailscale.install", Resource: "arch", Script: "pacman -S --needed --noconfirm tailscale"}, Verification: "tailscale package is installed"}
+	if !host.Tailscale.PackageAvailable {
+		change.Action.Script = ""
+		change.Blocked = "the current Pacman sync database does not advertise official Arch tailscale; perform a reviewed full pacman -Syu manually and retry (Bebop never runs pacman -Sy)"
+	} else {
+		rootBlocked(&change, host.SudoAvailable)
+	}
+	return change
 }
 
 func openSUSETailscaleChange(host facts.HostFacts) plan.Change {
@@ -232,6 +247,9 @@ func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Con
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
+		if change.Action.Resource == "arch" {
+			return verify(ctx, tr, "pacman -Q tailscale >/dev/null")
+		}
 		if change.Action.Resource == "fedora" {
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}

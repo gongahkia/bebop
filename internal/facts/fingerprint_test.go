@@ -152,3 +152,26 @@ func TestTumbleweedSnapshotDateIsNotConvergenceIdentityButPlannedStateIs(t *test
 		t.Fatalf("planner-relevant Tumbleweed package state did not stale convergence: %v", err)
 	}
 }
+
+func TestArchRollingVersionMetadataIsNotConvergenceIdentityButPackageStateIs(t *testing.T) {
+	host := HostFacts{MachineID: "arch-machine", OS: OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Docker: Docker{PackageSetAvailable: true}, Tailscale: Tailscale{PackageAvailable: true}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Arch has no reviewed fixed release. Accidental/display-only VERSION_ID
+	// metadata must not turn a rolling host into a distinct saved-plan state.
+	host.OS.VersionID = "2026.09.19"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("display-only Arch version metadata changed convergence: %v", err)
+	}
+	if !host.Identity().Matches(Identity{MachineID: "arch-machine", OSID: "arch", OSVersion: ""}) {
+		t.Fatal("machine identity unexpectedly depends on Arch rolling metadata")
+	}
+	host.Docker.PackageSetAvailable = false
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || third == second {
+		t.Fatalf("planner-relevant Arch package state did not stale convergence: %v", err)
+	}
+}

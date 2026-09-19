@@ -29,6 +29,9 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if !host.OS.IsSupported() {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, fmt.Sprintf("unsupported target OS %q; Bebop requires an explicitly reviewed OS release", host.OS.ID), nil)
 	}
+	if !host.OS.SupportsArchitecture(host.Architecture) {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose a reviewed architecture: "+host.Architecture, nil)
+	}
 	if !host.Systemd {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
 	}
@@ -37,7 +40,11 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	}
 	if !facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
 		manager, database, _ := facts.RequiredPackageTools(host.OS)
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+manager+"/"+database+" package tools", nil)
+		required := manager
+		if database != "" {
+			required += "/" + database
+		}
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+required+" package tools", nil)
 	}
 	result := plan.Plan{Version: 1, Target: host.Target}
 	if !host.ArchitectureKnown {

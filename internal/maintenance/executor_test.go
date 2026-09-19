@@ -1,6 +1,8 @@
 package maintenance
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -29,7 +31,9 @@ func TestParseAPTUpdateSimulation(t *testing.T) {
 }
 
 func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
-	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript} {
+	archRefresh := archCheckupdatesRefreshScript("/srv/bebop")
+	archCheck := archCheckupdatesScript("/srv/bebop")
+	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript, archRefresh, archCheck} {
 		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update", "dnf install", "dnf upgrade", "dnf update", "zypper --non-interactive install", "zypper --non-interactive patch ", "zypper --non-interactive up"} {
 			if containsToken(script, forbidden) {
 				t.Fatalf("update-awareness script contains forbidden mutation %q: %s", forbidden, script)
@@ -39,7 +43,52 @@ func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") || !containsToken(dnfUpdateCheckScript, "dnf5 -y check-upgrade") || !containsToken(dnfRefreshScript, "dnf5 -y makecache") || !containsToken(enterpriseDNFUpdateCheckScript, "dnf -y check-update") || !containsToken(enterpriseDNFRefreshScript, "dnf -y makecache") || !containsToken(zypperLeapPatchCheckScript, "zypper --non-interactive patch-check") || !containsToken(zypperTumbleweedUpdateCheckScript, "zypper --non-interactive --xmlout dup --dry-run") {
 		t.Fatalf("update-awareness scripts lost explicit semantics: %q / %q", aptUpdateSimulationScript, aptRefreshScript)
 	}
+	for _, forbidden := range []string{"pacman -Sy", "pacman -Syu", "pacman -S ", "pacman -U", "pacman -R"} {
+		if containsToken(archRefresh, forbidden) || containsToken(archCheck, forbidden) {
+			t.Fatalf("Arch update-awareness script contains forbidden mutation %q: %s / %s", forbidden, archRefresh, archCheck)
+		}
+	}
+	if !containsToken(archRefresh, "CHECKUPDATES_DB='/srv/bebop/checkupdates'") || !containsToken(archCheck, "checkupdates --nocolor --nosync") || containsToken(archRefresh, "/var/lib/pacman/sync") || containsToken(archCheck, "/var/lib/pacman/sync") {
+		t.Fatalf("Arch checkupdates did not use its isolated database safely: %s / %s", archRefresh, archCheck)
+	}
 }
+
+func TestArchCheckupdatesExitSemantics(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		available bool
+		failed    bool
+	}{
+		{name: "updates available", available: true},
+		{name: "no updates", err: &transport.ExitError{Code: 2}},
+		{name: "operational failure", err: &transport.ExitError{Code: 1}, failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			available, err := archUpdatesAvailable(test.err)
+			if available != test.available || (err != nil) != test.failed {
+				t.Fatalf("checkupdates result available=%t err=%v", available, err)
+			}
+		})
+	}
+}
+
+func TestArchCheckupdatesMissingPrerequisiteIsActionable(t *testing.T) {
+	if err := requireArchCheckupdates(context.Background(), missingCheckupdatesTransport{}); err == nil || !strings.Contains(err.Error(), "pacman-contrib") || !strings.Contains(err.Error(), "checkupdates") {
+		t.Fatalf("missing checkupdates error was not actionable: %v", err)
+	}
+}
+
+type missingCheckupdatesTransport struct{}
+
+func (missingCheckupdatesTransport) Run(context.Context, transport.Request) (transport.Result, error) {
+	return transport.Result{}, errors.New("command not found")
+}
+func (missingCheckupdatesTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
+func (missingCheckupdatesTransport) FileExists(context.Context, string) (bool, error) {
+	return false, nil
+}
+func (missingCheckupdatesTransport) Description() string { return "missing-checkupdates" }
 
 func TestZypperUpdateExitAndDistributionUpgradeSemantics(t *testing.T) {
 	for _, test := range []struct {

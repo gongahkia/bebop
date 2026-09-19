@@ -10,6 +10,7 @@ import (
 	"github.com/bebop-home/bebop/internal/apply"
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/facts"
+	"github.com/bebop-home/bebop/internal/plan"
 	"github.com/bebop-home/bebop/internal/planner"
 )
 
@@ -28,6 +29,92 @@ func enterpriseLinuxHost(id, version string) facts.HostFacts {
 
 func openSUSEHost(id, version string) facts.HostFacts {
 	return facts.HostFacts{OS: facts.OS{ID: id, Family: "opensuse", VersionID: version, Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "zypper", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
+}
+
+func archHost() facts.HostFacts {
+	return facts.HostFacts{OS: facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
+}
+
+func TestArchDockerUsesOnlyCurrentOfficialPackagesWithoutSynchronizingPacman(t *testing.T) {
+	host := archHost()
+	host.Docker.PackageSetAvailable = true
+	changes, _, err := (Docker{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) < 2 {
+		t.Fatalf("Arch Docker plan = %#v, %v", changes, err)
+	}
+	engine := changes[0]
+	if engine.Action.Resource != "arch" {
+		t.Fatalf("Arch Docker policy = %#v", engine)
+	}
+	for _, required := range []string{"pacman -S --needed --noconfirm docker docker-compose", "LC_ALL=C pacman -Si", "docker-compose"} {
+		if !strings.Contains(engine.Action.Script+"\n"+engine.Preconditions[0].Script, required) {
+			t.Fatalf("Arch Docker policy missing %q: %#v", required, engine)
+		}
+	}
+	for _, forbidden := range []string{"pacman -Sy", "pacman -Syu", "docker-ce", "curl | sh", "yay", "paru", "makepkg", "/var/lib/docker"} {
+		if strings.Contains(engine.Action.Script, forbidden) || strings.Contains(engine.Preconditions[0].Script, forbidden) {
+			t.Fatalf("Arch Docker policy contains forbidden %q: %#v", forbidden, engine)
+		}
+	}
+	host.Docker.PackageSetAvailable = false
+	changes, _, err = (Docker{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" || !strings.Contains(changes[0].Blocked, "pacman -Syu") {
+		t.Fatalf("stale/unavailable Arch package state was not safely blocked: %#v, %v", changes, err)
+	}
+}
+
+func TestArchTailscaleUsesOnlyOfficialPackageWithoutSynchronizingPacman(t *testing.T) {
+	host := archHost()
+	host.Tailscale.PackageAvailable = true
+	changes, warnings, err := (Tailscale{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) < 2 || len(warnings) != 0 {
+		t.Fatalf("Arch Tailscale plan = %#v %#v %v", changes, warnings, err)
+	}
+	install := changes[0]
+	if install.Action.Resource != "arch" || !strings.Contains(install.Action.Script, "pacman -S --needed --noconfirm tailscale") {
+		t.Fatalf("Arch Tailscale package policy = %#v", install)
+	}
+	for _, forbidden := range []string{"pacman -Sy", "pacman -Syu", "curl | sh", "tailscale up", "yay", "paru"} {
+		if strings.Contains(install.Action.Script, forbidden) || strings.Contains(install.Preconditions[1].Script, forbidden) {
+			t.Fatalf("Arch Tailscale policy contains forbidden %q: %#v", forbidden, install)
+		}
+	}
+	host.Tailscale.PackageAvailable = false
+	changes, _, err = (Tailscale{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unavailable Arch Tailscale package was not blocked: %#v, %v", changes, err)
+	}
+}
+
+func TestArchAutomaticUpdatesAreExplicitlyBlocked(t *testing.T) {
+	host := archHost()
+	changes, _, err := (Updates{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) != 1 || changes[0].Blocked == "" || changes[0].Action.Script != "" || !strings.Contains(changes[0].Blocked, "pacman -Syu") {
+		t.Fatalf("Arch automatic updates were not explicitly blocked: %#v, %v", changes, err)
+	}
+	if changes[0].Action.Kind != "updates.automatic-unsupported" {
+		t.Fatalf("Arch automatic update action kind = %#v", changes[0].Action)
+	}
+	host.Docker.PackageSetAvailable = true
+	host.Tailscale.PackageAvailable = true
+	result, err := planner.New(Default()...).Build(host, config.Defaults())
+	blocked := false
+	for _, change := range result.Changes {
+		blocked = blocked || change.Blocked != ""
+	}
+	if err != nil || !blocked {
+		t.Fatalf("Arch automatic-update request did not produce a blocked plan: %#v, %v", result, err)
+	}
+	tr := &serviceRecordingTransport{}
+	if _, err := apply.Execute(t.Context(), result, tr, config.Defaults(), nil, nil); err == nil || tr.calls != 0 {
+		t.Fatalf("blocked Arch automatic updates reached mutation: calls=%d err=%v", tr.calls, err)
+	}
+	cfg := config.Defaults()
+	cfg.Features.AutomaticUpdates = false
+	changes, _, err = (Updates{}).Plan(host, cfg)
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("Arch with automatic updates disabled did not plan normally: %#v, %v", changes, err)
+	}
 }
 
 func TestOpenSUSEDockerUsesOnlyReviewedDistributionPackages(t *testing.T) {
@@ -381,6 +468,36 @@ func TestOpenSUSESELinuxUsesTheSameSharedBindRule(t *testing.T) {
 	}
 }
 
+func TestArchSELinuxUsesTheSameSharedBindRuleBeforeMutation(t *testing.T) {
+	for _, test := range []struct {
+		name, mount string
+		blocked     bool
+	}{
+		{name: "named volume", mount: "data:/data", blocked: false},
+		{name: "shared bind", mount: "/srv/data:/data:rw,z", blocked: false},
+		{name: "unlabeled bind", mount: "/srv/data:/data", blocked: true},
+		{name: "private bind", mount: "/srv/data:/data:Z", blocked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := !strings.HasPrefix(test.mount, "data:")
+			cfg := fedoraComposeConfig(t, test.mount, path)
+			host := archHost()
+			host.SELinux.Mode = "enforcing"
+			host.Docker = facts.Docker{Installed: true, PackageSetComplete: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}
+			result, err := planner.New(Compose{}).Build(host, cfg)
+			if err != nil || len(result.Changes) == 0 || (result.Changes[0].Blocked != "") != test.blocked {
+				t.Fatalf("Arch SELinux plan = %#v, %v", result, err)
+			}
+			if test.blocked {
+				tr := &serviceRecordingTransport{}
+				if _, err := apply.Execute(t.Context(), result, tr, cfg, nil, nil); err == nil || tr.calls != 0 {
+					t.Fatalf("unsafe Arch bind reached mutation: calls=%d err=%v", tr.calls, err)
+				}
+			}
+		})
+	}
+}
+
 func TestEnterpriseLinuxPlansAreDeterministic(t *testing.T) {
 	for _, host := range []facts.HostFacts{
 		enterpriseLinuxHost("rocky", "9.8"),
@@ -397,6 +514,50 @@ func TestEnterpriseLinuxPlansAreDeterministic(t *testing.T) {
 			t.Fatalf("Enterprise Linux plan is not deterministic: %#v %#v %v", first, second, err)
 		}
 	}
+}
+
+func TestArchPlansAreDeterministic(t *testing.T) {
+	host := archHost()
+	host.Docker.PackageSetAvailable = true
+	host.Tailscale.PackageAvailable = true
+	planner := planner.New(Default()...)
+	first, err := planner.Build(host, config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := planner.Build(host, config.Defaults())
+	if err != nil || first.Fingerprint != second.Fingerprint || !reflect.DeepEqual(first.Changes, second.Changes) || !reflect.DeepEqual(first.Warnings, second.Warnings) {
+		t.Fatalf("Arch plan is not deterministic: %#v %#v %v", first, second, err)
+	}
+}
+
+func TestArchNormalPlanContainsNoPartialUpgradePath(t *testing.T) {
+	host := archHost()
+	host.Docker.PackageSetAvailable = true
+	host.Tailscale.PackageAvailable = true
+	cfg := config.Defaults()
+	cfg.Features.AutomaticUpdates = false
+	result, err := planner.New(Default()...).Build(host, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range result.Changes {
+		for _, script := range append([]string{change.Action.Script}, preconditionScripts(change.Preconditions)...) {
+			for _, forbidden := range []string{"pacman -Sy", "pacman -Syu", "pacman -Syy", "yay", "paru", "makepkg", "curl | sh", "--overwrite"} {
+				if strings.Contains(script, forbidden) {
+					t.Fatalf("Arch normal plan action %s contains forbidden %q: %s", change.ID, forbidden, script)
+				}
+			}
+		}
+	}
+}
+
+func preconditionScripts(preconditions []plan.Precondition) []string {
+	scripts := make([]string, 0, len(preconditions))
+	for _, precondition := range preconditions {
+		scripts = append(scripts, precondition.Script)
+	}
+	return scripts
 }
 
 func TestFedoraNonEnforcingSELinuxLeavesExistingBindBehaviorUnchanged(t *testing.T) {

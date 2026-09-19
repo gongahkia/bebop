@@ -29,7 +29,7 @@ func ParseOSRelease(contents string) (OS, error) {
 		return OS{}, err
 	}
 	id := strings.ToLower(values["ID"])
-	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], VersionCodename: strings.ToLower(values["VERSION_CODENAME"]), PlatformID: strings.ToLower(values["PLATFORM_ID"])}
+	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], BuildID: strings.ToLower(values["BUILD_ID"]), VersionCodename: strings.ToLower(values["VERSION_CODENAME"]), PlatformID: strings.ToLower(values["PLATFORM_ID"])}
 	switch id {
 	case "debian":
 		os.Family, os.Supported = "debian", true
@@ -61,6 +61,12 @@ func ParseOSRelease(contents string) (OS, error) {
 		// Tumbleweed is rolling. Its snapshot date is useful display metadata,
 		// not a release gate; exact ID remains the support boundary.
 		os.Family, os.Supported = "opensuse", true
+	case "arch":
+		// Arch is rolling, but only the official rolling distribution is
+		// reviewed. ID_LIKE and image-version metadata are deliberately not
+		// support signals.
+		os.Family = "arch"
+		os.Supported = os.BuildID == "rolling"
 	default:
 		os.Family = "unsupported"
 	}
@@ -68,8 +74,9 @@ func ParseOSRelease(contents string) (OS, error) {
 }
 
 // RequiredPackageTools is the small platform capability model used by
-// inspection and planning. A manager value is reported only when its paired
-// installed-package database tool is also available.
+// inspection and planning. RPM and Debian-family managers have a paired
+// installed-package database tool; Pacman itself provides Arch's reviewed
+// package-query capability and therefore has an empty database value.
 func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 	family := os.Family
 	if family == "" {
@@ -84,6 +91,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "fedora"
 		case "rocky", "almalinux", "centos":
 			family = "enterprise-linux"
+		case "arch":
+			family = "arch"
 		}
 	}
 	switch family {
@@ -95,6 +104,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "dnf", "rpm", true
 	case "opensuse":
 		return "zypper", "rpm", true
+	case "arch":
+		return "pacman", "", true
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.

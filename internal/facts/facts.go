@@ -42,6 +42,7 @@ type OS struct {
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	VersionID       string `json:"version_id"`
+	BuildID         string `json:"build_id,omitempty"`
 	VersionCodename string `json:"version_codename"`
 	PlatformID      string `json:"platform_id,omitempty"`
 	Family          string `json:"family"`
@@ -75,9 +76,22 @@ func (o OS) IsSupported() bool {
 		return o.VersionID == "16.0"
 	case "opensuse-tumbleweed":
 		return true
+	case "arch":
+		return o.BuildID == "rolling"
 	default:
 		return true
 	}
+}
+
+// SupportsArchitecture adds the few reviewed architecture restrictions that
+// are part of an operating-system support policy. Most Bebop capabilities are
+// architecture-neutral; official Arch Linux support is deliberately x86_64
+// only.
+func (o OS) SupportsArchitecture(architecture string) bool {
+	if !o.IsSupported() {
+		return false
+	}
+	return o.ID != "arch" || architecture == "amd64"
 }
 
 type SSH struct {
@@ -125,12 +139,13 @@ type Service struct {
 }
 
 type Tailscale struct {
-	Installed       bool   `json:"installed"`
-	ServiceEnabled  bool   `json:"service_enabled"`
-	ServiceActive   bool   `json:"service_active"`
-	Connected       bool   `json:"connected"`
-	BackendState    string `json:"backend_state,omitempty"`
-	RepositoryState string `json:"repository_state,omitempty"`
+	Installed        bool   `json:"installed"`
+	PackageAvailable bool   `json:"package_available,omitempty"`
+	ServiceEnabled   bool   `json:"service_enabled"`
+	ServiceActive    bool   `json:"service_active"`
+	Connected        bool   `json:"connected"`
+	BackendState     string `json:"backend_state,omitempty"`
+	RepositoryState  string `json:"repository_state,omitempty"`
 }
 
 type AutomaticUpdates struct {
@@ -243,7 +258,11 @@ type Identity struct {
 }
 
 func (host HostFacts) Identity() Identity {
-	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: host.OS.VersionID}
+	version := host.OS.VersionID
+	if host.OS.ID == "arch" {
+		version = ""
+	}
+	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: version}
 }
 
 func (identity Identity) Matches(current Identity) bool {
@@ -325,9 +344,10 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	mountConfigs := append([]StorageMountConfig(nil), host.Storage.MountConfigs...)
 	sort.Slice(mountConfigs, func(i, j int) bool { return mountConfigs[i].Name < mountConfigs[j].Name })
 	os := host.OS
-	// Tumbleweed snapshot dates are not a release gate or a machine identity.
-	// Package/repository facts still stale a plan when their state changes.
-	if os.ID == "opensuse-tumbleweed" {
+	// Tumbleweed snapshot dates and Arch's absent/non-release VERSION_ID are
+	// not release gates or machine identity. Package/repository facts still
+	// stale a plan when their state changes.
+	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" {
 		os.VersionID = ""
 	}
 	return ConvergenceSnapshot{

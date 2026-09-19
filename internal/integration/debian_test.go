@@ -181,6 +181,46 @@ func TestOpenSUSEInspect(t *testing.T) {
 	}
 }
 
+// TestArchInspect is read-only identity and Pacman capability coverage. The
+// Arch container deliberately does not stand in for a systemd host.
+func TestArchInspect(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "bebop")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
+	const image = "archlinux:base"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run disposable Arch inspect: %v\n%s", err, output)
+	}
+	var result struct {
+		OS struct {
+			ID        string `json:"id"`
+			BuildID   string `json:"build_id"`
+			Supported bool   `json:"supported"`
+		} `json:"os"`
+		Architecture   string `json:"architecture"`
+		PackageManager string `json:"package_manager"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+	}
+	if result.OS.ID != "arch" || result.OS.BuildID != "rolling" || !result.OS.Supported || result.Architecture != "amd64" || result.PackageManager != "pacman" {
+		t.Fatalf("unexpected Arch inspection: %#v", result)
+	}
+}
+
 // ensureIntegrationImage keeps optional read-only coverage useful when a
 // vendor retires a specifically reviewed image tag. A pull failure is an
 // unavailable external test prerequisite, not evidence that Bebop accepts an

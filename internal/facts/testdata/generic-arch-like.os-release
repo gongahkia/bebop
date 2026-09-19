@@ -1,0 +1,4 @@
+NAME="Example Arch derivative"
+ID=example
+ID_LIKE=arch
+BUILD_ID=rolling

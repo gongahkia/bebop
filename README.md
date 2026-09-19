@@ -15,6 +15,7 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * AlmaLinux 9.8/10.2
     * CentOS Stream 9/10
     * openSUSE Leap 16.0 and Tumbleweed
+    * Arch Linux x86_64
 
 ## Quick start
 
@@ -226,6 +227,14 @@ enabled official openSUSE repository. It does not add Docker CE or OBS
 repositories. Leap 15.6, Leap 16.1 beta, Slowroll, MicroOS, Leap Micro, and
 transactional/immutable openSUSE hosts are unsupported.
 
+On official x86_64 Arch Linux (`ID=arch`, `BUILD_ID=rolling`), Bebop requires
+systemd and `pacman` and installs only the official `docker`,
+`docker-compose`, and `tailscale` packages. It neither uses the AUR nor adds
+Docker or Tailscale repositories. Package installation never runs `pacman -Sy`
+or silently upgrades the system; if current package metadata is unsuitable,
+perform a reviewed full `pacman -Syu` manually and retry. Arch derivatives and
+Arch Linux ARM are unsupported.
+
 For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
 `stable/opensuse/leap/16.0/$basearch` or
 `stable/opensuse/tumbleweed/$basearch`, verifies the reviewed signing key, and
@@ -421,6 +430,12 @@ install the reviewed distribution Docker stack and start `docker.service`, insta
 Tailscale from an explicit official repository mapping, and add a conservative
 SSH drop-in. Tailscale authentication remains manual: after installation run
 `sudo tailscale up` on the target.
+
+Arch intentionally has no Bebop automatic-update implementation: set
+`automatic_updates = false`. Requesting it blocks the plan rather than creating
+an unattended rolling upgrade. Arch maintenance update awareness requires the
+operator-installed `pacman-contrib` `checkupdates` utility and never updates
+the live Pacman database.
 
 `network.firewall` accepts only `"disabled"` in this milestone. Bebop reports
 UFW/nftables/firewalld state but never changes firewall rules.

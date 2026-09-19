@@ -92,6 +92,8 @@ func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.O
 		script = "if command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'dnf rpm'; fi"
 	case "zypper":
 		script = "if command -v zypper >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'zypper rpm'; fi"
+	case "pacman":
+		script = "if command -v pacman >/dev/null 2>&1; then printf pacman; fi"
 	}
 	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
 		// The probe itself tests the paired database executable before writing
@@ -148,6 +150,9 @@ if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=ye
 }
 
 func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Docker {
+	if packageManager == "pacman" && os.Family == "arch" {
+		return inspectArchDocker(ctx, tr, systemd)
+	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
@@ -183,6 +188,27 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 	}
 	lines := probeLines(ctx, tr, script)
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: policy, ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+}
+
+// inspectArchDocker queries only Pacman's existing sync database. In
+// particular, pacman -Si does not synchronize /var/lib/pacman/sync, so this
+// probe can determine whether the reviewed official packages are available
+// without creating a partial-upgrade state.
+func inspectArchDocker(ctx context.Context, tr transport.Transport, systemd bool) facts.Docker {
+	lines := probeLines(ctx, tr, `
+if pacman -Q docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if pacman -Q docker docker-compose >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if LC_ALL=C pacman -Si docker 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }' && LC_ALL=C pacman -Si docker-compose 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker-compose" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+`)
+	composePackage := ""
+	if lines["package_available"] == "yes" {
+		composePackage = "docker-compose"
+	}
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryPolicy: "arch-official", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: composePackage}
 }
 
 // inspectOpenSUSEDocker accepts only packages resolved from enabled official
@@ -454,6 +480,9 @@ func aggregateRuntime(states []dockerContainerState) (string, string, int) {
 }
 
 func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Tailscale {
+	if packageManager == "pacman" && os.Family == "arch" {
+		return inspectArchTailscale(ctx, tr, systemd)
+	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
@@ -514,7 +543,22 @@ if test ! -e /etc/zypp/repos.d/tailscale.repo; then printf 'repository=absent\n'
 	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState, RepositoryState: lines["repository"]}
 }
 
+func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
+	lines := probeLines(ctx, tr, `
+if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if LC_ALL=C pacman -Si tailscale 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "tailscale" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\([^"]*\)".*/backend=\1/p' | head -n 1; fi
+`)
+	backend := lines["backend"]
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: backend == "Running", BackendState: backend}
+}
+
 func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string, os facts.OS) facts.AutomaticUpdates {
+	if packageManager == "pacman" && os.Family == "arch" {
+		return facts.AutomaticUpdates{ConfigState: "unsupported"}
+	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' && apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Update-Package-Lists "1";'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi

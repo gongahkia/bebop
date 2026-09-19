@@ -216,15 +216,18 @@ apt availability with `apt-get -s upgrade`, Fedora availability with
 `dnf -y check-update`. Leap uses `zypper --non-interactive patch-check`, where
 100 and 101 mean updates/security updates are available; Tumbleweed uses the
 non-mutating XML `zypper --non-interactive --xmlout dup --dry-run` solver
-result. Available updates are information, not failure and never cause
-installation.
+result. Official Arch Linux uses `pacman-contrib`'s `checkupdates`: exit 0
+means updates and exit 2 means none. It uses a Bebop-owned isolated database,
+never the live Pacman sync database. Available updates are information, not
+failure and never cause installation.
 
 `refresh_metadata = true` is explicit. It performs `apt-get update` on
 Debian-family targets, `dnf5 -y makecache` on Fedora, or `dnf -y makecache` on
 supported Enterprise Linux, or `zypper --non-interactive refresh` on
-openSUSE, under the existing target mutation lock, before the check. It never
-runs an apt, DNF, or Zypper upgrade, package installation, image update, or
-reboot.
+openSUSE, under the existing target mutation lock, before the check. On Arch it
+refreshes only the isolated `checkupdates` database under that lock. It never
+runs an apt, DNF, Zypper, or Pacman upgrade, package installation, image
+update, or reboot.
 Without refresh, history reports availability from whatever target package
 metadata was already present. Security counts are `known` only when the apt
 simulation exposes a security origin for every available update; otherwise the

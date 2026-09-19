@@ -130,6 +130,12 @@ packages through noninteractive Zypper. It does not add Docker CE, Docker
 convenience-installer, or OBS repositories. Leap 16.1 beta and immutable or
 transactional openSUSE variants remain unsupported.
 
+On official x86_64 Arch Linux, Bebop uses only the target's existing official
+Pacman repositories for fixed `docker` and `docker-compose` packages. It never
+adds a Docker repository, uses the AUR, synchronizes package metadata for a
+targeted install, or converts the install into `pacman -Syu`; an unavailable
+package database requires a reviewed manual full upgrade before retrying.
+
 On any SELinux-enforcing supported target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and
