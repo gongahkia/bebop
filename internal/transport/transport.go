@@ -147,6 +147,24 @@ func lockScript(path string) string {
 	return "exec 9>" + ShellQuote(path) + "\nflock -n 9 || exit 75\nprintf 'bebop-lock-acquired\\n'\ncat >/dev/null"
 }
 
+// privilegedShellScript selects only already-configured noninteractive
+// elevation. It never supplies credentials or invokes an interactive fallback.
+// Sudo remains preferred where it already works; doas is the Alpine-safe
+// fallback for administrators who configured a nopass rule themselves.
+func privilegedShellScript(script string) string {
+	quoted := ShellQuote(script)
+	return `if test "$(id -u)" -eq 0; then
+  exec sh -ceu ` + quoted + `
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  exec sudo -n sh -ceu ` + quoted + `
+elif command -v doas >/dev/null 2>&1 && doas -n true >/dev/null 2>&1; then
+  exec doas -n sh -ceu ` + quoted + `
+else
+  printf '%s\\n' 'Bebop requires non-interactive root, sudo -n, or doas -n' >&2
+  exit 1
+fi`
+}
+
 func acquireProcessLock(ctx context.Context, program string, arguments []string) (ApplyLock, error) {
 	command := exec.CommandContext(ctx, program, arguments...)
 	stdin, err := command.StdinPipe()

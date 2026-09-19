@@ -45,28 +45,33 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.Architecture, f.ArchitectureKnown = facts.NormalizeArchitecture(rawArchitecture)
 	f.Kernel = firstLine(mustProbe(ctx, tr, "uname -r"))
 	f.EffectiveUser = firstLine(mustProbe(ctx, tr, "id -un"))
-	f.SudoAvailable = firstLine(mustProbe(ctx, tr, "if test \"$(id -u)\" -eq 0 || (command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then printf yes; else printf no; fi")) == "yes"
-	f.Systemd = firstLine(mustProbe(ctx, tr, "if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then printf yes; else printf no; fi")) == "yes"
+	f.PrivilegeMode = inspectPrivilegeMode(ctx, tr)
+	f.SudoAvailable = f.PrivilegeMode != "unavailable"
+	f.InitSystem = inspectInitSystem(ctx, tr)
+	f.Systemd = f.InitSystem == facts.InitSystemSystemd
 	f.PackageManager, f.PackageDatabase = inspectPackageTools(ctx, tr, f.OS)
-	if f.Systemd {
-		f.InitSystem = "systemd"
-	} else {
-		f.InitSystem = "unknown"
-	}
-	f.SSH = inspectSSH(ctx, tr)
+	f.RequiredTools = inspectRequiredTools(ctx, tr, f.OS)
+	f.SSH = inspectSSH(ctx, tr, f.InitSystem)
 	f.SELinux = inspectSELinux(ctx, tr)
-	f.Docker = inspectDocker(ctx, tr, f.Systemd, f.PackageManager, f.OS)
+	f.Docker = inspectDocker(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
 	deployments, err := services.ResolveAll(cfg)
 	if err != nil {
 		return facts.HostFacts{}, err
 	}
 	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
-	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd, f.PackageManager, f.OS)
-	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.PackageManager, f.OS)
+	f.Tailscale = inspectTailscale(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
+	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
 	f.MutationBlocked, f.MutationBlockReason = inspectMutationSafety(ctx, tr, f.RootFilesystem)
+	f.RootMode = "persistent"
+	if f.OS.Family == "alpine" {
+		f.RootMode = inspectAlpineRootMode(ctx, tr, f.RootFilesystem)
+		if f.RootMode != "persistent" {
+			f.MutationBlocked, f.MutationBlockReason = true, "Alpine " + f.RootMode + " root cannot preserve Bebop mutations across reboot"
+		}
+	}
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.Storage = inspectStorage(ctx, tr)
 	f.Storage.MountConfigs = inspectManagedMountConfigs(ctx, tr, cfg.Storage.Resources)
@@ -75,6 +80,46 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	}
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
+}
+
+func inspectPrivilegeMode(ctx context.Context, tr transport.Transport) string {
+	return firstLine(mustProbe(ctx, tr, `if test "$(id -u)" -eq 0; then
+  printf root
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  printf sudo
+elif command -v doas >/dev/null 2>&1 && doas -n true >/dev/null 2>&1; then
+  printf doas
+else
+  printf unavailable
+fi`))
+}
+
+func inspectInitSystem(ctx context.Context, tr transport.Transport) facts.InitSystem {
+	switch firstLine(mustProbe(ctx, tr, `if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then
+  printf systemd
+elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1 && test -d /run/openrc; then
+  printf openrc
+else
+  printf unknown
+fi`)) {
+	case string(facts.InitSystemSystemd):
+		return facts.InitSystemSystemd
+	case string(facts.InitSystemOpenRC):
+		return facts.InitSystemOpenRC
+	default:
+		return facts.InitSystemUnknown
+	}
+}
+
+func inspectRequiredTools(ctx context.Context, tr transport.Transport, os facts.OS) facts.RequiredTools {
+	if os.Family != "alpine" {
+		return facts.RequiredTools{}
+	}
+	lines := probeLines(ctx, tr, `
+if command -v flock >/dev/null 2>&1; then printf 'flock=yes\n'; else printf 'flock=no\n'; fi
+if command -v lsblk >/dev/null 2>&1; then printf 'lsblk=yes\n'; else printf 'lsblk=no\n'; fi
+if command -v findmnt >/dev/null 2>&1; then printf 'findmnt=yes\n'; else printf 'findmnt=no\n'; fi`)
+	return facts.RequiredTools{Flock: lines["flock"] == "yes", LSBLK: lines["lsblk"] == "yes", Findmnt: lines["findmnt"] == "yes"}
 }
 
 func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.OS) (string, string) {
@@ -94,6 +139,8 @@ func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.O
 		script = "if command -v zypper >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'zypper rpm'; fi"
 	case "pacman":
 		script = "if command -v pacman >/dev/null 2>&1; then printf pacman; fi"
+	case "apk":
+		script = "if command -v apk >/dev/null 2>&1; then printf apk; fi"
 	}
 	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
 		// The probe itself tests the paired database executable before writing
@@ -131,7 +178,10 @@ func mustProbe(ctx context.Context, tr transport.Transport, script string) strin
 	return strings.TrimSpace(result.Stdout)
 }
 
-func inspectSSH(ctx context.Context, tr transport.Transport) facts.SSH {
+func inspectSSH(ctx context.Context, tr transport.Transport, init facts.InitSystem) facts.SSH {
+	if init == facts.InitSystemOpenRC {
+		return inspectOpenRCSSH(ctx, tr)
+	}
 	lines := probeLines(ctx, tr, `
 if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl cat ssh.service >/dev/null 2>&1; then printf 'service=ssh.service\n'; elif systemctl cat sshd.service >/dev/null 2>&1; then printf 'service=sshd.service\n'; else printf 'service=\n'; fi
@@ -149,7 +199,27 @@ if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=ye
 	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
-func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Docker {
+func inspectOpenRCSSH(ctx context.Context, tr transport.Transport) facts.SSH {
+	lines := probeLines(ctx, tr, `
+if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -x /etc/init.d/sshd; then printf 'service=sshd\n'; else printf 'service=\n'; fi
+if test -x /etc/init.d/sshd && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*sshd([[:space:]]|$)'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test -x /etc/init.d/sshd && rc-service sshd status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v sshd >/dev/null 2>&1 && sshd -t >/dev/null 2>&1; then printf 'valid=yes\n'; else printf 'valid=no\n'; fi
+if grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf([[:space:]]|$)' /etc/ssh/sshd_config 2>/dev/null; then printf 'dropin=yes\n'; else printf 'dropin=no\n'; fi
+first=$(for candidate in /etc/ssh/sshd_config.d/*.conf; do test -f "$candidate" && basename "$candidate"; done | LC_ALL=C sort | head -n 1)
+printf 'first=%s\n' "$first"
+if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null | grep -Fqx 'passwordauthentication no'; then printf 'effective=yes\n'; else printf 'effective=no\n'; fi
+home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
+if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi`)
+	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
+}
+
+func inspectDocker(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.Docker {
+	systemd := init == facts.InitSystemSystemd
+	if packageManager == "apk" && os.Family == "alpine" {
+		return inspectAlpineDocker(ctx, tr)
+	}
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchDocker(ctx, tr, systemd)
 	}
@@ -188,6 +258,29 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 	}
 	lines := probeLines(ctx, tr, script)
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: policy, ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+}
+
+const alpineBebopRepositoriesPath = "/etc/apk/repositories.d/50-bebop.list"
+
+const alpineBebopRepositories = `# Managed by Bebop. Manual edits may be replaced.
+v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community`
+
+func inspectAlpineDocker(ctx context.Context, tr transport.Transport) facts.Docker {
+	lines := probeLines(ctx, tr, `
+if apk info -e docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if apk info -e docker docker-cli-compose docker-openrc >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if apk policy docker docker-cli-compose docker-openrc 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'repository=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
+if test -x /etc/init.d/docker && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*docker([[:space:]]|$)'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test -x /etc/init.d/docker && rc-service docker status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if test -r /sys/fs/cgroup/cgroup.controllers; then printf 'cgroups=yes\n'; else printf 'cgroups=no\n'; fi
+if test -x /etc/init.d/cgroups; then printf 'cgroups_service=yes\n'; else printf 'cgroups_service=no\n'; fi
+if test -x /etc/init.d/cgroups && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*cgroups([[:space:]]|$)'; then printf 'cgroups_enabled=yes\n'; else printf 'cgroups_enabled=no\n'; fi
+if test -x /etc/init.d/cgroups && rc-service cgroups status >/dev/null 2>&1; then printf 'cgroups_active=yes\n'; else printf 'cgroups_active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi`)
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: "alpine-v3.24", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-cli-compose", CgroupsAvailable: lines["cgroups"] == "yes", CgroupsServiceExists: lines["cgroups_service"] == "yes", CgroupsServiceEnabled: lines["cgroups_enabled"] == "yes", CgroupsServiceActive: lines["cgroups_active"] == "yes"}
 }
 
 // inspectArchDocker queries only Pacman's existing sync database. In
@@ -479,7 +572,11 @@ func aggregateRuntime(states []dockerContainerState) (string, string, int) {
 	return "starting", "starting", len(states)
 }
 
-func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Tailscale {
+func inspectTailscale(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.Tailscale {
+	systemd := init == facts.InitSystemSystemd
+	if packageManager == "apk" && os.Family == "alpine" {
+		return inspectAlpineTailscale(ctx, tr)
+	}
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchTailscale(ctx, tr, systemd)
 	}
@@ -543,6 +640,16 @@ if test ! -e /etc/zypp/repos.d/tailscale.repo; then printf 'repository=absent\n'
 	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState, RepositoryState: lines["repository"]}
 }
 
+func inspectAlpineTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
+	lines := probeLines(ctx, tr, `
+if apk info -e tailscale tailscale-openrc >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if apk policy tailscale tailscale-openrc 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test -x /etc/init.d/tailscale && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*tailscale([[:space:]]|$)'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test -x /etc/init.d/tailscale && rc-service tailscale status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\([^"]*\)".*/backend=\1/p' | head -n 1; fi`)
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: "official"}
+}
+
 func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
 	lines := probeLines(ctx, tr, `
 if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -555,9 +662,17 @@ if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/nul
 	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: backend == "Running", BackendState: backend}
 }
 
-func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string, os facts.OS) facts.AutomaticUpdates {
+func inspectUpdates(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.AutomaticUpdates {
 	if packageManager == "pacman" && os.Family == "arch" {
 		return facts.AutomaticUpdates{ConfigState: "unsupported"}
+	}
+	if packageManager == "apk" && os.Family == "alpine" {
+		lines := probeLines(ctx, tr, `
+if apk info -e apk-cron >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -x /etc/init.d/crond && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*crond([[:space:]]|$)' && rc-service crond status >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'config=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && ! grep -E '/(edge|testing)/|latest-stable' /etc/apk/repositories `+transport.ShellQuote(alpineBebopRepositoriesPath)+` >/dev/null 2>&1; then printf 'config=managed\n'; else printf 'config=unmanaged\n'; fi
+if apk policy apk-cron 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi`)
+		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
 	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -639,6 +754,26 @@ func inspectMutationSafety(ctx context.Context, tr transport.Transport, root fac
 		return true, "transactional-update is present; Bebop supports only conventional mutable hosts"
 	}
 	return false, ""
+}
+
+// inspectAlpineRootMode rejects installations whose root mutations are not
+// ordinary persistent system-disk changes. lbu configuration is the Alpine
+// persistence boundary for diskless/data modes; tmpfs and overlay roots catch
+// the more direct run-from-RAM and ephemeral-root cases.
+func inspectAlpineRootMode(ctx context.Context, tr transport.Transport, root facts.Filesystem) string {
+	if root.ReadOnly {
+		return "read-only"
+	}
+	switch root.Type {
+	case "tmpfs":
+		return "diskless"
+	case "overlay", "overlayfs":
+		return "ephemeral-overlay"
+	}
+	if firstLine(mustProbe(ctx, tr, "if test -e /etc/lbu/lbu.conf; then printf lbu-managed; fi")) == "lbu-managed" {
+		return "diskless-or-data"
+	}
+	return "persistent"
 }
 
 func containsOption(options, wanted string) bool {

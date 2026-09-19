@@ -71,7 +71,7 @@ func (s *SSH) commandArgs(request Request) []string {
 	args = append(args, s.target.User+"@"+s.target.Host)
 	remote := "sh -ceu " + ShellQuote(request.Script)
 	if request.Privileged {
-		remote = "if test \"$(id -u)\" -eq 0; then sh -ceu " + ShellQuote(request.Script) + "; else exec sudo -n sh -ceu " + ShellQuote(request.Script) + "; fi"
+		remote = privilegedShellScript(request.Script)
 	}
 	return append(args, remote)
 }
@@ -98,8 +98,7 @@ func (s *SSH) AcquireApplyLock(ctx context.Context) (ApplyLock, error) {
 		args = append(args, "-p", stringPort(s.target.Port))
 	}
 	args = append(args, s.target.User+"@"+s.target.Host)
-	script := lockScript(defaultApplyLockPath)
-	remote := "if test \"$(id -u)\" -eq 0; then exec sh -ceu " + ShellQuote(script) + "; else exec sudo -n sh -ceu " + ShellQuote(script) + "; fi"
+	remote := privilegedShellScript(lockScript(defaultApplyLockPath))
 	args = append(args, remote)
 	return acquireProcessLock(ctx, "ssh", args)
 }
