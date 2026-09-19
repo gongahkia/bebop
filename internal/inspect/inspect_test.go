@@ -87,6 +87,16 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 	if manager != "unknown" || database != "" {
 		t.Fatalf("Arch without pacman was accepted as %q/%q", manager, database)
 	}
+	tr.missingPacman = false
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true})
+	if manager != "apk" || database != "" {
+		t.Fatalf("Alpine package facts = %q/%q", manager, database)
+	}
+	tr.missingAPK = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("Alpine without apk was accepted as %q/%q", manager, database)
+	}
 	if mode := inspectSELinux(context.Background(), tr).Mode; mode != "enforcing" {
 		t.Fatalf("SELinux state was not normalized: %q", mode)
 	}
@@ -112,6 +122,33 @@ func TestMutationSafetyBlocksReadonlyAndTransactionalTargets(t *testing.T) {
 	}
 }
 
+func TestAlpineRootModeFailsClosedForEphemeralInstallations(t *testing.T) {
+	tr := packageProbeTransport{}
+	for _, test := range []struct {
+		root facts.Filesystem
+		want string
+	}{{facts.Filesystem{Type: "ext4"}, "persistent"}, {facts.Filesystem{Type: "tmpfs"}, "diskless"}, {facts.Filesystem{Type: "overlay"}, "ephemeral-overlay"}, {facts.Filesystem{Type: "ext4", ReadOnly: true}, "read-only"}} {
+		if got := inspectAlpineRootMode(context.Background(), tr, test.root); got != test.want {
+			t.Fatalf("Alpine root %#v mode = %q, want %q", test.root, got, test.want)
+		}
+	}
+	if got := inspectAlpineRootMode(context.Background(), alpineLBUTransport{}, facts.Filesystem{Type: "ext4"}); got != "diskless-or-data" {
+		t.Fatalf("Alpine lbu-managed root mode = %q, want diskless-or-data", got)
+	}
+}
+
+type alpineLBUTransport struct{}
+
+func (alpineLBUTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
+	if strings.Contains(request.Script, "/etc/lbu/lbu.conf") {
+		return transport.Result{Stdout: "lbu-managed"}, nil
+	}
+	return transport.Result{}, nil
+}
+func (alpineLBUTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
+func (alpineLBUTransport) FileExists(context.Context, string) (bool, error) { return false, nil }
+func (alpineLBUTransport) Description() string                              { return "alpine-lbu" }
+
 type storageTransport struct{ output string }
 
 func (s storageTransport) Run(context.Context, transport.Request) (transport.Result, error) {
@@ -136,6 +173,7 @@ func (scriptedStorageTransport) Description() string                            
 type packageProbeTransport struct {
 	missingDNFOrRPM bool
 	missingPacman   bool
+	missingAPK      bool
 }
 
 func (tr packageProbeTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
@@ -162,6 +200,11 @@ func (tr packageProbeTransport) Run(_ context.Context, request transport.Request
 			return transport.Result{}, nil
 		}
 		return transport.Result{Stdout: "pacman"}, nil
+	case strings.Contains(request.Script, "command -v apk"):
+		if tr.missingAPK {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "apk"}, nil
 	case strings.Contains(request.Script, "getenforce"):
 		return transport.Result{Stdout: "Enforcing"}, nil
 	default:

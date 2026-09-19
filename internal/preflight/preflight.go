@@ -45,6 +45,7 @@ type Result struct {
 	SupportedOS    bool                  `json:"supported_os"`
 	Architecture   bool                  `json:"architecture_supported"`
 	PackageManager string                `json:"package_manager,omitempty"`
+	InitSystem     facts.InitSystem      `json:"init_system,omitempty"`
 	Systemd        bool                  `json:"systemd"`
 	Ready          bool                  `json:"ready"`
 	Failure        transport.FailureKind `json:"failure,omitempty"`
@@ -134,11 +135,12 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 		}
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "package_manager.unsupported", Message: "required " + required + " package tools are unavailable"})
 	}
+	result.InitSystem = host.InitSystem
 	result.Systemd = host.Systemd
-	if host.Systemd {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "init.systemd", Message: "systemd available"})
+	if facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) {
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "init." + string(host.OS.RequiredInitSystem()), Message: string(host.OS.RequiredInitSystem()) + " available"})
 	} else {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "init.unsupported", Message: "systemd unavailable; Bebop requires systemd"})
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "init.unsupported", Message: "required " + string(host.OS.RequiredInitSystem()) + " init system unavailable"})
 	}
 	if host.MutationBlocked {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.mutation_unsupported", Message: "target mutation is unsafe: " + host.MutationBlockReason})
@@ -147,7 +149,20 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	if host.SudoAvailable {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "privilege.noninteractive", Message: "non-interactive root access available"})
 	} else {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "privilege.unavailable", Message: "non-interactive sudo/root access unavailable; Bebop cannot apply privileged changes"})
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "privilege.unavailable", Message: "non-interactive root, sudo, or doas access unavailable; Bebop cannot apply privileged changes"})
+	}
+	if host.OS.Family == "alpine" {
+		for _, tool := range []struct {
+			name      string
+			available bool
+		}{{"flock", host.RequiredTools.Flock}, {"lsblk", host.RequiredTools.LSBLK}, {"findmnt", host.RequiredTools.Findmnt}} {
+			name, available := tool.name, tool.available
+			if available {
+				result.Checks = append(result.Checks, Check{Status: Pass, Code: "target.tool." + name, Message: name + " available"})
+			} else {
+				result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.tool." + name, Message: "Alpine requires " + name + " before mutation; install flock findmnt lsblk manually with apk"})
+			}
+		}
 	}
 	appendOperationalChecks(&result, host)
 	result.Ready = !hasFailure(result.Checks)

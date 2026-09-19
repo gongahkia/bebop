@@ -220,14 +220,19 @@ result. Official Arch Linux uses `pacman-contrib`'s `checkupdates`: exit 0
 means updates and exit 2 means none. It uses a Bebop-owned isolated database,
 never the live Pacman sync database. Available updates are information, not
 failure and never cause installation.
+Alpine 3.24 uses `apk version -l '<'`; a non-empty normalized result means
+updates are available. It never installs or upgrades packages during this
+operation.
 
 `refresh_metadata = true` is explicit. It performs `apt-get update` on
 Debian-family targets, `dnf5 -y makecache` on Fedora, or `dnf -y makecache` on
 supported Enterprise Linux, or `zypper --non-interactive refresh` on
 openSUSE, under the existing target mutation lock, before the check. On Arch it
 refreshes only the isolated `checkupdates` database under that lock. It never
-runs an apt, DNF, Zypper, or Pacman upgrade, package installation, image
+runs an apt, DNF, Zypper, Pacman, or APK upgrade, package installation, image
 update, or reboot.
+On Alpine, it runs `apk update` only when refresh is requested, under that same
+target lock.
 Without refresh, history reports availability from whatever target package
 metadata was already present. Security counts are `known` only when the apt
 simulation exposes a security origin for every available update; otherwise the

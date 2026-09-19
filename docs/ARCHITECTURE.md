@@ -125,7 +125,9 @@ reports classified DNS, timeout, refused, host-key, authentication, client,
 sudo, and command failures. Inspector facts now include an optional machine ID
 and the supported target's detected package-management capability (apt/dpkg,
 dnf5/rpm for Fedora, dnf/rpm for Enterprise Linux, zypper/rpm for openSUSE,
-or pacman for official Arch Linux).
+pacman for official Arch Linux, or apk for Alpine 3.24). Target init is a
+separate capability: existing targets use systemd while Alpine uses OpenRC;
+the controller-only maintenance scheduler remains systemd-user on Linux.
 
 `internal/artifact` defines a versioned JSON plan-file contract. Its ordered
 canonical body has no timestamps or maps and is SHA-256 hashed. It records the
@@ -137,7 +139,7 @@ passes only that regenerated plan to apply. Artifact scripts are therefore not
 an execution authority, even if someone recomputes a self-hash.
 
 Relevant state contains planner/module inputs and plan-warning inputs: OS,
-architecture, apt/systemd/privilege state, module facts, firewall/storage
+architecture, package/init/privilege state, module facts, firewall/storage
 warnings, and data-root metadata. Kernel, memory, free space, timestamps, and
 transport timing are excluded. Identity prefers machine ID and conservatively
 falls back to hostname plus OS identity when it is unavailable.

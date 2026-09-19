@@ -18,10 +18,13 @@ type HostFacts struct {
 	Kernel              string           `json:"kernel"`
 	PackageManager      string           `json:"package_manager"`
 	PackageDatabase     string           `json:"package_database,omitempty"`
-	InitSystem          string           `json:"init_system"`
+	InitSystem          InitSystem       `json:"init_system"`
 	Systemd             bool             `json:"systemd"`
 	EffectiveUser       string           `json:"effective_user"`
 	SudoAvailable       bool             `json:"sudo_available"`
+	PrivilegeMode       string           `json:"privilege_mode,omitempty"`
+	RequiredTools       RequiredTools    `json:"required_tools,omitempty"`
+	RootMode            string           `json:"root_mode,omitempty"`
 	SSH                 SSH              `json:"ssh"`
 	Docker              Docker           `json:"docker"`
 	Services            []Service        `json:"services,omitempty"`
@@ -36,6 +39,25 @@ type HostFacts struct {
 	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
 	Storage             Storage          `json:"storage"`
 	DataRoot            Directory        `json:"data_root"`
+}
+
+// InitSystem is the intentionally small target service-management capability.
+// Controller-side maintenance scheduling is separate and remains platform-local.
+type InitSystem string
+
+const (
+	InitSystemUnknown InitSystem = "unknown"
+	InitSystemSystemd InitSystem = "systemd"
+	InitSystemOpenRC  InitSystem = "openrc"
+)
+
+// RequiredTools records Alpine's low-level mutation prerequisites. They stay
+// separate from APK itself because flock is required before Bebop may acquire
+// its mandatory target mutation lock.
+type RequiredTools struct {
+	Flock   bool `json:"flock,omitempty"`
+	LSBLK   bool `json:"lsblk,omitempty"`
+	Findmnt bool `json:"findmnt,omitempty"`
 }
 
 type OS struct {
@@ -78,6 +100,8 @@ func (o OS) IsSupported() bool {
 		return true
 	case "arch":
 		return o.BuildID == "rolling"
+	case "alpine":
+		return isAlpine324(o.VersionID)
 	default:
 		return true
 	}
@@ -91,7 +115,30 @@ func (o OS) SupportsArchitecture(architecture string) bool {
 	if !o.IsSupported() {
 		return false
 	}
-	return o.ID != "arch" || architecture == "amd64"
+	switch o.ID {
+	case "arch":
+		return architecture == "amd64"
+	case "alpine":
+		return architecture == "amd64" || architecture == "arm64"
+	default:
+		return true
+	}
+}
+
+// RequiredInitSystem keeps OS policy independent of the generic inspection
+// mechanism. Today Bebop has exactly two supported target init systems.
+func (o OS) RequiredInitSystem() InitSystem {
+	if o.Family == "alpine" || o.ID == "alpine" {
+		return InitSystemOpenRC
+	}
+	return InitSystemSystemd
+}
+
+func InitSystemAvailable(os OS, init InitSystem, legacySystemd bool) bool {
+	if init == "" && legacySystemd {
+		init = InitSystemSystemd
+	}
+	return init == os.RequiredInitSystem()
 }
 
 type SSH struct {
@@ -119,6 +166,10 @@ type Docker struct {
 	Responsive              bool   `json:"responsive"`
 	ComposeAvailable        bool   `json:"compose_available"`
 	ComposePackageAvailable string `json:"compose_package_available,omitempty"`
+	CgroupsAvailable        bool   `json:"cgroups_available,omitempty"`
+	CgroupsServiceExists    bool   `json:"cgroups_service_exists,omitempty"`
+	CgroupsServiceEnabled   bool   `json:"cgroups_service_enabled,omitempty"`
+	CgroupsServiceActive    bool   `json:"cgroups_service_active,omitempty"`
 }
 
 // Service is a normalized view of one declared Compose project. Deployment
@@ -151,6 +202,7 @@ type Tailscale struct {
 type AutomaticUpdates struct {
 	Installed         bool   `json:"installed"`
 	PackageAvailable  bool   `json:"package_available,omitempty"`
+	ServiceExists     bool   `json:"service_exists,omitempty"`
 	Enabled           bool   `json:"enabled"`
 	ConfigState       string `json:"config_state,omitempty"`
 	ConflictingTimers bool   `json:"conflicting_timers,omitempty"`
@@ -281,9 +333,13 @@ type ConvergenceSnapshot struct {
 	ArchitectureKnown   bool              `json:"architecture_known"`
 	PackageManager      string            `json:"package_manager"`
 	PackageDatabase     string            `json:"package_database,omitempty"`
+	InitSystem          InitSystem        `json:"init_system"`
 	Systemd             bool              `json:"systemd"`
 	EffectiveUser       string            `json:"effective_user"`
 	SudoAvailable       bool              `json:"sudo_available"`
+	PrivilegeMode       string            `json:"privilege_mode,omitempty"`
+	RequiredTools       RequiredTools     `json:"required_tools,omitempty"`
+	RootMode            string            `json:"root_mode,omitempty"`
 	SSH                 SSH               `json:"ssh"`
 	Docker              Docker            `json:"docker"`
 	Services            []ServiceSnapshot `json:"services,omitempty"`
@@ -352,8 +408,8 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	}
 	return ConvergenceSnapshot{
 		OS: os, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
-		PackageManager: host.PackageManager, PackageDatabase: host.PackageDatabase, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
-		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
+		PackageManager: host.PackageManager, PackageDatabase: host.PackageDatabase, InitSystem: host.InitSystem, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
+		SudoAvailable: host.SudoAvailable, PrivilegeMode: host.PrivilegeMode, RequiredTools: host.RequiredTools, RootMode: host.RootMode, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, SELinux: host.SELinux, Firewall: host.Firewall,
 		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, MountConfigs: mountConfigs, Policy: policy}, DataRoot: host.DataRoot, MutationBlocked: host.MutationBlocked, Services: services,
 	}

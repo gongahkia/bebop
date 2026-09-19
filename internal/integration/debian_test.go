@@ -221,6 +221,78 @@ func TestArchInspect(t *testing.T) {
 	}
 }
 
+// TestAlpineInspect is deliberately read-only. alpine:3.24 is an overlay-root
+// container rather than a persistent OpenRC host, so this verifies identity,
+// APK probing, and fail-closed installation-mode detection only.
+func TestAlpineInspect(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "bebop")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
+	const image = "alpine:3.24"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run disposable Alpine inspect: %v\n%s", err, output)
+	}
+	var result struct {
+		OS struct {
+			ID        string `json:"id"`
+			VersionID string `json:"version_id"`
+			Supported bool   `json:"supported"`
+		} `json:"os"`
+		Architecture    string `json:"architecture"`
+		PackageManager  string `json:"package_manager"`
+		MutationBlocked bool   `json:"mutation_blocked"`
+		RootMode        string `json:"root_mode"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+	}
+	if result.OS.ID != "alpine" || result.OS.VersionID != "3.24.2" || !result.OS.Supported || result.Architecture != "amd64" || result.PackageManager != "apk" || !result.MutationBlocked || result.RootMode != "ephemeral-overlay" {
+		t.Fatalf("unexpected Alpine inspection: %#v", result)
+	}
+}
+
+// TestAlpineAPKRepositorySyntax validates the apk-tools 3 parser contract for
+// Bebop's owned tagged repository file and the packaged OpenRC service/config
+// layout. It is not a host lifecycle test.
+func TestAlpineAPKRepositorySyntax(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	const image = "alpine:3.24"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	script := `mkdir -p /etc/apk/repositories.d
+printf '%s\n' '# Managed by Bebop. Manual edits may be replaced.' 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community' 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' >/etc/apk/repositories.d/50-bebop.list
+apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop.list >/dev/null
+apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list docker@bebop-community docker-cli-compose@bebop-community docker-openrc@bebop-community tailscale@bebop-community tailscale-openrc@bebop-community apk-cron@bebop-main busybox-openrc openssh-server openssh-server-common-openrc >/dev/null
+test -x /etc/init.d/docker
+test -x /etc/init.d/cgroups
+test -x /etc/init.d/tailscale
+test -x /etc/init.d/crond
+test -x /etc/init.d/sshd
+grep -Fqx 'Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+grep -Fq reload /etc/init.d/docker
+grep -Fq reload /etc/init.d/sshd
+apk info -W /etc/periodic/daily/apk | grep -Fq apk-cron`
+	if output, err := exec.Command("docker", "run", "--rm", image, "sh", "-ceu", script).CombinedOutput(); err != nil {
+		t.Fatalf("validate Alpine APK repository syntax: %v\n%s", err, output)
+	}
+}
+
 // ensureIntegrationImage keeps optional read-only coverage useful when a
 // vendor retires a specifically reviewed image tag. A pull failure is an
 // unavailable external test prerequisite, not evidence that Bebop accepts an

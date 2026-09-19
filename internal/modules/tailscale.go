@@ -21,6 +21,9 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if !cfg.Features.Tailscale {
 		return nil, nil, nil
 	}
+	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
+		return planAlpineTailscale(host)
+	}
 	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf") || (host.OS.Family == "opensuse" && host.PackageManager == "zypper")) && host.Tailscale.RepositoryState == "unmanaged" {
 		platform := "Fedora"
 		resource := "fedora"
@@ -76,6 +79,68 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	}
 	return changes, warnings, nil
 }
+
+func planAlpineTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, error) {
+	changes := []plan.Change{}
+	needPackage := !host.Tailscale.Installed || host.Tailscale.RepositoryState != "managed"
+	if needPackage {
+		change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "the reviewed Alpine Tailscale package set or repository definition is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscale, tailscale-openrc, or Bebop's v3.24 repository file is absent", Desired: "official Alpine v3.24 community Tailscale and OpenRC packages installed", Preconditions: []plan.Precondition{{ID: "tailscale.alpine-repository-safe", Description: "Bebop's APK repository definition is absent or exact", Script: alpineDockerRepositorySafeScript}, {ID: "tailscale.alpine-package-available", Description: "the official Alpine v3.24 community repository advertises Tailscale", Script: "for package in tailscale tailscale-openrc; do apk policy \"$package\" 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' || exit 1; done"}}, Action: plan.Action{Kind: "tailscale.install", Resource: "alpine", Script: alpineTailscaleInstallScript}, Verification: "Tailscale and its Alpine OpenRC package are installed"}
+		if host.Tailscale.RepositoryState == "unmanaged" {
+			change.Action.Script = ""
+			change.Blocked = "existing /etc/apk/repositories.d/50-bebop.list is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else if !host.Tailscale.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the target's official Alpine v3.24 community repository does not advertise tailscale and tailscale-openrc"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Tailscale.ServiceEnabled || !host.Tailscale.ServiceActive {
+		dependencies := []string(nil)
+		if needPackage {
+			dependencies = append(dependencies, "tailscale.package")
+		}
+		change := plan.Change{ID: "tailscale.service", Module: "tailscale", Summary: "enable and start Tailscale", Reason: "Alpine Tailscale OpenRC service is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscale OpenRC service not ready", Desired: "Tailscale enabled in default runlevel and active", Dependencies: dependencies, Action: plan.Action{Kind: "tailscale.enable-service", Resource: "alpine", Script: "rc-update add tailscale default\nrc-service tailscale start"}, Verification: "Tailscale OpenRC service is enabled and active"}
+		if len(changes) > 0 && changes[0].Blocked != "" {
+			change.Blocked = "Tailscale package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	warnings := []plan.Warning{}
+	if host.Tailscale.Installed && !host.Tailscale.Connected {
+		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
+	}
+	return changes, warnings, nil
+}
+
+const alpineTailscaleInstallScript = `set -eu
+if test -e /etc/apk/repositories.d/50-bebop.list; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  test "$(grep -Ec '^(# Managed by Bebop\\. Manual edits may be replaced\\.|v2( @bebop-(main|community))? https://dl-cdn\\.alpinelinux\\.org/alpine/v3\\.24 (main|community))$' /etc/apk/repositories.d/50-bebop.list)" -eq 5
+fi
+install -d -m 0755 /etc/apk/repositories.d
+tmp=$(mktemp /etc/apk/repositories.d/.50-bebop.list.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/apk/repositories.d/50-bebop.list
+trap - EXIT
+apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop.list
+apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list tailscale@bebop-community tailscale-openrc@bebop-community`
 
 const archTailscalePackageAvailableScript = "LC_ALL=C pacman -Si tailscale 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != \"\") { if (name == \"tailscale\" && (repository == \"core\" || repository == \"extra\" || repository == \"multilib\")) count++; else invalid=1; name=\"\"; repository=\"\" } } $1 == \"Repository\" { finish(); repository=$2 } $1 == \"Name\" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'"
 
@@ -247,6 +312,9 @@ func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Con
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
+		if change.Action.Resource == "alpine" {
+			return verify(ctx, tr, "apk info -e tailscale tailscale-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
+		}
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q tailscale >/dev/null")
 		}
@@ -260,6 +328,9 @@ func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Co
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed")
+	}
+	if change.Action.Resource == "alpine" {
+		return verify(ctx, tr, "rc-update show default | grep -Eq '^[[:space:]]*tailscale([[:space:]]|$)'\nrc-service tailscale status >/dev/null")
 	}
 	return verify(ctx, tr, "systemctl is-enabled tailscaled.service >/dev/null\nsystemctl is-active tailscaled.service >/dev/null")
 }

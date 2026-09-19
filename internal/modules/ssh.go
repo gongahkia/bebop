@@ -60,6 +60,8 @@ func sshHardeningScript(service string) string {
 	reload := ""
 	if service == "ssh.service" || service == "sshd.service" {
 		reload = "\nsystemctl reload " + service
+	} else if service == "sshd" {
+		reload = "\nrc-service sshd reload"
 	}
 	return `install -d -m 0755 /etc/ssh/sshd_config.d
 	candidate=/etc/ssh/sshd_config.d/00-bebop-validate-$$.conf

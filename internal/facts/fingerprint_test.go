@@ -175,3 +175,26 @@ func TestArchRollingVersionMetadataIsNotConvergenceIdentityButPackageStateIs(t *
 		t.Fatalf("planner-relevant Arch package state did not stale convergence: %v", err)
 	}
 }
+
+func TestAlpineInitToolsAndPersistenceParticipateInConvergence(t *testing.T) {
+	host := HostFacts{OS: OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: InitSystemOpenRC, RequiredTools: RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.InitSystem = InitSystemSystemd
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first == second {
+		t.Fatalf("Alpine init system did not stale convergence: %v", err)
+	}
+	host.InitSystem, host.RequiredTools.Flock = InitSystemOpenRC, false
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || third == first {
+		t.Fatalf("Alpine lock prerequisite did not stale convergence: %v", err)
+	}
+	host.RequiredTools.Flock, host.RootMode = true, "ephemeral-overlay"
+	fourth, err := host.ConvergenceFingerprint()
+	if err != nil || fourth == first {
+		t.Fatalf("Alpine root mode did not stale convergence: %v", err)
+	}
+}

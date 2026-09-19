@@ -118,6 +118,50 @@ mv -f "$tmp" /etc/os-update.conf
 trap - EXIT
 systemctl enable --now os-update.timer`
 
+const alpineAutomaticRepositoriesSafeScript = `set -eu
+for repository_file in /etc/apk/repositories /etc/apk/repositories.d/*.list; do
+  test -f "$repository_file" || continue
+	while IFS= read -r line || test -n "$line"; do
+		case "$line" in ''|'#'*) continue;; esac
+		case "$line" in
+		  'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'|'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'|'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main'|'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community'|'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main'|'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community') ;;
+		  *) exit 1;;
+		esac
+  done < "$repository_file"
+done`
+
+const alpineUpdatesScript = `set -eu
+` + alpineAutomaticRepositoriesSafeScript + `
+if test -e /etc/apk/repositories.d/50-bebop.list; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  test "$(grep -Ec '^(# Managed by Bebop\\. Manual edits may be replaced\\.|v2( @bebop-(main|community))? https://dl-cdn\\.alpinelinux\\.org/alpine/v3\\.24 (main|community))$' /etc/apk/repositories.d/50-bebop.list)" -eq 5
+fi
+install -d -m 0755 /etc/apk/repositories.d
+tmp=$(mktemp /etc/apk/repositories.d/.50-bebop.list.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/apk/repositories.d/50-bebop.list
+trap - EXIT
+apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop.list
+apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list apk-cron@bebop-main
+apk info -W /etc/periodic/daily/apk | grep -Fq 'apk-cron'
+test -f /etc/periodic/daily/apk
+if apk audit --details /etc/periodic/daily 2>/dev/null | grep -Fxq 'U etc/periodic/daily/apk'; then exit 1; fi
+rc-update add crond default
+rc-service crond start`
+
 type Updates struct{}
 
 func (Updates) Name() string { return "updates" }
@@ -128,6 +172,22 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	}
 	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
 		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Arch rolling system upgrades", Reason: "automatic Arch system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Arch upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "arch"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Arch rolling system upgrades; perform a reviewed full pacman -Syu manually and retry without automatic_updates"}}, nil, nil
+	}
+	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
+		change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic updates", Reason: "apk-cron or OpenRC crond is not ready", Risk: plan.Privileged, RequiresRoot: true, Current: "Alpine automatic updates disabled or unmanaged", Desired: "apk-cron applies same-branch Alpine v3.24 updates through OpenRC crond without reboot", Preconditions: []plan.Precondition{{ID: "updates.alpine-repositories-safe", Description: "all active APK repositories remain official Alpine v3.24 main/community", Script: alpineAutomaticRepositoriesSafeScript}}, Action: plan.Action{Kind: "updates.enable-unattended", Resource: "alpine", Script: alpineUpdatesScript}, Verification: "apk-cron is package-owned, active repositories are v3.24-only, and crond is enabled and running"}
+		if host.AutomaticUpdates.ConfigState == "unmanaged" || host.Docker.RepositoryState == "unmanaged" {
+			change.Action.Script = ""
+			change.Blocked = "Alpine APK repository or apk-cron state is unmanaged or unsafe; Bebop will not enable automatic updates across an unreviewed repository policy"
+		} else if !host.AutomaticUpdates.ServiceExists {
+			change.Action.Script = ""
+			change.Blocked = "Alpine automatic updates require the existing OpenRC crond service; Bebop will not install or replace a scheduler"
+		} else if !host.AutomaticUpdates.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the official Alpine v3.24 main repository does not advertise apk-cron"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		return []plan.Change{change}, nil, nil
 	}
 	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" || host.AutomaticUpdates.ConfigState == "managed"
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled && managed && !host.AutomaticUpdates.ConflictingTimers {
@@ -216,6 +276,14 @@ grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic
 grep -Eq '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*yes[[:space:]]*$' /etc/dnf/automatic.conf
 systemctl is-enabled dnf5-automatic.timer >/dev/null
 systemctl is-active dnf5-automatic.timer >/dev/null`)
+	}
+	if change.Action.Resource == "alpine" || change.Action.Script == alpineUpdatesScript {
+		return verify(ctx, tr, `apk info -e apk-cron >/dev/null
+apk info -W /etc/periodic/daily/apk | grep -Fq 'apk-cron'
+test -f /etc/periodic/daily/apk
+! apk audit --details /etc/periodic/daily 2>/dev/null | grep -Fxq 'U etc/periodic/daily/apk'
+rc-update show default | grep -Eq '^[[:space:]]*crond([[:space:]]|$)'
+rc-service crond status >/dev/null`+"\n"+alpineAutomaticRepositoriesSafeScript)
 	}
 	if change.Action.Resource == "enterprise-linux" || change.Action.Script == enterpriseUpdatesScript {
 		return verify(ctx, tr, `rpm -q dnf-automatic >/dev/null

@@ -44,8 +44,20 @@ func TestShellQuoteAndSSHArgumentConstruction(t *testing.T) {
 	if args[0] != "-o" || args[1] != "BatchMode=yes" || args[3] != "2200" || args[4] != "pi@host.example" {
 		t.Fatalf("unexpected SSH args: %#v", args)
 	}
-	if !strings.Contains(args[len(args)-1], ShellQuote("printf %s "+ShellQuote(value))) || !strings.Contains(args[len(args)-1], "sudo -n") {
+	if !strings.Contains(args[len(args)-1], ShellQuote("printf %s "+ShellQuote(value))) || !strings.Contains(args[len(args)-1], "sudo -n") || !strings.Contains(args[len(args)-1], "doas -n") {
 		t.Fatalf("unsafe remote command: %q", args[len(args)-1])
+	}
+}
+
+func TestPrivilegedShellOnlyUsesNoninteractiveElevation(t *testing.T) {
+	script := privilegedShellScript("true")
+	for _, required := range []string{"sudo -n true", "sudo -n sh", "doas -n true", "doas -n sh"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("privilege fallback missing %q: %s", required, script)
+		}
+	}
+	if strings.Contains(script, "su ") || strings.Contains(script, "sudo sh") || strings.Contains(script, "doas sh") {
+		t.Fatalf("privilege fallback can prompt: %s", script)
 	}
 }
 
@@ -60,6 +72,7 @@ func TestClassifyFailure(t *testing.T) {
 		{errors.New("Permission denied (publickey)."), FailureAuthentication},
 		{context.DeadlineExceeded, FailureTimeout},
 		{errors.New("sudo: a password is required"), FailureSudoAuthentication},
+		{errors.New("doas: authorization required"), FailureSudoAuthentication},
 	} {
 		if got := ClassifyFailure(test.err); got != test.want {
 			t.Fatalf("ClassifyFailure(%q) = %q, want %q", test.err, got, test.want)

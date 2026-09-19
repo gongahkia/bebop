@@ -33,7 +33,7 @@ func TestParseAPTUpdateSimulation(t *testing.T) {
 func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	archRefresh := archCheckupdatesRefreshScript("/srv/bebop")
 	archCheck := archCheckupdatesScript("/srv/bebop")
-	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript, archRefresh, archCheck} {
+	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript, archRefresh, archCheck, apkRefreshScript, apkUpdateCheckScript} {
 		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update", "dnf install", "dnf upgrade", "dnf update", "zypper --non-interactive install", "zypper --non-interactive patch ", "zypper --non-interactive up"} {
 			if containsToken(script, forbidden) {
 				t.Fatalf("update-awareness script contains forbidden mutation %q: %s", forbidden, script)
@@ -43,6 +43,9 @@ func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") || !containsToken(dnfUpdateCheckScript, "dnf5 -y check-upgrade") || !containsToken(dnfRefreshScript, "dnf5 -y makecache") || !containsToken(enterpriseDNFUpdateCheckScript, "dnf -y check-update") || !containsToken(enterpriseDNFRefreshScript, "dnf -y makecache") || !containsToken(zypperLeapPatchCheckScript, "zypper --non-interactive patch-check") || !containsToken(zypperTumbleweedUpdateCheckScript, "zypper --non-interactive --xmlout dup --dry-run") {
 		t.Fatalf("update-awareness scripts lost explicit semantics: %q / %q", aptUpdateSimulationScript, aptRefreshScript)
 	}
+	if !containsToken(apkRefreshScript, "apk --interactive=no update") || !containsToken(apkUpdateCheckScript, "apk version -l '<'") || containsToken(apkUpdateCheckScript, "apk upgrade") || containsToken(apkUpdateCheckScript, "apk add") {
+		t.Fatalf("APK update-awareness scripts lost non-mutating semantics: %q / %q", apkRefreshScript, apkUpdateCheckScript)
+	}
 	for _, forbidden := range []string{"pacman -Sy", "pacman -Syu", "pacman -S ", "pacman -U", "pacman -R"} {
 		if containsToken(archRefresh, forbidden) || containsToken(archCheck, forbidden) {
 			t.Fatalf("Arch update-awareness script contains forbidden mutation %q: %s / %s", forbidden, archRefresh, archCheck)
@@ -50,6 +53,13 @@ func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	}
 	if !containsToken(archRefresh, "CHECKUPDATES_DB='/srv/bebop/checkupdates'") || !containsToken(archCheck, "checkupdates --nocolor --nosync") || containsToken(archRefresh, "/var/lib/pacman/sync") || containsToken(archCheck, "/var/lib/pacman/sync") {
 		t.Fatalf("Arch checkupdates did not use its isolated database safely: %s / %s", archRefresh, archCheck)
+	}
+}
+
+func TestAPKUpdateOutputIsNormalizedDeterministically(t *testing.T) {
+	updates := parseAPKUpdates("zlib\nbusybox\nzlib\n")
+	if strings.Join(updates, ",") != "busybox,zlib" {
+		t.Fatalf("APK updates were not normalized and sorted: %#v", updates)
 	}
 }
 

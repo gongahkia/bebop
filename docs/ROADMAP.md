@@ -95,7 +95,8 @@
   TOML, immutable structured plans, apply verification, and no-op tests.
 - Debian, Ubuntu, Raspberry Pi OS, Fedora 43/44, Rocky Linux 9.8/10.2,
   AlmaLinux 9.8/10.2, CentOS Stream 9/10, openSUSE Leap 16.0, and openSUSE
-  Tumbleweed, and official x86_64 Arch Linux target recognition.
+  Tumbleweed, official x86_64 Arch Linux, and Alpine Linux 3.24.x on x86_64/
+  aarch64 target recognition.
 - Base filesystem, automatic updates, Docker, Tailscale package/service, and
   conservative SSH hardening.
 - Read-only diagnostics/status, JSON, CI, and opt-in disposable Debian inspect.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
-	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" {
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" && host.PackageManager != "apk" {
 		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
@@ -171,6 +172,8 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 			refreshScript, packageManager = zypperRefreshScript, "Zypper"
 		} else if host.PackageManager == "pacman" {
 			refreshScript, packageManager = archCheckupdatesRefreshScript(host.DataRoot.Path), "Arch checkupdates"
+		} else if host.PackageManager == "apk" {
+			refreshScript, packageManager = apkRefreshScript, "APK"
 		}
 		_, refreshErr := tr.Run(ctx, transport.Request{Script: refreshScript, Privileged: true})
 		releaseErr := lock.Release()
@@ -271,6 +274,16 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+	if host.PackageManager == "apk" {
+		result, checkErr := tr.Run(ctx, transport.Request{Script: apkUpdateCheckScript})
+		if checkErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available APK package updates: %w", checkErr)
+		}
+		updates := parseAPKUpdates(result.Stdout)
+		details.UpdatesAvailable = len(updates)
+		details.SecurityClassification = "unknown"
+		return Outcome{Result: Success, Details: details}, nil
+	}
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
 		return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available apt package updates: %w", err)
@@ -300,6 +313,8 @@ const enterpriseDNFUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/b
 const zypperRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive refresh"
 const zypperLeapPatchCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive patch-check"
 const zypperTumbleweedUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive --xmlout dup --dry-run"
+const apkRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C apk --interactive=no update"
+const apkUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C apk version -l '<' 2>/dev/null | awk '$2 == \"<\" { print $1 }' | LC_ALL=C sort -u"
 
 func archCheckupdatesDatabase(dataRoot string) string {
 	if dataRoot == "" {
@@ -345,6 +360,21 @@ func archUpdatesAvailable(err error) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func parseAPKUpdates(output string) []string {
+	seen := map[string]bool{}
+	for _, line := range strings.Fields(output) {
+		if line != "" {
+			seen[line] = true
+		}
+	}
+	updates := make([]string, 0, len(seen))
+	for name := range seen {
+		updates = append(updates, name)
+	}
+	sort.Strings(updates)
+	return updates
 }
 
 func zypperPatchUpdatesAvailable(err error) (available, security bool, operational error) {

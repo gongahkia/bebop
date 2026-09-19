@@ -86,6 +86,17 @@ func TestArchSSHDropInKeepsDistroOwned99FileUntouched(t *testing.T) {
 	}
 }
 
+func TestAlpineSSHUsesExistingDropInAndOpenRCReload(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, InitSystem: facts.InitSystemOpenRC, EffectiveUser: "alpine", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "sshd", ConfigValid: true, DropInSupported: true, FirstDropIn: "99-alpine.conf", AuthorizedKeysPresent: true}}
+	changes, _, err := (SSH{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) != 1 || changes[0].Blocked != "" {
+		t.Fatalf("Alpine SSH hardening plan = %#v, %v", changes, err)
+	}
+	if !strings.Contains(changes[0].Action.Script, "rc-service sshd reload") || strings.Contains(changes[0].Action.Script, "99-alpine.conf") || !strings.Contains(changes[0].Action.Resource, "00-bebop.conf") {
+		t.Fatalf("Alpine SSH action did not preserve drop-ins/OpenRC service: %#v", changes[0])
+	}
+}
+
 func TestSSHHardeningRefusesRootOnlyRemoteAccess(t *testing.T) {
 	host := facts.HostFacts{EffectiveUser: "root", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}}
 	changes, _, err := (SSH{}).Plan(host, config.Defaults())

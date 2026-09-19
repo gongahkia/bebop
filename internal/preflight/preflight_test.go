@@ -123,6 +123,18 @@ func TestFromFactsReportsArchPacmanAndArchitectureRequirementsAccurately(t *test
 	}
 }
 
+func TestFromFactsReportsAlpineOpenRCAPKAndLockToolsAccurately(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "alpine", Name: "Alpine Linux", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: facts.InitSystemOpenRC, SudoAvailable: true, PrivilegeMode: "doas", RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	result := FromFacts(target.Target{Kind: target.Local}, host)
+	if !result.Ready || result.InitSystem != facts.InitSystemOpenRC {
+		t.Fatalf("Alpine OpenRC/APK host was not ready: %#v", result)
+	}
+	host.RequiredTools.Flock = false
+	if FromFacts(target.Target{Kind: target.Local}, host).Ready {
+		t.Fatal("Alpine without flock was reported ready for mutation")
+	}
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)

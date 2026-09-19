@@ -109,8 +109,10 @@ const (
 	FailureRemoteCommand      FailureKind = "remote_command"
 )
 
-// ClassifyFailure makes a best-effort classification from OpenSSH and sudo's
-// stable diagnostic wording while preserving the original error for debugging.
+// ClassifyFailure makes a best-effort classification from OpenSSH and
+// noninteractive elevation diagnostics while preserving the original error for
+// debugging. The historical sudo categories also cover doas so callers retain
+// their existing public error handling.
 func ClassifyFailure(err error) FailureKind {
 	if err == nil {
 		return FailureUnknown
@@ -132,9 +134,9 @@ func ClassifyFailure(err error) FailureKind {
 		return FailureAuthentication
 	case strings.Contains(text, "executable file not found"), strings.Contains(text, "ssh client"):
 		return FailureSSHClient
-	case strings.Contains(text, "a password is required"), strings.Contains(text, "no tty present and no askpass"):
+	case strings.Contains(text, "a password is required"), strings.Contains(text, "no tty present and no askpass"), strings.Contains(text, "doas: authorization required"), strings.Contains(text, "doas: authentication failed"), strings.Contains(text, "doas: not permitted"):
 		return FailureSudoAuthentication
-	case strings.Contains(text, "sudo: not found"), strings.Contains(text, "command not found: sudo"):
+	case strings.Contains(text, "sudo: not found"), strings.Contains(text, "command not found: sudo"), strings.Contains(text, "doas: not found"), strings.Contains(text, "command not found: doas"):
 		return FailureSudoUnavailable
 	default:
 		return FailureRemoteCommand
@@ -145,6 +147,24 @@ const defaultApplyLockPath = "/run/lock/bebop.lock"
 
 func lockScript(path string) string {
 	return "exec 9>" + ShellQuote(path) + "\nflock -n 9 || exit 75\nprintf 'bebop-lock-acquired\\n'\ncat >/dev/null"
+}
+
+// privilegedShellScript selects only already-configured noninteractive
+// elevation. It never supplies credentials or invokes an interactive fallback.
+// Sudo remains preferred where it already works; doas is the Alpine-safe
+// fallback for administrators who configured a nopass rule themselves.
+func privilegedShellScript(script string) string {
+	quoted := ShellQuote(script)
+	return `if test "$(id -u)" -eq 0; then
+  exec sh -ceu ` + quoted + `
+elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  exec sudo -n sh -ceu ` + quoted + `
+elif command -v doas >/dev/null 2>&1 && doas -n true >/dev/null 2>&1; then
+  exec doas -n sh -ceu ` + quoted + `
+else
+  printf '%s\\n' 'Bebop requires non-interactive root, sudo -n, or doas -n' >&2
+  exit 1
+fi`
 }
 
 func acquireProcessLock(ctx context.Context, program string, arguments []string) (ApplyLock, error) {

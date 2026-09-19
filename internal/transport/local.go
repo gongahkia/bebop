@@ -22,13 +22,11 @@ func NewLocalWithLockPath(lockPath string) *Local { return &Local{lockPath: lock
 func (l *Local) Description() string { return "local" }
 
 func (l *Local) Run(ctx context.Context, request Request) (Result, error) {
-	args := []string{"-ceu", request.Script}
-	program := "sh"
-	if request.Privileged && requiresLocalSudo() {
-		program = "sudo"
-		args = append([]string{"-n", "sh"}, args...)
+	script := request.Script
+	if request.Privileged {
+		script = privilegedShellScript(script)
 	}
-	command := exec.CommandContext(ctx, program, args...)
+	command := exec.CommandContext(ctx, "sh", "-ceu", script)
 	command.Stdin = strings.NewReader(string(request.Stdin))
 	var stdout, stderr strings.Builder
 	command.Stdout = &stdout
@@ -47,13 +45,11 @@ func (l *Local) Run(ctx context.Context, request Request) (Result, error) {
 }
 
 func (l *Local) RunStream(ctx context.Context, request StreamRequest, output io.Writer) (Result, error) {
-	args := []string{"-ceu", request.Script}
-	program := "sh"
-	if request.Privileged && requiresLocalSudo() {
-		program = "sudo"
-		args = append([]string{"-n", "sh"}, args...)
+	script := request.Script
+	if request.Privileged {
+		script = privilegedShellScript(script)
 	}
-	command := exec.CommandContext(ctx, program, args...)
+	command := exec.CommandContext(ctx, "sh", "-ceu", script)
 	command.Stdin = request.Stdin
 	if output == nil {
 		output = io.Discard
@@ -91,11 +87,9 @@ func (l *Local) FileExists(ctx context.Context, path string) (bool, error) {
 }
 
 func (l *Local) AcquireApplyLock(ctx context.Context) (ApplyLock, error) {
-	program := "sh"
-	arguments := []string{"-ceu", lockScript(l.lockPath)}
-	if l.lockPrivileged && requiresLocalSudo() {
-		program = "sudo"
-		arguments = append([]string{"-n", "sh"}, arguments...)
+	script := lockScript(l.lockPath)
+	if l.lockPrivileged {
+		script = privilegedShellScript(script)
 	}
-	return acquireProcessLock(ctx, program, arguments)
+	return acquireProcessLock(ctx, "sh", []string{"-ceu", script})
 }
