@@ -97,6 +97,16 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 	if manager != "unknown" || database != "" {
 		t.Fatalf("Alpine without apk was accepted as %q/%q", manager, database)
 	}
+	tr.missingAPK = false
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "void", Family: "void", Supported: true})
+	if manager != "xbps" || database != "" {
+		t.Fatalf("Void package facts = %q/%q", manager, database)
+	}
+	tr.missingXBPS = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "void", Family: "void", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("Void without xbps tools was accepted as %q/%q", manager, database)
+	}
 	if mode := inspectSELinux(context.Background(), tr).Mode; mode != "enforcing" {
 		t.Fatalf("SELinux state was not normalized: %q", mode)
 	}
@@ -137,6 +147,17 @@ func TestAlpineRootModeFailsClosedForEphemeralInstallations(t *testing.T) {
 	}
 }
 
+func TestVoidRootModeFailsClosedForEphemeralInstallations(t *testing.T) {
+	for _, test := range []struct {
+		root facts.Filesystem
+		want string
+	}{{facts.Filesystem{Type: "ext4"}, "persistent"}, {facts.Filesystem{Type: "tmpfs"}, "ephemeral-tmpfs"}, {facts.Filesystem{Type: "overlay"}, "ephemeral-overlay"}, {facts.Filesystem{Type: "ext4", ReadOnly: true}, "read-only"}} {
+		if got := inspectVoidRootMode(test.root); got != test.want {
+			t.Fatalf("Void root %#v mode = %q, want %q", test.root, got, test.want)
+		}
+	}
+}
+
 type alpineLBUTransport struct{}
 
 func (alpineLBUTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
@@ -174,6 +195,7 @@ type packageProbeTransport struct {
 	missingDNFOrRPM bool
 	missingPacman   bool
 	missingAPK      bool
+	missingXBPS     bool
 }
 
 func (tr packageProbeTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
@@ -205,6 +227,11 @@ func (tr packageProbeTransport) Run(_ context.Context, request transport.Request
 			return transport.Result{}, nil
 		}
 		return transport.Result{Stdout: "apk"}, nil
+	case strings.Contains(request.Script, "command -v xbps-install"):
+		if tr.missingXBPS {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "xbps"}, nil
 	case strings.Contains(request.Script, "getenforce"):
 		return transport.Result{Stdout: "Enforcing"}, nil
 	default:

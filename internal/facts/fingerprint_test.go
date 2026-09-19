@@ -176,6 +176,33 @@ func TestArchRollingVersionMetadataIsNotConvergenceIdentityButPackageStateIs(t *
 	}
 }
 
+func TestVoidRollingIdentityExcludesImageMetadataButIncludesLibcAndRunitState(t *testing.T) {
+	host := HostFacts{MachineID: "void-machine", OS: OS{ID: "void", Family: "void", VersionID: "20260920", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, Libc: "glibc", PackageManager: "xbps", InitSystem: InitSystemRunit, RequiredTools: RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, Docker: Docker{PackageSetAvailable: true, RepositoryPolicy: "https://repo-default.voidlinux.org/current"}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.OS.VersionID = "20261001"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("display-only Void rolling metadata changed convergence: %v", err)
+	}
+	if !host.Identity().Matches(Identity{MachineID: "void-machine", OSID: "void", OSVersion: ""}) {
+		t.Fatal("Void machine identity unexpectedly depends on rolling metadata")
+	}
+	host.Libc = "musl"
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || third == second {
+		t.Fatalf("Void libc did not stale convergence: %v", err)
+	}
+	host.Libc = "glibc"
+	host.InitSystem = InitSystemSystemd
+	fourth, err := host.ConvergenceFingerprint()
+	if err != nil || fourth == second {
+		t.Fatalf("Void init system did not stale convergence: %v", err)
+	}
+}
+
 func TestAlpineInitToolsAndPersistenceParticipateInConvergence(t *testing.T) {
 	host := HostFacts{OS: OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: InitSystemOpenRC, RequiredTools: RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
 	first, err := host.ConvergenceFingerprint()

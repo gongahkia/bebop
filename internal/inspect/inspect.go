@@ -50,6 +50,13 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.InitSystem = inspectInitSystem(ctx, tr)
 	f.Systemd = f.InitSystem == facts.InitSystemSystemd
 	f.PackageManager, f.PackageDatabase = inspectPackageTools(ctx, tr, f.OS)
+	if f.OS.Family == "void" && f.PackageManager == "xbps" {
+		if architecture, libc, ok := facts.NormalizeVoidArchitecture(firstLine(mustProbe(ctx, tr, "xbps-uhelper arch"))); ok {
+			f.Architecture, f.ArchitectureKnown, f.Libc = architecture, true, libc
+		} else {
+			f.ArchitectureKnown = false
+		}
+	}
 	f.RequiredTools = inspectRequiredTools(ctx, tr, f.OS)
 	f.SSH = inspectSSH(ctx, tr, f.InitSystem)
 	f.SELinux = inspectSELinux(ctx, tr)
@@ -70,6 +77,12 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 		f.RootMode = inspectAlpineRootMode(ctx, tr, f.RootFilesystem)
 		if f.RootMode != "persistent" {
 			f.MutationBlocked, f.MutationBlockReason = true, "Alpine "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
+		}
+	}
+	if f.OS.Family == "void" {
+		f.RootMode = inspectVoidRootMode(f.RootFilesystem)
+		if f.RootMode != "persistent" {
+			f.MutationBlocked, f.MutationBlockReason = true, "Void "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
 		}
 	}
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
@@ -99,6 +112,8 @@ func inspectInitSystem(ctx context.Context, tr transport.Transport) facts.InitSy
   printf systemd
 elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1 && test -d /run/openrc; then
   printf openrc
+elif command -v sv >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1 && test -d /etc/runit && test -L /var/service && test -d /var/service && test "$(readlink -f /var/service)" = /run/runit/runsvdir/current && pgrep -x runsvdir >/dev/null 2>&1; then
+  printf runit
 else
   printf unknown
 fi`)) {
@@ -106,13 +121,15 @@ fi`)) {
 		return facts.InitSystemSystemd
 	case string(facts.InitSystemOpenRC):
 		return facts.InitSystemOpenRC
+	case string(facts.InitSystemRunit):
+		return facts.InitSystemRunit
 	default:
 		return facts.InitSystemUnknown
 	}
 }
 
 func inspectRequiredTools(ctx context.Context, tr transport.Transport, os facts.OS) facts.RequiredTools {
-	if os.Family != "alpine" {
+	if os.Family != "alpine" && os.Family != "void" {
 		return facts.RequiredTools{}
 	}
 	lines := probeLines(ctx, tr, `
@@ -141,6 +158,8 @@ func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.O
 		script = "if command -v pacman >/dev/null 2>&1; then printf pacman; fi"
 	case "apk":
 		script = "if command -v apk >/dev/null 2>&1; then printf apk; fi"
+	case "xbps":
+		script = "if command -v xbps-install >/dev/null 2>&1 && command -v xbps-query >/dev/null 2>&1 && command -v xbps-uhelper >/dev/null 2>&1; then printf xbps; fi"
 	}
 	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
 		// The probe itself tests the paired database executable before writing
@@ -182,6 +201,9 @@ func inspectSSH(ctx context.Context, tr transport.Transport, init facts.InitSyst
 	if init == facts.InitSystemOpenRC {
 		return inspectOpenRCSSH(ctx, tr)
 	}
+	if init == facts.InitSystemRunit {
+		return inspectRunitSSH(ctx, tr)
+	}
 	lines := probeLines(ctx, tr, `
 if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl cat ssh.service >/dev/null 2>&1; then printf 'service=ssh.service\n'; elif systemctl cat sshd.service >/dev/null 2>&1; then printf 'service=sshd.service\n'; else printf 'service=\n'; fi
@@ -215,10 +237,33 @@ if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=ye
 	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
+func inspectRunitSSH(ctx context.Context, tr transport.Transport) facts.SSH {
+	lines := probeLines(ctx, tr, `
+if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -d /etc/sv/sshd && ! test -L /etc/sv/sshd; then printf 'service=sshd\n'; else printf 'service=\n'; fi
+if test -L /var/service/sshd && test "$(readlink -f /var/service/sshd)" = "$(readlink -f /etc/sv/sshd)"; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test -d /etc/sv/sshd && ! test -L /etc/sv/sshd && sv status sshd 2>/dev/null | grep -Eq '^run:'; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v sshd >/dev/null 2>&1 && sshd -t >/dev/null 2>&1; then printf 'valid=yes\n'; else printf 'valid=no\n'; fi
+if grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\*\.conf([[:space:]]|$)' /etc/ssh/sshd_config 2>/dev/null; then printf 'dropin=yes\n'; else printf 'dropin=no\n'; fi
+first=$(for candidate in /etc/ssh/sshd_config.d/*.conf; do test -f "$candidate" && basename "$candidate"; done | LC_ALL=C sort | head -n 1)
+printf 'first=%s\n' "$first"
+if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null | grep -Fqx 'passwordauthentication no'; then printf 'effective=yes\n'; else printf 'effective=no\n'; fi
+home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
+if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi`)
+	service := lines["service"]
+	if service == "sshd" {
+		service = "runit:sshd"
+	}
+	return facts.SSH{Installed: lines["installed"] == "yes", Service: service, ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
+}
+
 func inspectDocker(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.Docker {
 	systemd := init == facts.InitSystemSystemd
 	if packageManager == "apk" && os.Family == "alpine" {
 		return inspectAlpineDocker(ctx, tr)
+	}
+	if packageManager == "xbps" && os.Family == "void" {
+		return inspectVoidDocker(ctx, tr)
 	}
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchDocker(ctx, tr, systemd)
@@ -283,6 +328,44 @@ if test -x /etc/init.d/cgroups && rc-service cgroups status >/dev/null 2>&1; the
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi`)
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: "alpine-v3.24", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-cli-compose", CgroupsAvailable: lines["cgroups"] == "yes", CgroupsServiceExists: lines["cgroups_service"] == "yes", CgroupsServiceEnabled: lines["cgroups_enabled"] == "yes", CgroupsServiceActive: lines["cgroups_active"] == "yes"}
+}
+
+// inspectVoidDocker keeps the selected package source explicit. Repository
+// indexes are read into XBPS memory only; no operator repository configuration
+// participates in the availability decision for Bebop-managed packages.
+func inspectVoidDocker(ctx context.Context, tr transport.Transport) facts.Docker {
+	return inspectVoidDockerFor(ctx, tr, voidRepositoryFromNative(ctx, tr))
+}
+
+func voidRepositoryFromNative(ctx context.Context, tr transport.Transport) string {
+	architecture, libc, ok := facts.NormalizeVoidArchitecture(firstLine(mustProbe(ctx, tr, "xbps-uhelper arch")))
+	if !ok {
+		return ""
+	}
+	repository, _ := facts.VoidRepository(architecture, libc)
+	return repository
+}
+
+func inspectVoidDockerFor(ctx context.Context, tr transport.Transport, repository string) facts.Docker {
+	if repository == "" {
+		return facts.Docker{RepositoryPolicy: "void-official"}
+	}
+	lines := probeLines(ctx, tr, `
+if xbps-query -p pkgver docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if xbps-query -p pkgver docker >/dev/null 2>&1 && xbps-query -p pkgver docker-compose >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if xbps-query -p pkgver docker >/dev/null 2>&1 || xbps-query -p pkgver docker-compose >/dev/null 2>&1; then
+  if { ! xbps-query -p pkgver docker >/dev/null 2>&1 || xbps-query -p repository docker 2>/dev/null | grep -Fqx `+transport.ShellQuote(repository)+`; } && { ! xbps-query -p pkgver docker-compose >/dev/null 2>&1 || xbps-query -p repository docker-compose 2>/dev/null | grep -Fqx `+transport.ShellQuote(repository)+`; }; then printf 'repository=reviewed\n'; else printf 'repository=unmanaged\n'; fi
+else printf 'repository=absent\n'; fi
+if xbps-query --ignore-conf-repos --repository=`+transport.ShellQuote(repository)+` -M -S docker >/dev/null 2>&1 && xbps-query --ignore-conf-repos --repository=`+transport.ShellQuote(repository)+` -M -S docker-compose >/dev/null 2>&1; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if xbps-query -H 2>/dev/null | grep -Eq '(^|[[:space:]])(docker|docker-compose)([<>=~][^[:space:]]*)?([[:space:]]|$)'; then printf 'held=yes\n'; else printf 'held=no\n'; fi
+if xbps-query --list-repolock-pkgs 2>/dev/null | grep -Eq '(^|[[:space:]])(docker|docker-compose)([<>=~][^[:space:]]*)?([[:space:]]|$)'; then printf 'repolocked=yes\n'; else printf 'repolocked=no\n'; fi
+if test -d /etc/sv/docker && ! test -L /etc/sv/docker; then printf 'service_definition=yes\n'; else printf 'service_definition=no\n'; fi
+if test -L /var/service/docker && test "$(readlink -f /var/service/docker)" = "$(readlink -f /etc/sv/docker)"; then printf 'service_link=correct\n'; elif test -e /var/service/docker || test -L /var/service/docker; then printf 'service_link=conflict\n'; else printf 'service_link=absent\n'; fi
+if test -d /etc/sv/docker && ! test -L /etc/sv/docker && sv status docker 2>/dev/null | grep -Eq '^run:'; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+if test -r /sys/fs/cgroup/cgroup.controllers; then printf 'cgroups=yes\n'; else printf 'cgroups=no\n'; fi`)
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: repository, ServiceEnabled: lines["service_link"] == "correct", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-compose", CgroupsAvailable: lines["cgroups"] == "yes", ServiceDefinition: lines["service_definition"] == "yes", ServiceLinkState: lines["service_link"], PackageHeld: lines["held"] == "yes", PackageRepolocked: lines["repolocked"] == "yes"}
 }
 
 // inspectArchDocker queries only Pacman's existing sync database. In
@@ -579,6 +662,9 @@ func inspectTailscale(ctx context.Context, tr transport.Transport, init facts.In
 	if packageManager == "apk" && os.Family == "alpine" {
 		return inspectAlpineTailscale(ctx, tr)
 	}
+	if packageManager == "xbps" && os.Family == "void" {
+		return inspectVoidTailscale(ctx, tr)
+	}
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchTailscale(ctx, tr, systemd)
 	}
@@ -653,6 +739,25 @@ if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/nul
 	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: lines["repository"]}
 }
 
+func inspectVoidTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
+	repository := voidRepositoryFromNative(ctx, tr)
+	if repository == "" {
+		return facts.Tailscale{}
+	}
+	lines := probeLines(ctx, tr, `
+if xbps-query -p pkgver tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if xbps-query -p pkgver tailscale >/dev/null 2>&1; then if xbps-query -p repository tailscale 2>/dev/null | grep -Fqx `+transport.ShellQuote(repository)+`; then printf 'repository=reviewed\n'; else printf 'repository=unmanaged\n'; fi; else printf 'repository=absent\n'; fi
+if xbps-query --ignore-conf-repos --repository=`+transport.ShellQuote(repository)+` -M -S tailscale >/dev/null 2>&1; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if xbps-query -H 2>/dev/null | grep -Eq '(^|[[:space:]])tailscale([<>=~][^[:space:]]*)?([[:space:]]|$)'; then printf 'held=yes\n'; else printf 'held=no\n'; fi
+if xbps-query --list-repolock-pkgs 2>/dev/null | grep -Eq '(^|[[:space:]])tailscale([<>=~][^[:space:]]*)?([[:space:]]|$)'; then printf 'repolocked=yes\n'; else printf 'repolocked=no\n'; fi
+if test -d /etc/sv/tailscaled && ! test -L /etc/sv/tailscaled; then printf 'service_definition=yes\n'; else printf 'service_definition=no\n'; fi
+if test -L /var/service/tailscaled && test "$(readlink -f /var/service/tailscaled)" = "$(readlink -f /etc/sv/tailscaled)"; then printf 'service_link=correct\n'; elif test -e /var/service/tailscaled || test -L /var/service/tailscaled; then printf 'service_link=conflict\n'; else printf 'service_link=absent\n'; fi
+if test -d /etc/sv/tailscaled && ! test -L /etc/sv/tailscaled && sv status tailscaled 2>/dev/null | grep -Eq '^run:'; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\([^"]*\)".*/backend=\1/p' | head -n 1; fi`)
+	backend := lines["backend"]
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["service_link"] == "correct", ServiceActive: lines["active"] == "yes", Connected: backend == "Running", BackendState: backend, RepositoryState: lines["repository"], ServiceDefinition: lines["service_definition"] == "yes", ServiceLinkState: lines["service_link"], PackageHeld: lines["held"] == "yes", PackageRepolocked: lines["repolocked"] == "yes"}
+}
+
 func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
 	lines := probeLines(ctx, tr, `
 if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -667,6 +772,9 @@ if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/nul
 
 func inspectUpdates(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.AutomaticUpdates {
 	if packageManager == "pacman" && os.Family == "arch" {
+		return facts.AutomaticUpdates{ConfigState: "unsupported"}
+	}
+	if packageManager == "xbps" && os.Family == "void" {
 		return facts.AutomaticUpdates{ConfigState: "unsupported"}
 	}
 	if packageManager == "apk" && os.Family == "alpine" {
@@ -799,6 +907,22 @@ func inspectAlpineRootMode(ctx context.Context, tr transport.Transport, root fac
 	}
 	if firstLine(mustProbe(ctx, tr, "if test -e /etc/lbu/lbu.conf; then printf lbu-managed; fi")) == "lbu-managed" {
 		return "diskless-or-data"
+	}
+	return "persistent"
+}
+
+// inspectVoidRootMode keeps Void support limited to ordinary persistent hosts.
+// A container/chroot overlay is not evidence that runit or package changes
+// will survive a reboot, so it fails before normal mutation planning.
+func inspectVoidRootMode(root facts.Filesystem) string {
+	if root.ReadOnly {
+		return "read-only"
+	}
+	switch root.Type {
+	case "tmpfs":
+		return "ephemeral-tmpfs"
+	case "overlay", "overlayfs":
+		return "ephemeral-overlay"
 	}
 	return "persistent"
 }

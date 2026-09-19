@@ -15,6 +15,7 @@ type HostFacts struct {
 	OS                  OS               `json:"os"`
 	Architecture        string           `json:"architecture"`
 	ArchitectureKnown   bool             `json:"architecture_known"`
+	Libc                string           `json:"libc,omitempty"`
 	Kernel              string           `json:"kernel"`
 	PackageManager      string           `json:"package_manager"`
 	PackageDatabase     string           `json:"package_database,omitempty"`
@@ -49,6 +50,7 @@ const (
 	InitSystemUnknown InitSystem = "unknown"
 	InitSystemSystemd InitSystem = "systemd"
 	InitSystemOpenRC  InitSystem = "openrc"
+	InitSystemRunit   InitSystem = "runit"
 )
 
 // RequiredTools records Alpine's low-level mutation prerequisites. They stay
@@ -102,6 +104,8 @@ func (o OS) IsSupported() bool {
 		return o.BuildID == "rolling"
 	case "alpine":
 		return isAlpine324(o.VersionID)
+	case "void":
+		return true
 	default:
 		return true
 	}
@@ -120,16 +124,21 @@ func (o OS) SupportsArchitecture(architecture string) bool {
 		return architecture == "amd64"
 	case "alpine":
 		return architecture == "amd64" || architecture == "arm64"
+	case "void":
+		return architecture == "amd64" || architecture == "arm64"
 	default:
 		return true
 	}
 }
 
 // RequiredInitSystem keeps OS policy independent of the generic inspection
-// mechanism. Today Bebop has exactly two supported target init systems.
+// mechanism. Bebop supports the three concrete target init systems below.
 func (o OS) RequiredInitSystem() InitSystem {
 	if o.Family == "alpine" || o.ID == "alpine" {
 		return InitSystemOpenRC
+	}
+	if o.Family == "void" || o.ID == "void" {
+		return InitSystemRunit
 	}
 	return InitSystemSystemd
 }
@@ -170,6 +179,10 @@ type Docker struct {
 	CgroupsServiceExists    bool   `json:"cgroups_service_exists,omitempty"`
 	CgroupsServiceEnabled   bool   `json:"cgroups_service_enabled,omitempty"`
 	CgroupsServiceActive    bool   `json:"cgroups_service_active,omitempty"`
+	ServiceDefinition       bool   `json:"service_definition,omitempty"`
+	ServiceLinkState        string `json:"service_link_state,omitempty"`
+	PackageHeld             bool   `json:"package_held,omitempty"`
+	PackageRepolocked       bool   `json:"package_repolocked,omitempty"`
 }
 
 // Service is a normalized view of one declared Compose project. Deployment
@@ -190,13 +203,17 @@ type Service struct {
 }
 
 type Tailscale struct {
-	Installed        bool   `json:"installed"`
-	PackageAvailable bool   `json:"package_available,omitempty"`
-	ServiceEnabled   bool   `json:"service_enabled"`
-	ServiceActive    bool   `json:"service_active"`
-	Connected        bool   `json:"connected"`
-	BackendState     string `json:"backend_state,omitempty"`
-	RepositoryState  string `json:"repository_state,omitempty"`
+	Installed         bool   `json:"installed"`
+	PackageAvailable  bool   `json:"package_available,omitempty"`
+	ServiceEnabled    bool   `json:"service_enabled"`
+	ServiceActive     bool   `json:"service_active"`
+	Connected         bool   `json:"connected"`
+	BackendState      string `json:"backend_state,omitempty"`
+	RepositoryState   string `json:"repository_state,omitempty"`
+	ServiceDefinition bool   `json:"service_definition,omitempty"`
+	ServiceLinkState  string `json:"service_link_state,omitempty"`
+	PackageHeld       bool   `json:"package_held,omitempty"`
+	PackageRepolocked bool   `json:"package_repolocked,omitempty"`
 }
 
 type AutomaticUpdates struct {
@@ -311,7 +328,7 @@ type Identity struct {
 
 func (host HostFacts) Identity() Identity {
 	version := host.OS.VersionID
-	if host.OS.ID == "arch" {
+	if host.OS.ID == "arch" || host.OS.ID == "void" {
 		version = ""
 	}
 	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: version}
@@ -331,6 +348,7 @@ type ConvergenceSnapshot struct {
 	OS                  OS                `json:"os"`
 	Architecture        string            `json:"architecture"`
 	ArchitectureKnown   bool              `json:"architecture_known"`
+	Libc                string            `json:"libc,omitempty"`
 	PackageManager      string            `json:"package_manager"`
 	PackageDatabase     string            `json:"package_database,omitempty"`
 	InitSystem          InitSystem        `json:"init_system"`
@@ -403,11 +421,11 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	// Tumbleweed snapshot dates and Arch's absent/non-release VERSION_ID are
 	// not release gates or machine identity. Package/repository facts still
 	// stale a plan when their state changes.
-	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" {
+	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" || os.ID == "void" {
 		os.VersionID = ""
 	}
 	return ConvergenceSnapshot{
-		OS: os, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
+		OS: os, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown, Libc: host.Libc,
 		PackageManager: host.PackageManager, PackageDatabase: host.PackageDatabase, InitSystem: host.InitSystem, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, PrivilegeMode: host.PrivilegeMode, RequiredTools: host.RequiredTools, RootMode: host.RootMode, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, SELinux: host.SELinux, Firewall: host.Firewall,

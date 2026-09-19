@@ -33,7 +33,7 @@ func TestParseAPTUpdateSimulation(t *testing.T) {
 func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	archRefresh := archCheckupdatesRefreshScript("/srv/bebop")
 	archCheck := archCheckupdatesScript("/srv/bebop")
-	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript, archRefresh, archCheck, apkRefreshScript, apkUpdateCheckScript} {
+	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript, archRefresh, archCheck, apkRefreshScript, apkUpdateCheckScript, xbpsFreshUpdateCheckScript, xbpsCachedUpdateCheckScript} {
 		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update", "dnf install", "dnf upgrade", "dnf update", "zypper --non-interactive install", "zypper --non-interactive patch ", "zypper --non-interactive up"} {
 			if containsToken(script, forbidden) {
 				t.Fatalf("update-awareness script contains forbidden mutation %q: %s", forbidden, script)
@@ -54,12 +54,39 @@ func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
 	if !containsToken(archRefresh, "CHECKUPDATES_DB='/srv/bebop/checkupdates'") || !containsToken(archCheck, "checkupdates --nocolor --nosync") || containsToken(archRefresh, "/var/lib/pacman/sync") || containsToken(archCheck, "/var/lib/pacman/sync") {
 		t.Fatalf("Arch checkupdates did not use its isolated database safely: %s / %s", archRefresh, archCheck)
 	}
+	for _, script := range []string{xbpsFreshUpdateCheckScript, xbpsCachedUpdateCheckScript} {
+		for _, forbidden := range []string{"xbps-install -Su", "xbps-install -S", "xbps-install -y", "--force"} {
+			if containsToken(script, forbidden) {
+				t.Fatalf("Void update-awareness script contains forbidden mutation %q: %s", forbidden, script)
+			}
+		}
+		if !containsToken(script, "xbps-install -u -n </dev/null") && !containsToken(script, "xbps-install -M -u -n </dev/null") {
+			t.Fatalf("Void update-awareness script lost dry-run semantics: %s", script)
+		}
+	}
+	if !containsToken(xbpsFreshUpdateCheckScript, "-M -u -n") || containsToken(xbpsCachedUpdateCheckScript, " -M ") {
+		t.Fatalf("Void fresh/cached update checks lost explicit memory-sync semantics: %q / %q", xbpsFreshUpdateCheckScript, xbpsCachedUpdateCheckScript)
+	}
 }
 
 func TestAPKUpdateOutputIsNormalizedDeterministically(t *testing.T) {
 	updates := parseAPKUpdates("zlib\nbusybox\nzlib\n")
 	if strings.Join(updates, ",") != "busybox,zlib" {
 		t.Fatalf("APK updates were not normalized and sorted: %#v", updates)
+	}
+}
+
+func TestXBPSUpdateOutputIsStrictAndNormalizedDeterministically(t *testing.T) {
+	updates, err := parseXBPSUpdates("zlib-1.3_1 update x86_64 https://repo-default.voidlinux.org/current 100 10\nbusybox-1.37_1 update x86_64 https://repo-default.voidlinux.org/current 100 10\nzlib-1.3_1 update x86_64 https://repo-default.voidlinux.org/current 100 10\n")
+	if err != nil || strings.Join(updates, ",") != "busybox-1.37_1,zlib-1.3_1" {
+		t.Fatalf("XBPS updates were not normalized: %#v, %v", updates, err)
+	}
+	if _, err := parseXBPSUpdates("repository failed"); err == nil {
+		t.Fatal("malformed XBPS output was treated as no updates")
+	}
+	updates, err = parseXBPSUpdates("")
+	if err != nil || len(updates) != 0 {
+		t.Fatalf("empty XBPS transaction = %#v, %v", updates, err)
 	}
 }
 

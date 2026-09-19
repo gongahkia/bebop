@@ -223,6 +223,10 @@ failure and never cause installation.
 Alpine 3.24 uses `apk version -l '<'`; a non-empty normalized result means
 updates are available. It never installs or upgrades packages during this
 operation.
+Void uses `xbps-install -u -n`; `refresh_metadata = true` adds only XBPS
+memory synchronization (`-M`), so neither path writes the target's persistent
+repository index, installs a package, or upgrades the system. Repository or
+signing-key errors are failures, never an up-to-date result.
 
 `refresh_metadata = true` is explicit. It performs `apt-get update` on
 Debian-family targets, `dnf5 -y makecache` on Fedora, or `dnf -y makecache` on
@@ -233,6 +237,8 @@ runs an apt, DNF, Zypper, Pacman, or APK upgrade, package installation, image
 update, or reboot.
 On Alpine, it runs `apk update` only when refresh is requested, under that same
 target lock.
+Void's in-memory XBPS refresh is read-only and therefore does not acquire that
+mutation lock.
 Without refresh, history reports availability from whatever target package
 metadata was already present. Security counts are `known` only when the apt
 simulation exposes a security origin for every available update; otherwise the

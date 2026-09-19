@@ -145,7 +145,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
-	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" && host.PackageManager != "apk" {
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" && host.PackageManager != "apk" && host.PackageManager != "xbps" {
 		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
@@ -154,7 +154,10 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 			return Outcome{Result: Failure, Details: details}, checkErr
 		}
 	}
-	if job.RefreshMetadata {
+	// XBPS memory-sync refreshes only the transaction's in-memory repository
+	// data. It does not alter on-disk indexes, so it stays a read-only check and
+	// deliberately does not acquire the target mutation lock.
+	if job.RefreshMetadata && host.PackageManager != "xbps" {
 		locker, ok := tr.(transport.ApplyLocker)
 		if !ok {
 			return Outcome{Result: Failure}, errs.New(errs.ApplyLocked, "refreshing package metadata requires the Bebop target apply lock", nil)
@@ -284,6 +287,24 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+	if host.PackageManager == "xbps" {
+		script := xbpsCachedUpdateCheckScript
+		if job.RefreshMetadata {
+			script = xbpsFreshUpdateCheckScript
+			details.MetadataRefreshed = true
+		}
+		result, checkErr := tr.Run(ctx, transport.Request{Script: script})
+		if checkErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available XBPS package updates: %w", checkErr)
+		}
+		updates, parseErr := parseXBPSUpdates(result.Stdout)
+		if parseErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("parse XBPS update transaction: %w", parseErr)
+		}
+		details.UpdatesAvailable = len(updates)
+		details.SecurityClassification = "unknown"
+		return Outcome{Result: Success, Details: details}, nil
+	}
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
 		return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available apt package updates: %w", err)
@@ -315,6 +336,8 @@ const zypperLeapPatchCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/
 const zypperTumbleweedUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive --xmlout dup --dry-run"
 const apkRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C apk --interactive=no update"
 const apkUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C apk version -l '<' 2>/dev/null | awk '$2 == \"<\" { print $1 }' | LC_ALL=C sort -u"
+const xbpsFreshUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C xbps-install -M -u -n </dev/null"
+const xbpsCachedUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C xbps-install -u -n </dev/null"
 
 func archCheckupdatesDatabase(dataRoot string) string {
 	if dataRoot == "" {
@@ -375,6 +398,31 @@ func parseAPKUpdates(output string) []string {
 	}
 	sort.Strings(updates)
 	return updates
+}
+
+// parseXBPSUpdates accepts only XBPS's documented dry-run action records:
+// pkgver, action, architecture, repository, installed size, download size.
+// Human diagnostics belong on stderr and malformed stdout is an operational
+// failure rather than a false "up to date" result.
+func parseXBPSUpdates(output string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 6 || fields[0] == "" || fields[1] == "" || fields[2] == "" || !strings.HasPrefix(fields[3], "http") {
+			return nil, fmt.Errorf("unexpected XBPS dry-run record %q", line)
+		}
+		seen[fields[0]] = true
+	}
+	updates := make([]string, 0, len(seen))
+	for pkg := range seen {
+		updates = append(updates, pkg)
+	}
+	sort.Strings(updates)
+	return updates, nil
 }
 
 func zypperPatchUpdatesAvailable(err error) (available, security bool, operational error) {

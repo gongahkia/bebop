@@ -107,6 +107,9 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "os.unsupported", Message: "unsupported target OS: " + host.OS.Display()})
 	}
 	result.Architecture = host.ArchitectureKnown && host.OS.SupportsArchitecture(host.Architecture)
+	if host.OS.Family == "void" && !facts.VoidLibcSupported(host.OS, host.Libc) {
+		result.Architecture = false
+	}
 	if host.ArchitectureKnown {
 		if result.Architecture {
 			result.Checks = append(result.Checks, Check{Status: Pass, Code: "architecture.supported", Message: "supported target architecture: " + host.Architecture})
@@ -151,7 +154,11 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "privilege.unavailable", Message: "non-interactive root, sudo, or doas access unavailable; Bebop cannot apply privileged changes"})
 	}
-	if host.OS.Family == "alpine" {
+	if host.OS.Family == "alpine" || host.OS.Family == "void" {
+		remediation := "install flock findmnt lsblk manually with apk"
+		if host.OS.Family == "void" {
+			remediation = "install util-linux manually with xbps-install -S"
+		}
 		for _, tool := range []struct {
 			name      string
 			available bool
@@ -160,7 +167,7 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 			if available {
 				result.Checks = append(result.Checks, Check{Status: Pass, Code: "target.tool." + name, Message: name + " available"})
 			} else {
-				result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.tool." + name, Message: "Alpine requires " + name + " before mutation; install flock findmnt lsblk manually with apk"})
+				result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.tool." + name, Message: host.OS.Display() + " requires " + name + " before mutation; " + remediation})
 			}
 		}
 	}

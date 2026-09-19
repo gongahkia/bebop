@@ -2,6 +2,7 @@ package modules
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/facts"
@@ -30,6 +31,9 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	}
 	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
 		return planAlpineDocker(host, cfg)
+	}
+	if host.OS.Family == "void" && host.PackageManager == "xbps" {
+		return planVoidDocker(host, cfg)
 	}
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
@@ -143,6 +147,98 @@ func planAlpineDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "OpenRC Docker service is disabled, inactive, or daemon unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker OpenRC service not ready", Desired: "Docker enabled in default runlevel, running, and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "alpine", Script: "rc-update add docker default\nrc-service docker start"}, Verification: "Docker OpenRC service is enabled and docker info succeeds as root"}
 		if needEngine && len(changes) > 0 && changes[len(changes)-1].ID == "docker.engine" && changes[len(changes)-1].Blocked != "" {
 			change.Blocked = "Alpine Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+func voidPackagesAvailableScript(repository string, packages ...string) string {
+	script := ""
+	for _, pkg := range packages {
+		script += "xbps-query --ignore-conf-repos --repository=" + transport.ShellQuote(repository) + " -M -S " + transport.ShellQuote(pkg) + " >/dev/null\n"
+	}
+	return script
+}
+
+const voidDockerHoldSafetyScript = `! xbps-query -H 2>/dev/null | grep -Eq '(^|[[:space:]])(docker|docker-compose)([<>=~][^[:space:]]*)?([[:space:]]|$)'
+! xbps-query --list-repolock-pkgs 2>/dev/null | grep -Eq '(^|[[:space:]])(docker|docker-compose)([<>=~][^[:space:]]*)?([[:space:]]|$)'`
+
+func voidPackageProvenanceSafetyScript(repository string, packages ...string) string {
+	var script strings.Builder
+	for _, pkg := range packages {
+		script.WriteString("if xbps-query -p pkgver ")
+		script.WriteString(transport.ShellQuote(pkg))
+		script.WriteString(" >/dev/null 2>&1; then xbps-query -p repository ")
+		script.WriteString(transport.ShellQuote(pkg))
+		script.WriteString(" 2>/dev/null | grep -Fqx ")
+		script.WriteString(transport.ShellQuote(repository))
+		script.WriteString("; fi\n")
+	}
+	return script.String()
+}
+
+func voidPackageInstallScript(repository string, packages ...string) string {
+	quoted := make([]string, 0, len(packages))
+	for _, pkg := range packages {
+		quoted = append(quoted, transport.ShellQuote(pkg))
+	}
+	return "xbps-install -S -y --ignore-conf-repos --repository=" + transport.ShellQuote(repository) + " " + strings.Join(quoted, " ") + " </dev/null"
+}
+
+func planVoidDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	repository, reviewed := facts.VoidRepository(host.Architecture, host.Libc)
+	if !reviewed {
+		return []plan.Change{{ID: "docker.engine", Module: "docker", Summary: "review Void package repository", Reason: "the target architecture/libc has no reviewed Void package mapping", Risk: plan.Privileged, RequiresRoot: true, Current: "unreviewed Void package source", Desired: "reviewed official Void package source", Action: plan.Action{Kind: "docker.install-engine", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop does not have a reviewed official Void repository mapping for this architecture/libc combination"}}, nil, nil
+	}
+	if host.Docker.RepositoryState == "unmanaged" {
+		return []plan.Change{{ID: "docker.engine", Module: "docker", Summary: "review installed Docker provenance", Reason: "an installed Docker package was not recorded from the reviewed Void repository", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged Docker package provenance", Desired: "reviewed official Void Docker packages", Action: plan.Action{Kind: "docker.install-engine", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop will not adopt an installed Docker package whose XBPS repository is not the reviewed official Void repository"}}, nil, nil
+	}
+	if host.Docker.PackageHeld || host.Docker.PackageRepolocked {
+		return []plan.Change{{ID: "docker.engine", Module: "docker", Summary: "review held Docker packages", Reason: "a required Docker package is held or repolocked", Risk: plan.Privileged, RequiresRoot: true, Current: "XBPS hold or repolock prevents reviewed Docker convergence", Desired: "operator-reviewed package constraints", Action: plan.Action{Kind: "docker.install-engine", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop will not override an XBPS hold or repolock for docker or docker-compose; review the package constraint manually"}}, nil, nil
+	}
+	if !host.Docker.CgroupsAvailable {
+		return []plan.Change{{ID: "docker.cgroups", Module: "docker", Summary: "review Void cgroup support", Reason: "Docker requires a usable cgroup hierarchy", Risk: plan.Privileged, RequiresRoot: true, Current: "cgroup hierarchy unavailable", Desired: "usable Linux cgroups", Action: plan.Action{Kind: "docker.cgroups-blocked", Resource: "void"}, Verification: "not applicable", Blocked: "Void Docker support requires a usable cgroup hierarchy; Bebop will not rewrite kernel or cgroup configuration"}}, nil, nil
+	}
+	changes := []plan.Change{}
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Void Docker package set is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "docker or docker-compose is not installed", Desired: "official Void docker and docker-compose packages installed", Preconditions: []plan.Precondition{{ID: "docker.void-packages-available", Description: "the reviewed official Void repository advertises Docker packages", Script: voidPackagesAvailableScript(repository, "docker", "docker-compose")}, {ID: "docker.void-package-provenance", Description: "any installed Docker package came from the reviewed official Void repository", Script: voidPackageProvenanceSafetyScript(repository, "docker", "docker-compose")}, {ID: "docker.void-package-constraints", Description: "required Docker packages are not held or repolocked", Script: voidDockerHoldSafetyScript}}, Action: plan.Action{Kind: "docker.install-engine", Resource: "void", Script: voidPackageInstallScript(repository, "docker", "docker-compose")}, Verification: "reviewed official Void Docker packages are installed"}
+		if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed official Void repository does not advertise docker and docker-compose for this target; Bebop will not use another repository"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = append(dependencies, "docker.engine")
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "runit Docker service is disabled, inactive, or daemon unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker runit service not ready", Desired: "Docker enabled under runit, running, and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "void", Script: runitEnableAndStartScript("docker")}, Verification: "Docker runit service link is correct and docker info succeeds as root"}
+		if host.Docker.ServiceLinkState == "conflict" {
+			change.Action.Script = ""
+			change.Blocked = "existing /var/service/docker does not point exactly to the package-provided /etc/sv/docker; Bebop will not replace it"
+		} else if !needEngine && !host.Docker.ServiceDefinition {
+			change.Action.Script = ""
+			change.Blocked = "the installed Void Docker package does not provide /etc/sv/docker; Bebop will not create a replacement service definition"
+		} else if needEngine && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script = ""
+			change.Blocked = "Void Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if len(cfg.Services) > 0 && !host.Docker.ComposeAvailable && !needEngine {
+		change := plan.Change{ID: "docker.compose", Module: "docker", Summary: "install Docker Compose v2", Reason: "docker compose is unavailable", Risk: plan.Privileged, RequiresRoot: true, Current: "Compose v2 unavailable", Desired: "Docker Compose v2 available for managed services", Dependencies: []string{"docker.service"}, Action: plan.Action{Kind: "docker.install-compose", Resource: "void", Script: voidPackageInstallScript(repository, "docker-compose")}, Verification: "docker compose version succeeds"}
+		if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed official Void repository does not advertise docker-compose for this target"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
@@ -454,6 +550,9 @@ func (Docker) Apply(ctx context.Context, tr transport.Transport, _ config.Config
 }
 func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "docker.install-engine" {
+		if change.Action.Resource == "void" {
+			return verify(ctx, tr, "xbps-query -p pkgver docker >/dev/null\nxbps-query -p pkgver docker-compose >/dev/null")
+		}
 		if change.Action.Resource == "alpine" {
 			return verify(ctx, tr, "apk info -e docker docker-cli-compose docker-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
 		}
@@ -473,6 +572,9 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 	}
 	if change.Action.Kind == "docker.install-compose" {
 		return verify(ctx, tr, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null")
+	}
+	if change.Action.Resource == "void" {
+		return verify(ctx, tr, runitServiceReadyScript("docker")+"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null")
 	}
 	if change.Action.Kind == "docker.enable-cgroups" {
 		return verify(ctx, tr, "test -r /sys/fs/cgroup/cgroup.controllers\nrc-update show default | grep -Eq '^[[:space:]]*cgroups([[:space:]]|$)'\nrc-service cgroups status >/dev/null")

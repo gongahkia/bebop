@@ -17,6 +17,7 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * openSUSE Leap 16.0 and Tumbleweed
     * Arch Linux x86_64
     * Alpine Linux 3.24.x on x86_64/aarch64
+    * Void Linux on x86_64/aarch64 with glibc or musl
 
 ## Quick start
 
@@ -243,6 +244,14 @@ only fixed HTTPS v3.24 main/community APK definitions for `docker`,
 diskless/data/overlay-root Alpine modes, Alpine 3.23 and 3.25+, Edge, Testing,
 and other Alpine branches are unsupported.
 
+On official rolling Void Linux, Bebop requires runit, XBPS, and a conventional
+persistent host. It supports x86_64/aarch64 glibc and musl targets, installs
+only `docker`, `docker-compose`, and `tailscale` from the reviewed HTTPS Void
+repository for that libc, and validates package-provided runit services before
+linking them under `/var/service`. Bebop-managed transactions ignore arbitrary
+operator repository configuration; Void derivatives, non-runit roots, and
+ephemeral/container roots are unsupported.
+
 For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
 `stable/opensuse/leap/16.0/$basearch` or
 `stable/opensuse/tumbleweed/$basearch`, verifies the reviewed signing key, and
@@ -450,6 +459,12 @@ Alpine automatic updates remain on the reviewed 3.24 branch; Bebop refuses to
 enable them when active APK repositories include Edge, Testing, another branch,
 or an unreviewed source. Alpine target OpenRC is unrelated to Bebop's
 controller-side systemd-user maintenance scheduler.
+
+Void intentionally has no Bebop unattended-upgrade path: set
+`automatic_updates = false`. Requesting it blocks the plan rather than running
+the rolling `xbps-install -Su` workflow. Void maintenance update awareness uses
+an XBPS dry-run (with optional in-memory metadata synchronization) and never
+installs or upgrades packages.
 
 `network.firewall` accepts only `"disabled"` in this milestone. Bebop reports
 UFW/nftables/firewalld state but never changes firewall rules.

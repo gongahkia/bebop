@@ -252,7 +252,11 @@ it never synchronizes the live Pacman database. Optional
 `apk version -l '<'`; optional refresh runs only `apk update` under that lock,
 never `apk upgrade`. Its fixed Bebop-owned repository file permits only the
 reviewed HTTPS v3.24 main/community sources and does not disable signature
-checks. Scheduled SSH remains BatchMode and target privilege elevation uses
+checks. Void uses only dry-run `xbps-install -u -n`; optional `-M` refresh is
+in-memory, and repository/signing-key failure remains a failed maintenance run.
+Void package convergence uses an explicit reviewed HTTPS repository with
+`--ignore-conf-repos`, closed stdin, and no forced hold/repolock override.
+Scheduled SSH remains BatchMode and target privilege elevation uses
 only `sudo -n` or `doas -n`, so a timer cannot wait for an SSH host-key/password
 or privilege password prompt.
 

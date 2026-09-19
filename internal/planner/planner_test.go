@@ -176,6 +176,54 @@ func TestAlpineRequiresOpenRCAPKAndMutationTools(t *testing.T) {
 	}
 }
 
+func TestVoidRequiresRunitXBPSLibcAndMutationTools(t *testing.T) {
+	p := planner.New()
+	for _, test := range []struct{ architecture, libc string }{{"amd64", "glibc"}, {"amd64", "musl"}, {"arm64", "glibc"}, {"arm64", "musl"}} {
+		host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "void", Family: "void", Supported: true}, Architecture: test.architecture, ArchitectureKnown: true, Libc: test.libc, PackageManager: "xbps", InitSystem: facts.InitSystemRunit, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+		if _, err := p.Build(host, config.Defaults()); err != nil {
+			t.Fatalf("Void %s/%s with runit/XBPS/tools was rejected: %v", test.architecture, test.libc, err)
+		}
+		host.PackageManager = "apk"
+		if _, err := p.Build(host, config.Defaults()); err == nil {
+			t.Fatalf("Void %s/%s accepted APK", test.architecture, test.libc)
+		}
+	}
+	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "void", Family: "void", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, Libc: "glibc", PackageManager: "xbps", InitSystem: facts.InitSystemSystemd, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Void was accepted with systemd instead of runit")
+	}
+	host.InitSystem, host.RequiredTools.Flock = facts.InitSystemRunit, false
+	if _, err := p.Build(host, config.Defaults()); err == nil || !strings.Contains(err.Error(), "flock") {
+		t.Fatalf("Void was accepted without flock before the apply lock: %v", err)
+	}
+	host.RequiredTools, host.Libc = facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, "unknown"
+	if _, err := p.Build(host, config.Defaults()); err == nil || !strings.Contains(err.Error(), "libc") {
+		t.Fatalf("Void was accepted with unknown native libc: %v", err)
+	}
+}
+
+func TestVoidPlansAreDeterministicAcrossReviewedArchitectureLibcPairs(t *testing.T) {
+	p := planner.New(modules.Default()...)
+	cfg := config.Defaults()
+	cfg.Features.AutomaticUpdates = false
+	for _, test := range []struct{ architecture, libc string }{{"amd64", "glibc"}, {"amd64", "musl"}, {"arm64", "glibc"}, {"arm64", "musl"}} {
+		host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "void", Family: "void", Supported: true}, Architecture: test.architecture, ArchitectureKnown: true, Libc: test.libc, PackageManager: "xbps", InitSystem: facts.InitSystemRunit, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent", Docker: facts.Docker{PackageSetAvailable: true, CgroupsAvailable: true}, Tailscale: facts.Tailscale{PackageAvailable: true}}
+		first, err := p.Build(host, cfg)
+		if err != nil {
+			t.Fatalf("build first Void %s/%s plan: %v", test.architecture, test.libc, err)
+		}
+		second, err := p.Build(host, cfg)
+		if err != nil {
+			t.Fatalf("build second Void %s/%s plan: %v", test.architecture, test.libc, err)
+		}
+		firstJSON, _ := first.CanonicalJSON()
+		secondJSON, _ := second.CanonicalJSON()
+		if string(firstJSON) != string(secondJSON) || first.Fingerprint != second.Fingerprint {
+			t.Fatalf("Void %s/%s plan was not deterministic\n%s\n%s", test.architecture, test.libc, firstJSON, secondJSON)
+		}
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

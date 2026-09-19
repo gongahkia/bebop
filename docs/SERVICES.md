@@ -144,6 +144,13 @@ static installer. Alpine support is limited to persistent x86_64/aarch64 hosts;
 diskless, data, read-only, and overlay-root targets block before mutation.
 Alpine 3.23, 3.25+, Edge, Testing, and derivatives are not supported.
 
+On official Void Linux, Bebop uses XBPS with `--ignore-conf-repos` and a fixed
+reviewed HTTPS Void repository selected for the target's x86_64/aarch64 and
+glibc/musl identity. It installs only `docker` and `docker-compose`, then
+enables the package-provided `/etc/sv/docker` service through a validated
+`/var/service/docker` symlink. It does not add Docker CE, a third-party XBPS
+repository, static binaries, or a replacement runit service definition.
+
 On any SELinux-enforcing supported target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and

@@ -293,6 +293,89 @@ apk info -W /etc/periodic/daily/apk | grep -Fq apk-cron`
 	}
 }
 
+// TestVoidInspect and TestVoidXBPSPackageMetadata exercise the official Void
+// image's rolling identity, native XBPS architecture, read-only repository
+// metadata, and package-provided runit/SSH layout. The container's overlay
+// root and non-runit PID 1 intentionally do not claim host lifecycle coverage.
+func TestVoidInspect(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "bebop")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
+	const image = "voidlinux/voidlinux:latest"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run disposable Void inspect: %v\n%s", err, output)
+	}
+	var result struct {
+		OS struct {
+			ID        string `json:"id"`
+			Supported bool   `json:"supported"`
+		} `json:"os"`
+		Architecture    string `json:"architecture"`
+		Libc            string `json:"libc"`
+		PackageManager  string `json:"package_manager"`
+		MutationBlocked bool   `json:"mutation_blocked"`
+		RootMode        string `json:"root_mode"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+	}
+	if result.OS.ID != "void" || !result.OS.Supported || result.Architecture != "amd64" || result.Libc != "glibc" || result.PackageManager != "xbps" || !result.MutationBlocked || result.RootMode != "ephemeral-overlay" {
+		t.Fatalf("unexpected Void inspection: %#v", result)
+	}
+}
+
+func TestVoidXBPSPackageMetadata(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	const image = "voidlinux/voidlinux:latest"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	script := `set -eu
+test "$(xbps-uhelper arch)" = x86_64
+query_metadata() {
+  native_arch="$1"
+  repository="$2"
+  rootdir="/tmp/bebop-xbps-$native_arch"
+  mkdir -p "$rootdir/usr/share/xbps.d" "$rootdir/etc/xbps.d"
+  cp /usr/share/xbps.d/00-repository-main.conf /usr/share/xbps.d/void-virtualpkgs.conf /usr/share/xbps.d/xbps.conf "$rootdir/usr/share/xbps.d/"
+  printf 'architecture=%s\n' "$native_arch" > "$rootdir/usr/share/xbps.d/xbps-arch.conf"
+  for package in docker docker-compose tailscale; do
+    xbps-query -r "$rootdir" --ignore-conf-repos --repository="$repository" -M -S "$package" >/dev/null
+  done
+}
+query_metadata x86_64 https://repo-default.voidlinux.org/current
+query_metadata x86_64-musl https://repo-default.voidlinux.org/current/musl
+query_metadata aarch64 https://repo-default.voidlinux.org/current/aarch64
+query_metadata aarch64-musl https://repo-default.voidlinux.org/current/aarch64
+for package in docker docker-compose tailscale; do
+  xbps-query --ignore-conf-repos --repository=https://repo-default.voidlinux.org/current -M -S "$package" >/dev/null
+done
+xbps-query --ignore-conf-repos --repository=https://repo-default.voidlinux.org/current -M -f moby | grep -Fqx /etc/sv/docker/run
+xbps-query --ignore-conf-repos --repository=https://repo-default.voidlinux.org/current -M -f tailscale | grep -Fqx /etc/sv/tailscaled/run
+xbps-query --ignore-conf-repos --repository=https://repo-default.voidlinux.org/current -M --cat=/etc/ssh/sshd_config openssh | grep -Fqx 'Include /etc/ssh/sshd_config.d/*.conf'
+command -v flock >/dev/null
+command -v lsblk >/dev/null
+command -v findmnt >/dev/null`
+	if output, err := exec.Command("docker", "run", "--rm", image, "sh", "-ceu", script).CombinedOutput(); err != nil {
+		t.Fatalf("validate Void XBPS/package layout: %v\n%s", err, output)
+	}
+}
+
 // ensureIntegrationImage keeps optional read-only coverage useful when a
 // vendor retires a specifically reviewed image tag. A pull failure is an
 // unavailable external test prerequisite, not evidence that Bebop accepts an

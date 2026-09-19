@@ -31,6 +31,7 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"alpine-3.24.0.os-release", "alpine", "alpine", "Alpine Linux", true},
 		{"alpine-3.24.2.os-release", "alpine", "alpine", "Alpine Linux", true},
 		{"alpine-3.24.99.os-release", "alpine", "alpine", "Alpine Linux", true},
+		{"void.os-release", "void", "void", "void", true},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -46,6 +47,47 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestVoidIdentityArchitectureLibcAndPackageToolsAreExplicitlyGated(t *testing.T) {
+	for _, fixture := range []string{"generic-void-like.os-release", "void-wrong-id.os-release"} {
+		contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseOSRelease(string(contents))
+		if err != nil || parsed.Supported || parsed.IsSupported() {
+			t.Fatalf("unsupported Void-like fixture was accepted: %#v, %v", parsed, err)
+		}
+	}
+	void := OS{ID: "void", Family: "void", Supported: true}
+	if !void.IsSupported() || !void.SupportsArchitecture("amd64") || !void.SupportsArchitecture("arm64") || void.SupportsArchitecture("armv7l") || void.RequiredInitSystem() != InitSystemRunit {
+		t.Fatalf("Void identity/init/architecture gate was not strict: %#v", void)
+	}
+	manager, database, ok := RequiredPackageTools(void)
+	if !ok || manager != "xbps" || database != "" || !PackageToolsAvailable(void, "xbps", "") || PackageToolsAvailable(void, "apk", "") || PackageToolsAvailable(void, "pacman", "") || PackageToolsAvailable(void, "dnf", "rpm") {
+		t.Fatalf("Void package tools were not strictly normalized: %q/%q %t", manager, database, ok)
+	}
+	for _, test := range []struct {
+		raw, architecture, libc, repository string
+	}{
+		{"x86_64", "amd64", "glibc", "https://repo-default.voidlinux.org/current"},
+		{"x86_64-musl", "amd64", "musl", "https://repo-default.voidlinux.org/current/musl"},
+		{"aarch64", "arm64", "glibc", "https://repo-default.voidlinux.org/current/aarch64"},
+		{"aarch64-musl", "arm64", "musl", "https://repo-default.voidlinux.org/current/aarch64"},
+	} {
+		architecture, libc, known := NormalizeVoidArchitecture(test.raw)
+		if !known || architecture != test.architecture || libc != test.libc {
+			t.Fatalf("Void native architecture %q = %q/%q %t", test.raw, architecture, libc, known)
+		}
+		repository, ok := VoidRepository(architecture, libc)
+		if !ok || repository != test.repository {
+			t.Fatalf("Void repository for %q/%q = %q, %t", architecture, libc, repository, ok)
+		}
+	}
+	if _, _, known := NormalizeVoidArchitecture("armv7l"); known {
+		t.Fatal("unsupported Void native architecture was accepted")
 	}
 }
 

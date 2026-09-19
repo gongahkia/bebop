@@ -24,6 +24,9 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
 		return planAlpineTailscale(host)
 	}
+	if host.OS.Family == "void" && host.PackageManager == "xbps" {
+		return planVoidTailscale(host)
+	}
 	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf") || (host.OS.Family == "opensuse" && host.PackageManager == "zypper")) && host.Tailscale.RepositoryState == "unmanaged" {
 		platform := "Fedora"
 		resource := "fedora"
@@ -104,6 +107,58 @@ func planAlpineTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, e
 		change := plan.Change{ID: "tailscale.service", Module: "tailscale", Summary: "enable and start Tailscale", Reason: "Alpine Tailscale OpenRC service is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscale OpenRC service not ready", Desired: "Tailscale enabled in default runlevel and active", Dependencies: dependencies, Action: plan.Action{Kind: "tailscale.enable-service", Resource: "alpine", Script: "rc-update add tailscale default\nrc-service tailscale start"}, Verification: "Tailscale OpenRC service is enabled and active"}
 		if len(changes) > 0 && changes[0].Blocked != "" {
 			change.Blocked = "Tailscale package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	warnings := []plan.Warning{}
+	if host.Tailscale.Installed && !host.Tailscale.Connected {
+		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
+	}
+	return changes, warnings, nil
+}
+
+const voidTailscaleHoldSafetyScript = `! xbps-query -H 2>/dev/null | grep -Eq '(^|[[:space:]])tailscale([<>=~][^[:space:]]*)?([[:space:]]|$)'
+! xbps-query --list-repolock-pkgs 2>/dev/null | grep -Eq '(^|[[:space:]])tailscale([<>=~][^[:space:]]*)?([[:space:]]|$)'`
+
+func planVoidTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, error) {
+	repository, reviewed := facts.VoidRepository(host.Architecture, host.Libc)
+	if !reviewed {
+		return []plan.Change{{ID: "tailscale.package", Module: "tailscale", Summary: "review Void package repository", Reason: "the target architecture/libc has no reviewed Void package mapping", Risk: plan.Privileged, RequiresRoot: true, Current: "unreviewed Void package source", Desired: "reviewed official Void repository", Action: plan.Action{Kind: "tailscale.install", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop does not have a reviewed official Void repository mapping for this architecture/libc combination"}}, nil, nil
+	}
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		return []plan.Change{{ID: "tailscale.package", Module: "tailscale", Summary: "review installed Tailscale provenance", Reason: "the installed Tailscale package was not recorded from the reviewed Void repository", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged Tailscale package provenance", Desired: "reviewed official Void tailscale package", Action: plan.Action{Kind: "tailscale.install", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop will not adopt an installed Tailscale package whose XBPS repository is not the reviewed official Void repository"}}, nil, nil
+	}
+	changes := []plan.Change{}
+	if !host.Tailscale.Installed {
+		change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "official Void tailscale package installed", Preconditions: []plan.Precondition{{ID: "tailscale.void-package-available", Description: "the reviewed official Void repository advertises tailscale", Script: voidPackagesAvailableScript(repository, "tailscale")}, {ID: "tailscale.void-package-provenance", Description: "any installed Tailscale package came from the reviewed official Void repository", Script: voidPackageProvenanceSafetyScript(repository, "tailscale")}, {ID: "tailscale.void-package-constraints", Description: "tailscale is not held or repolocked", Script: voidTailscaleHoldSafetyScript}}, Action: plan.Action{Kind: "tailscale.install", Resource: "void", Script: voidPackageInstallScript(repository, "tailscale")}, Verification: "official Void tailscale package is installed"}
+		if host.Tailscale.PackageHeld || host.Tailscale.PackageRepolocked {
+			change.Action.Script = ""
+			change.Blocked = "Bebop will not override an XBPS hold or repolock for tailscale; review the package constraint manually"
+		} else if !host.Tailscale.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed official Void repository does not advertise tailscale for this target; Bebop will not use another repository"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Tailscale.ServiceEnabled || !host.Tailscale.ServiceActive {
+		dependencies := []string(nil)
+		if !host.Tailscale.Installed {
+			dependencies = append(dependencies, "tailscale.package")
+		}
+		change := plan.Change{ID: "tailscale.service", Module: "tailscale", Summary: "enable and start Tailscale", Reason: "runit Tailscale service is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscaled runit service not ready", Desired: "tailscaled enabled under runit and active", Dependencies: dependencies, Action: plan.Action{Kind: "tailscale.enable-service", Resource: "void", Script: runitEnableAndStartScript("tailscaled")}, Verification: "tailscaled runit service link is correct and active"}
+		if host.Tailscale.ServiceLinkState == "conflict" {
+			change.Action.Script = ""
+			change.Blocked = "existing /var/service/tailscaled does not point exactly to the package-provided /etc/sv/tailscaled; Bebop will not replace it"
+		} else if host.Tailscale.Installed && !host.Tailscale.ServiceDefinition {
+			change.Action.Script = ""
+			change.Blocked = "the installed Void tailscale package does not provide /etc/sv/tailscaled; Bebop will not create a replacement service definition"
+		} else if len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script = ""
+			change.Blocked = "Void Tailscale package installation is blocked"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
@@ -312,6 +367,9 @@ func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Con
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
+		if change.Action.Resource == "void" {
+			return verify(ctx, tr, "xbps-query -p pkgver tailscale >/dev/null")
+		}
 		if change.Action.Resource == "alpine" {
 			return verify(ctx, tr, "apk info -e tailscale tailscale-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
 		}
@@ -331,6 +389,9 @@ func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Co
 	}
 	if change.Action.Resource == "alpine" {
 		return verify(ctx, tr, "rc-update show default | grep -Eq '^[[:space:]]*tailscale([[:space:]]|$)'\nrc-service tailscale status >/dev/null")
+	}
+	if change.Action.Resource == "void" {
+		return verify(ctx, tr, runitServiceReadyScript("tailscaled"))
 	}
 	return verify(ctx, tr, "systemctl is-enabled tailscaled.service >/dev/null\nsystemctl is-active tailscaled.service >/dev/null")
 }

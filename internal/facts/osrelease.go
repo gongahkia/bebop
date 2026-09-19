@@ -72,6 +72,11 @@ func ParseOSRelease(contents string) (OS, error) {
 		// maintenance, while a new minor branch requires fresh review.
 		os.Family = "alpine"
 		os.Supported = isAlpine324(os.VersionID)
+	case "void":
+		// Void is rolling. Exact official ID, the native XBPS architecture and
+		// runit are checked independently; image dates and package versions are
+		// deliberately not release gates.
+		os.Family, os.Supported = "void", true
 	default:
 		os.Family = "unsupported"
 	}
@@ -118,6 +123,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "arch"
 		case "alpine":
 			family = "alpine"
+		case "void":
+			family = "void"
 		}
 	}
 	switch family {
@@ -133,6 +140,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "pacman", "", true
 	case "alpine":
 		return "apk", "", true
+	case "void":
+		return "xbps", "", true
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.
@@ -239,4 +248,44 @@ func NormalizeArchitecture(raw string) (string, bool) {
 	default:
 		return strings.TrimSpace(raw), false
 	}
+}
+
+// NormalizeVoidArchitecture decodes Void's native XBPS architecture token.
+// Libc stays separate from CPU architecture so it can be planner-relevant
+// without becoming target identity or leaking XBPS compound values elsewhere.
+func NormalizeVoidArchitecture(raw string) (architecture, libc string, ok bool) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "x86_64":
+		return "amd64", "glibc", true
+	case "x86_64-musl":
+		return "amd64", "musl", true
+	case "aarch64":
+		return "arm64", "glibc", true
+	case "aarch64-musl":
+		return "arm64", "musl", true
+	default:
+		return "", "", false
+	}
+}
+
+// VoidRepository returns the reviewed official repository for an exact Void
+// architecture/libc pair. Aarch64 uses Void's architecture-specific canonical
+// endpoint, whose repository data carries both glibc and musl architectures.
+func VoidRepository(architecture, libc string) (string, bool) {
+	switch architecture + "/" + libc {
+	case "amd64/glibc":
+		return "https://repo-default.voidlinux.org/current", true
+	case "amd64/musl":
+		return "https://repo-default.voidlinux.org/current/musl", true
+	case "arm64/glibc":
+		return "https://repo-default.voidlinux.org/current/aarch64", true
+	case "arm64/musl":
+		return "https://repo-default.voidlinux.org/current/aarch64", true
+	default:
+		return "", false
+	}
+}
+
+func VoidLibcSupported(os OS, libc string) bool {
+	return os.IsSupported() && os.Family == "void" && (libc == "glibc" || libc == "musl")
 }

@@ -43,6 +43,10 @@ func (SSH) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.
 		change.Blocked = "the current SSH configuration does not include /etc/ssh/sshd_config.d/*.conf; refusing to write an ineffective drop-in"
 	case host.SSH.FirstDropIn != "" && host.SSH.FirstDropIn < "00-bebop.conf":
 		change.Blocked = "an earlier SSH drop-in (" + host.SSH.FirstDropIn + ") could override Bebop's hardening; refusing to guess precedence"
+	case host.InitSystem == facts.InitSystemRunit && host.SSH.Service != "runit:sshd":
+		change.Blocked = "Void does not expose the package-provided runit sshd service; refusing to change SSH configuration without a safe service lifecycle"
+	case host.InitSystem == facts.InitSystemRunit && (!host.SSH.ServiceEnabled || !host.SSH.ServiceActive):
+		change.Blocked = "the Void runit sshd service is not enabled and active; refusing to change SSH configuration without a verified reload path"
 	default:
 		rootBlocked(&change, host.SudoAvailable)
 	}
@@ -62,6 +66,8 @@ func sshHardeningScript(service string) string {
 		reload = "\nsystemctl reload " + service
 	} else if service == "sshd" {
 		reload = "\nrc-service sshd reload"
+	} else if service == "runit:sshd" {
+		reload = "\nsv restart sshd\nsv status sshd | grep -Eq '^run:'"
 	}
 	return `install -d -m 0755 /etc/ssh/sshd_config.d
 	candidate=/etc/ssh/sshd_config.d/00-bebop-validate-$$.conf
