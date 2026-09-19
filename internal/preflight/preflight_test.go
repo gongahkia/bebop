@@ -102,6 +102,27 @@ func TestFromFactsReportsOpenSUSEZypperRequirementsAndMutableHostBoundary(t *tes
 	}
 }
 
+func TestFromFactsReportsArchPacmanAndArchitectureRequirementsAccurately(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "arch", Name: "Arch Linux", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Systemd: true, SudoAvailable: true}
+	result := FromFacts(target.Target{Kind: target.Local}, host)
+	if !result.Ready {
+		t.Fatalf("Arch pacman host was not ready: %#v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Code == "package_manager.pacman" && check.Status == Pass && check.Message == "pacman package tool available" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Arch package-manager check did not identify pacman: %#v", result.Checks)
+	}
+	host.Architecture = "arm64"
+	if FromFacts(target.Target{Kind: target.Local}, host).Ready {
+		t.Fatal("Arch ARM was reported ready")
+	}
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)

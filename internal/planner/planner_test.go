@@ -127,6 +127,26 @@ func TestOpenSUSERequiresZypperRPMAndMutableRoot(t *testing.T) {
 	}
 }
 
+func TestArchRequiresOfficialRollingX8664AndPacman(t *testing.T) {
+	p := planner.New()
+	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Systemd: true, SudoAvailable: true}
+	if _, err := p.Build(host, config.Defaults()); err != nil {
+		t.Fatalf("official Arch x86_64 with pacman was rejected: %v", err)
+	}
+	host.PackageManager = "apt"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Arch was accepted with apt instead of pacman")
+	}
+	host.PackageManager, host.Architecture = "pacman", "arm64"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Arch ARM was accepted")
+	}
+	host.Architecture, host.OS.BuildID = "amd64", "not-rolling"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Arch with a non-rolling build identity was accepted")
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

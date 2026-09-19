@@ -27,6 +27,7 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"opensuse-leap-16.0.os-release", "opensuse-leap", "opensuse", "openSUSE Leap", true},
 		{"opensuse-tumbleweed-20260122.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 		{"opensuse-tumbleweed-20260916.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
+		{"arch.os-release", "arch", "arch", "Arch Linux", true},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -42,6 +43,39 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestArchIdentityAndArchitectureAreExplicitlyGated(t *testing.T) {
+	for _, fixture := range []string{"arch-build-invalid.os-release", "manjaro.os-release", "endeavouros.os-release", "cachyos.os-release", "generic-arch-like.os-release"} {
+		t.Run(fixture, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := ParseOSRelease(string(contents))
+			if err != nil || actual.Supported || actual.IsSupported() {
+				t.Fatalf("unsupported Arch-like fixture was accepted: %#v, %v", actual, err)
+			}
+		})
+	}
+	for _, id := range []string{"garuda", "artix"} {
+		actual, err := ParseOSRelease("ID=" + id + "\nID_LIKE=arch\nBUILD_ID=rolling\n")
+		if err != nil || actual.Supported || actual.IsSupported() {
+			t.Fatalf("Arch derivative %q was accepted: %#v, %v", id, actual, err)
+		}
+	}
+	arch, err := ParseOSRelease("ID=arch\nBUILD_ID=rolling\n")
+	if err != nil || !arch.IsSupported() || !arch.SupportsArchitecture("amd64") || arch.SupportsArchitecture("arm64") {
+		t.Fatalf("Arch identity/architecture gate was not strict: %#v, %v", arch, err)
+	}
+}
+
+func TestArchRequiresOnlyPacman(t *testing.T) {
+	arch := OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}
+	manager, database, ok := RequiredPackageTools(arch)
+	if !ok || manager != "pacman" || database != "" || !PackageToolsAvailable(arch, "pacman", "") || PackageToolsAvailable(arch, "apt", "dpkg") || PackageToolsAvailable(arch, "dnf", "rpm") || PackageToolsAvailable(arch, "dnf5", "rpm") || PackageToolsAvailable(arch, "zypper", "rpm") {
+		t.Fatalf("Arch package tools were not strictly normalized: %q/%q %t", manager, database, ok)
 	}
 }
 

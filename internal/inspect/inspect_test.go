@@ -76,7 +76,16 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 	tr.missingDNFOrRPM = false
 	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "debian", Family: "debian", VersionID: "12", Supported: true})
 	if manager != "apt" || database != "dpkg" {
-		t.Fatalf("Debian package facts = %q/%q", manager, database)
+		 t.Fatalf("Debian package facts = %q/%q", manager, database)
+	}
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true})
+	if manager != "pacman" || database != "" {
+		t.Fatalf("Arch package facts = %q/%q", manager, database)
+	}
+	tr.missingPacman = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("Arch without pacman was accepted as %q/%q", manager, database)
 	}
 	if mode := inspectSELinux(context.Background(), tr).Mode; mode != "enforcing" {
 		t.Fatalf("SELinux state was not normalized: %q", mode)
@@ -124,7 +133,10 @@ func (scriptedStorageTransport) ReadFile(context.Context, string) (string, error
 func (scriptedStorageTransport) FileExists(context.Context, string) (bool, error) { return false, nil }
 func (scriptedStorageTransport) Description() string                              { return "scripted-storage-fake" }
 
-type packageProbeTransport struct{ missingDNFOrRPM bool }
+type packageProbeTransport struct {
+	missingDNFOrRPM bool
+	missingPacman   bool
+}
 
 func (tr packageProbeTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
 	switch {
@@ -145,6 +157,11 @@ func (tr packageProbeTransport) Run(_ context.Context, request transport.Request
 		return transport.Result{Stdout: "zypper rpm"}, nil
 	case strings.Contains(request.Script, "command -v apt-get"):
 		return transport.Result{Stdout: "apt dpkg"}, nil
+	case strings.Contains(request.Script, "command -v pacman"):
+		if tr.missingPacman {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "pacman"}, nil
 	case strings.Contains(request.Script, "getenforce"):
 		return transport.Result{Stdout: "Enforcing"}, nil
 	default:
