@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/facts"
@@ -18,8 +19,16 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if !cfg.Features.Tailscale {
 		return nil, nil, nil
 	}
-	if host.PackageManager == "dnf5" && host.Tailscale.RepositoryState == "unmanaged" {
-		return []plan.Change{{ID: "tailscale.repository", Module: "tailscale", Summary: "review Tailscale repository ownership", Reason: "an unmanaged Fedora Tailscale repository definition exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged /etc/yum.repos.d/tailscale.repo", Desired: "Bebop-reviewed signed repository configuration", Action: plan.Action{Kind: "tailscale.repository-conflict", Resource: "fedora"}, Verification: "not applicable until repository ownership is resolved", Blocked: "Bebop will not accept an unmanaged Tailscale repository definition on Fedora; review it manually before enabling Tailscale management"}}, nil, nil
+	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf")) && host.Tailscale.RepositoryState == "unmanaged" {
+		platform := "Fedora"
+		resource := "fedora"
+		if host.PackageManager == "dnf" {
+			platform = "Enterprise Linux"
+			if family, major, ok := facts.TailscaleRPMRepositoryPolicy(host.OS); ok {
+				resource = family + "-" + major
+			}
+		}
+		return []plan.Change{{ID: "tailscale.repository", Module: "tailscale", Summary: "review Tailscale repository ownership", Reason: "an unmanaged " + platform + " Tailscale repository definition exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged /etc/yum.repos.d/tailscale.repo", Desired: "Bebop-reviewed signed repository configuration", Action: plan.Action{Kind: "tailscale.repository-conflict", Resource: resource}, Verification: "not applicable until repository ownership is resolved", Blocked: "Bebop will not accept an unmanaged Tailscale repository definition on " + platform + "; review it manually before enabling Tailscale management"}}, nil, nil
 	}
 	changes := []plan.Change{}
 	warnings := []plan.Warning{}
@@ -27,6 +36,8 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		if host.PackageManager == "dnf5" {
 			change := fedoraTailscaleChange(host)
 			changes = append(changes, change)
+		} else if host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf" {
+			changes = append(changes, enterpriseTailscaleChange(host))
 		} else if distribution, codename, ok := tailscaleRepository(host.OS); !ok {
 			changes = append(changes, plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Action: plan.Action{Kind: "tailscale.install", Resource: host.OS.ID}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale repository mapping for " + host.OS.Display()})
 		} else {
@@ -54,6 +65,22 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
 	}
 	return changes, warnings, nil
+}
+
+func enterpriseTailscaleChange(host facts.HostFacts) plan.Change {
+	family, major, ok := facts.TailscaleRPMRepositoryPolicy(host.OS)
+	if !ok {
+		return plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Action: plan.Action{Kind: "tailscale.install", Resource: "enterprise-linux"}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale RPM repository mapping for " + host.OS.Display()}
+	}
+	policy := family + "-" + major
+	change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed Enterprise Linux repository", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! rpm -q tailscale >/dev/null 2>&1"}, {ID: "tailscale.repository-safe", Description: "the Tailscale repository is absent or Bebop-managed", Script: enterpriseTailscaleRepositorySafeScript(family, major)}}, Action: plan.Action{Kind: "tailscale.install", Resource: policy, Script: enterpriseTailscaleInstallScript(family, major)}, Verification: "tailscale package is installed"}
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		change.Action.Script = ""
+		change.Blocked = "existing /etc/yum.repos.d/tailscale.repo is not Bebop-managed; review it manually before Bebop can take ownership"
+	} else {
+		rootBlocked(&change, host.SudoAvailable)
+	}
+	return change
 }
 
 func fedoraTailscaleChange(host facts.HostFacts) plan.Change {
@@ -85,12 +112,54 @@ mv -f "$tmp" /etc/yum.repos.d/tailscale.repo
 trap - EXIT
 dnf5 -y install tailscale`
 
+func enterpriseTailscaleRepositorySafeScript(family, major string) string {
+	baseURL := "https://pkgs.tailscale.com/stable/" + family + "/" + major + "/$basearch"
+	keyURL := "https://pkgs.tailscale.com/stable/" + family + "/" + major + "/repo.gpg"
+	return `if test -e /etc/yum.repos.d/tailscale.repo; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/yum.repos.d/tailscale.repo
+  grep -Fqx ` + transport.ShellQuote("baseurl="+baseURL) + ` /etc/yum.repos.d/tailscale.repo
+  grep -Fqx 'gpgcheck=1' /etc/yum.repos.d/tailscale.repo
+  grep -Fqx 'repo_gpgcheck=1' /etc/yum.repos.d/tailscale.repo
+  grep -Fqx ` + transport.ShellQuote("gpgkey="+keyURL) + ` /etc/yum.repos.d/tailscale.repo
+fi
+for candidate in /etc/yum.repos.d/*.repo; do
+  test -f "$candidate" || continue
+  test "$candidate" = /etc/yum.repos.d/tailscale.repo && continue
+  ! grep -Fq 'pkgs.tailscale.com/stable/' "$candidate" 2>/dev/null
+done`
+}
+
+func enterpriseTailscaleInstallScript(family, major string) string {
+	baseURL := "https://pkgs.tailscale.com/stable/" + family + "/" + major + "/$basearch"
+	keyURL := "https://pkgs.tailscale.com/stable/" + family + "/" + major + "/repo.gpg"
+	return `tmp=$(mktemp /etc/yum.repos.d/.tailscale.repo.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[tailscale-stable]
+name=Tailscale stable
+baseurl=` + baseURL + `
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=` + keyURL + `
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/yum.repos.d/tailscale.repo
+trap - EXIT
+dnf -y install tailscale`
+}
+
 func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "tailscale.install", "tailscale.enable-service")
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
 		if change.Action.Resource == "fedora" {
+			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
+		}
+		if strings.HasPrefix(change.Action.Resource, "centos-") || strings.HasPrefix(change.Action.Resource, "rhel-") {
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed")

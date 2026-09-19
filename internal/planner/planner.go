@@ -32,11 +32,7 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if !host.Systemd {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
 	}
-<<<<<<< HEAD
 	if !facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
-=======
-	if !facts.PackageToolsAvailable(host.OS, host.PackageManager) {
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 		manager, database, _ := facts.RequiredPackageTools(host.OS)
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+manager+"/"+database+" package tools", nil)
 	}

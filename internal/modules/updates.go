@@ -41,12 +41,36 @@ mv -f "$tmp" /etc/dnf/automatic.conf
 trap - EXIT
 systemctl enable --now dnf5-automatic.timer`
 
+const enterpriseUpdatesScript = `if test -e /etc/dnf/automatic.conf; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic.conf
+fi
+for timer in dnf-automatic.timer dnf-automatic-download.timer dnf-automatic-notifyonly.timer; do
+  if systemctl is-enabled "$timer" >/dev/null 2>&1 || systemctl is-active "$timer" >/dev/null 2>&1; then exit 1; fi
+done
+dnf -y install dnf-automatic
+tmp=$(mktemp /etc/dnf/.automatic.conf.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[commands]
+apply_updates = yes
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/dnf/automatic.conf
+trap - EXIT
+systemctl enable --now dnf-automatic-install.timer`
+
 type Updates struct{}
 
 func (Updates) Name() string { return "updates" }
 
 func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
-	if !cfg.Features.AutomaticUpdates || (host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled) {
+	if !cfg.Features.AutomaticUpdates {
+		return nil, nil, nil
+	}
+	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" || host.AutomaticUpdates.ConfigState == "managed"
+	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled && managed && !host.AutomaticUpdates.ConflictingTimers {
 		return nil, nil, nil
 	}
 	if host.PackageManager == "dnf5" {
@@ -58,6 +82,23 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		if host.AutomaticUpdates.ConfigState == "unmanaged" {
 			change.Action.Script = ""
 			change.Blocked = "existing /etc/dnf/automatic.conf is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		return []plan.Change{change}, nil, nil
+	}
+	if host.PackageManager == "dnf" {
+		current := "dnf-automatic is not installed"
+		if host.AutomaticUpdates.Installed {
+			current = "dnf-automatic is installed but Bebop automatic updates are disabled"
+		}
+		change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic updates", Reason: current, Risk: plan.Privileged, RequiresRoot: true, Current: current, Desired: "dnf-automatic applies updates through the enabled dnf-automatic-install.timer", Action: plan.Action{Kind: "updates.enable-unattended", Resource: "enterprise-linux", Script: enterpriseUpdatesScript}, Verification: "dnf automatic configuration enables updates and only Bebop's install timer is active"}
+		if host.AutomaticUpdates.ConfigState == "unmanaged" {
+			change.Action.Script = ""
+			change.Blocked = "existing /etc/dnf/automatic.conf is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else if host.AutomaticUpdates.ConflictingTimers {
+			change.Action.Script = ""
+			change.Blocked = "another dnf-automatic timer is enabled or active; review and disable the competing automatic-update policy manually before Bebop manages updates"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
@@ -82,6 +123,17 @@ grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic
 grep -Eq '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*yes[[:space:]]*$' /etc/dnf/automatic.conf
 systemctl is-enabled dnf5-automatic.timer >/dev/null
 systemctl is-active dnf5-automatic.timer >/dev/null`)
+	}
+	if change.Action.Resource == "enterprise-linux" || change.Action.Script == enterpriseUpdatesScript {
+		return verify(ctx, tr, `rpm -q dnf-automatic >/dev/null
+grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic.conf
+grep -Eq '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*yes[[:space:]]*$' /etc/dnf/automatic.conf
+systemctl is-enabled dnf-automatic-install.timer >/dev/null
+systemctl is-active dnf-automatic-install.timer >/dev/null
+for timer in dnf-automatic.timer dnf-automatic-download.timer dnf-automatic-notifyonly.timer; do
+  ! systemctl is-enabled "$timer" >/dev/null 2>&1
+  ! systemctl is-active "$timer" >/dev/null 2>&1
+done`)
 	}
 	return verify(ctx, tr, `dpkg-query -W -f='${db:Status-Status}' unattended-upgrades | grep -qx installed
 apt-config dump | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";'

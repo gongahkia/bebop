@@ -140,7 +140,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
-	if host.PackageManager != "apt" && host.PackageManager != "dnf5" {
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" {
 		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
@@ -156,6 +156,8 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		refreshScript, packageManager := aptRefreshScript, "apt"
 		if host.PackageManager == "dnf5" {
 			refreshScript, packageManager = dnfRefreshScript, "DNF5"
+		} else if host.PackageManager == "dnf" {
+			refreshScript, packageManager = enterpriseDNFRefreshScript, "DNF"
 		}
 		_, refreshErr := tr.Run(ctx, transport.Request{Script: refreshScript, Privileged: true})
 		releaseErr := lock.Release()
@@ -187,6 +189,25 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+	if host.PackageManager == "dnf" {
+		_, checkErr := tr.Run(ctx, transport.Request{Script: enterpriseDNFUpdateCheckScript})
+		available, operationalErr := dnfUpdatesAvailable(checkErr)
+		if operationalErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available DNF package updates: %w", operationalErr)
+		}
+		if available {
+			count, countErr := tr.Run(ctx, transport.Request{Script: enterpriseDNFUpdateCountScript})
+			if countErr != nil {
+				return Outcome{Result: Failure, Details: details}, fmt.Errorf("count available DNF package updates: %w", countErr)
+			}
+			details.UpdatesAvailable, _ = strconv.Atoi(strings.TrimSpace(count.Stdout))
+			if details.UpdatesAvailable < 1 {
+				return Outcome{Result: Failure, Details: details}, fmt.Errorf("count available DNF package updates: check-update reported updates but deterministic query returned %q", strings.TrimSpace(count.Stdout))
+			}
+		}
+		details.SecurityClassification = "unknown"
+		return Outcome{Result: Success, Details: details}, nil
+	}
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
 		return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available apt package updates: %w", err)
@@ -203,6 +224,9 @@ const aptUpdateSimulationScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/u
 const dnfRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 -y makecache"
 const dnfUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 -y check-upgrade"
 const dnfUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 repoquery --upgrades --queryformat '%{name}\\n' | LC_ALL=C sort -u | sed '/^$/d' | wc -l"
+const enterpriseDNFRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf -y makecache"
+const enterpriseDNFUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf -y check-update"
+const enterpriseDNFUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf repoquery --upgrades --queryformat '%{name}\\n' | LC_ALL=C sort -u | sed '/^$/d' | wc -l"
 
 func dnfUpdatesAvailable(err error) (bool, error) {
 	if err == nil {

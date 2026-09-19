@@ -17,6 +17,9 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	if !cfg.Features.Docker && len(cfg.Services) == 0 {
 		return nil, nil, nil
 	}
+	if host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf" {
+		return planEnterpriseLinuxDocker(host, cfg)
+	}
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
 	}
@@ -57,6 +60,111 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 		changes = append(changes, change)
 	}
 	return changes, nil, nil
+}
+
+func planEnterpriseLinuxDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	if host.Docker.ConflictingPackages {
+		return []plan.Change{{ID: "docker.conflict", Module: "docker", Summary: "review conflicting container packages", Reason: "an incompatible distribution Docker/runtime package is installed", Risk: plan.Privileged, RequiresRoot: true, Current: "a conflicting RPM package is installed", Desired: "the reviewed Docker CE stack is the sole Docker runtime package set", Action: plan.Action{Kind: "docker.conflict", Resource: "enterprise-linux"}, Verification: "no conflicting Docker runtime package is installed", Blocked: "Enterprise Linux Docker support will not remove existing distribution Docker/runtime packages automatically; resolve the conflicting package stack manually before apply"}}, nil, nil
+	}
+	if host.Docker.RepositoryState == "unmanaged" {
+		return []plan.Change{{ID: "docker.repository", Module: "docker", Summary: "review Docker repository ownership", Reason: "an unmanaged Docker repository definition exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged Docker RPM repository", Desired: "Bebop-reviewed Docker CE stable repository", Action: plan.Action{Kind: "docker.repository-conflict", Resource: host.Docker.RepositoryPolicy}, Verification: "not applicable until repository ownership is resolved", Blocked: "Bebop will not trust an unmanaged Docker repository definition; review it manually before Docker CE management"}}, nil, nil
+	}
+	family, major, ok := facts.DockerCERepositoryPolicy(host.OS)
+	if !ok {
+		return nil, nil, nil
+	}
+	policy := family + "-" + major
+	changes := []plan.Change{}
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Docker CE package stack is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker CE engine, CLI, containerd, Buildx, or Compose plugin is not installed", Desired: "Docker CE, CLI, containerd, Buildx, and Compose plugin installed from the reviewed repository", Preconditions: []plan.Precondition{{ID: "docker.no-runtime-conflict", Description: "incompatible distribution Docker/runtime packages are still absent", Script: enterpriseDockerNoConflictScript}, {ID: "docker.repository-safe", Description: "the Docker CE repository is absent or Bebop-managed", Script: enterpriseDockerRepositorySafeScript(family, major)}}, Action: plan.Action{Kind: "docker.install-engine", Resource: policy, Script: enterpriseDockerInstallScript(family, major)}, Verification: "reviewed Docker CE packages are installed"}
+		if host.Docker.RepositoryState == "managed" && !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed Docker CE repository does not advertise the required package set"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = []string{"docker.engine"}
+		}
+		current := "service disabled or inactive"
+		if host.Docker.ServiceEnabled && host.Docker.ServiceActive {
+			current = "daemon does not respond to privileged docker info"
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: current, Risk: plan.Privileged, RequiresRoot: true, Current: current, Desired: "docker.service enabled, active, and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: policy, Script: "systemctl enable --now docker.service"}, Verification: "docker.service is enabled and docker info succeeds as root"}
+		if needEngine && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Blocked = "Enterprise Linux Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if len(cfg.Services) > 0 && !host.Docker.ComposeAvailable {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = append(dependencies, "docker.engine")
+		}
+		if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+			dependencies = append(dependencies, "docker.service")
+		}
+		change := plan.Change{ID: "docker.compose", Module: "docker", Summary: "install Docker Compose v2", Reason: "docker compose is unavailable", Risk: plan.Privileged, RequiresRoot: true, Current: "Compose v2 unavailable", Desired: "Docker Compose v2 available for managed services", Dependencies: dependencies, Action: plan.Action{Kind: "docker.install-compose", Resource: policy, Script: "dnf -y install docker-compose-plugin"}, Verification: "docker compose version succeeds"}
+		if host.Docker.RepositoryState == "managed" && host.Docker.ComposePackageAvailable != "docker-compose-plugin" {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed Docker CE repository does not advertise docker-compose-plugin"
+		} else if needEngine && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script = ""
+			change.Blocked = "Enterprise Linux Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+const enterpriseDockerNoConflictScript = `for package in moby-engine moby-cli docker containerd; do
+  if rpm -q "$package" >/dev/null 2>&1; then exit 1; fi
+done`
+
+func enterpriseDockerRepositorySafeScript(family, major string) string {
+	baseURL := "https://download.docker.com/linux/" + family + "/" + major + "/$basearch/stable"
+	keyURL := "https://download.docker.com/linux/" + family + "/gpg"
+	return `if test -e /etc/yum.repos.d/docker-ce-stable.repo; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/yum.repos.d/docker-ce-stable.repo
+  grep -Fqx ` + transport.ShellQuote("baseurl="+baseURL) + ` /etc/yum.repos.d/docker-ce-stable.repo
+  grep -Fqx 'gpgcheck=1' /etc/yum.repos.d/docker-ce-stable.repo
+  grep -Fqx ` + transport.ShellQuote("gpgkey="+keyURL) + ` /etc/yum.repos.d/docker-ce-stable.repo
+fi
+for candidate in /etc/yum.repos.d/*.repo; do
+  test -f "$candidate" || continue
+  test "$candidate" = /etc/yum.repos.d/docker-ce-stable.repo && continue
+  ! grep -Fq ` + transport.ShellQuote("download.docker.com/linux/"+family+"/") + ` "$candidate" 2>/dev/null
+done`
+}
+
+func enterpriseDockerInstallScript(family, major string) string {
+	baseURL := "https://download.docker.com/linux/" + family + "/" + major + "/$basearch/stable"
+	keyURL := "https://download.docker.com/linux/" + family + "/gpg"
+	return `tmp=$(mktemp /etc/yum.repos.d/.docker-ce-stable.repo.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[docker-ce-stable]
+name=Docker CE Stable
+baseurl=` + baseURL + `
+enabled=1
+gpgcheck=1
+gpgkey=` + keyURL + `
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/yum.repos.d/docker-ce-stable.repo
+trap - EXIT
+dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`
 }
 
 func planFedoraDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
@@ -127,6 +235,9 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 	if change.Action.Kind == "docker.install-engine" {
 		if change.Action.Resource == "fedora" {
 			return verify(ctx, tr, "rpm -q moby-engine docker-cli docker-compose >/dev/null")
+		}
+		if change.Action.Resource == "centos-9" || change.Action.Resource == "centos-10" || change.Action.Resource == "rhel-9" || change.Action.Resource == "rhel-10" {
+			return verify(ctx, tr, "rpm -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null")
 		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' docker.io | grep -qx installed")
 	}

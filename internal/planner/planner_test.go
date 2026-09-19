@@ -69,15 +69,11 @@ func TestFedoraRequiresDNF5RPMAndExplicitlySupportedRelease(t *testing.T) {
 	if _, err := p.Build(host, config.Defaults()); err == nil {
 		t.Fatal("Fedora was accepted with apt instead of dnf5/rpm")
 	}
-<<<<<<< HEAD
 	host.PackageManager, host.PackageDatabase = "dnf5", ""
 	if _, err := p.Build(host, config.Defaults()); err == nil {
 		t.Fatal("Fedora was accepted without rpm")
 	}
 	host.PackageDatabase, host.OS.VersionID = "rpm", "45"
-=======
-	host.PackageManager, host.OS.VersionID = "dnf5", "45"
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 	if _, err := p.Build(host, config.Defaults()); err == nil {
 		t.Fatal("Fedora 45 was accepted")
 	}

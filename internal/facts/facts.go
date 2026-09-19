@@ -56,17 +56,12 @@ func (o OS) Display() string {
 	return o.Name + " " + o.VersionID
 }
 
-<<<<<<< HEAD
 // IsSupported repeats release gates at fact-consumption boundaries so
-=======
-// IsSupported repeats Fedora's release gate at fact-consumption boundaries so
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 // hand-constructed or deserialized facts cannot accidentally broaden support.
 func (o OS) IsSupported() bool {
 	if !o.Supported {
 		return false
 	}
-<<<<<<< HEAD
 	switch o.ID {
 	case "fedora":
 		return o.VersionID == "43" || o.VersionID == "44"
@@ -77,9 +72,6 @@ func (o OS) IsSupported() bool {
 	default:
 		return true
 	}
-=======
-	return o.ID != "fedora" || o.VersionID == "43" || o.VersionID == "44"
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 }
 
 type SSH struct {
@@ -100,11 +92,8 @@ type Docker struct {
 	PackageSetComplete      bool   `json:"package_set_complete,omitempty"`
 	PackageSetAvailable     bool   `json:"package_set_available,omitempty"`
 	ConflictingPackages     bool   `json:"conflicting_packages,omitempty"`
-<<<<<<< HEAD
 	RepositoryState         string `json:"repository_state,omitempty"`
 	RepositoryPolicy        string `json:"repository_policy,omitempty"`
-=======
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 	ServiceEnabled          bool   `json:"service_enabled"`
 	ServiceActive           bool   `json:"service_active"`
 	Responsive              bool   `json:"responsive"`
@@ -139,16 +128,10 @@ type Tailscale struct {
 }
 
 type AutomaticUpdates struct {
-<<<<<<< HEAD
 	Installed         bool   `json:"installed"`
 	Enabled           bool   `json:"enabled"`
 	ConfigState       string `json:"config_state,omitempty"`
 	ConflictingTimers bool   `json:"conflicting_timers,omitempty"`
-=======
-	Installed   bool   `json:"installed"`
-	Enabled     bool   `json:"enabled"`
-	ConfigState string `json:"config_state,omitempty"`
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 }
 
 // SELinux records only the normalized enforcement state. It is relevant to

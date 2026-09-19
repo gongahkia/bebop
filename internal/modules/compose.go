@@ -37,7 +37,7 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 				if resource.Type != "path" || resource.SELinuxShared {
 					continue
 				}
-				changes = append(changes, plan.Change{ID: "service." + deployment.Name + ".selinux." + resource.Name, Module: "services", Summary: "review SELinux bind labeling", Reason: "Fedora SELinux is enforcing", Risk: plan.Privileged, RequiresRoot: true, Current: "persistent bind resource is not shared-labeled", Desired: "persistent bind resource uses Compose shared z SELinux labeling", Action: plan.Action{Kind: "service.selinux-blocked", Resource: deployment.Name}, Verification: "not applicable until the Compose source is corrected", Blocked: blocked})
+				changes = append(changes, plan.Change{ID: "service." + deployment.Name + ".selinux." + resource.Name, Module: "services", Summary: "review SELinux bind labeling", Reason: "SELinux is enforcing", Risk: plan.Privileged, RequiresRoot: true, Current: "persistent bind resource is not shared-labeled", Desired: "persistent bind resource uses Compose shared z SELinux labeling", Action: plan.Action{Kind: "service.selinux-blocked", Resource: deployment.Name}, Verification: "not applicable until the Compose source is corrected", Blocked: blocked})
 			}
 			continue
 		}
@@ -125,12 +125,12 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 }
 
 func serviceSELinuxBlocked(host facts.HostFacts, deployment services.Deployment) string {
-	if host.OS.ID != "fedora" || host.SELinux.Mode != "enforcing" || deployment.State == "absent" {
+	if host.SELinux.Mode != "enforcing" || deployment.State == "absent" {
 		return ""
 	}
 	for _, resource := range deployment.Data {
 		if resource.Type == "path" && !resource.SELinuxShared {
-			return "Fedora SELinux is enforcing: persistent bind resource " + resource.Name + " must use shared z SELinux labeling so the service and Bebop backup/restore helper can both access it"
+			return "SELinux is enforcing: persistent bind resource " + resource.Name + " must use shared z SELinux labeling so the service and Bebop backup/restore helper can both access it"
 		}
 	}
 	return ""

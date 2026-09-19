@@ -51,7 +51,7 @@ func TestFedoraVersionsAreExplicitlyGated(t *testing.T) {
 
 func TestUnrelatedDistributionRemainsUnsupported(t *testing.T) {
 	os, err := ParseOSRelease("ID=rocky\nVERSION_ID=9.5\n")
-	if err != nil || os.Supported || os.Family != "unsupported" {
+	if err != nil || os.Supported || os.Family != "enterprise-linux" {
 		t.Fatalf("unrelated distribution was accepted: %#v %v", os, err)
 	}
 }
