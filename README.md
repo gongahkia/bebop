@@ -1,16 +1,15 @@
 # `Bebop` 🚀
 
-Bebop is a deterministic, agentless home-server control plane for machines you
-already own. It keeps a local inventory, inspects Debian-family targets through
-your existing OpenSSH setup, compares each with a small declarative
-`bebop.toml`, presents an ordered plan, and applies only reviewed changes. It
-is a CLI, not a dashboard, app store, cloud service, or bespoke operating
-system.
+Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) control plane for machines you already own that lives entirely in the [CLI](https://github.com/resources/articles/what-is-a-cli). 
 
-M0–M8 supports Debian 12/13, Ubuntu 22.04/24.04, and Raspberry Pi OS based on
-Debian 12/13 as targets. The controller cross-builds for Linux, macOS, and
-Windows remote-SSH workflows; macOS and Windows targets are deliberately
-unsupported.
+## Features
+
+* Keeps a local inventory & inspects Debian-family targets through your existing OpenSSH setup
+* Compares each with a small declarative `bebop.toml`, presents an ordered plan and applies only reviewed changes
+* Currently supports the below distros
+    * Debian 12/13
+    * Ubuntu 22.04/24.04
+    * Raspberry Pi OS
 
 ## Quick start
 
