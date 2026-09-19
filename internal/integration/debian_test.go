@@ -139,6 +139,48 @@ func TestEnterpriseLinuxInspect(t *testing.T) {
 	}
 }
 
+// TestOpenSUSEInspect is read-only package/identity coverage. Containers do
+// not provide the systemd host contract required for mutation tests.
+func TestOpenSUSEInspect(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "bebop")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
+	for _, test := range []struct{ image, id string }{{"opensuse/leap:16.0", "opensuse-leap"}, {"opensuse/tumbleweed", "opensuse-tumbleweed"}} {
+		t.Run(test.image, func(t *testing.T) {
+			if !ensureIntegrationImage(t, test.image) {
+				return
+			}
+			command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", test.image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run disposable %s inspect: %v\n%s", test.image, err, output)
+			}
+			var result struct {
+				OS struct {
+					ID        string `json:"id"`
+					Supported bool   `json:"supported"`
+				} `json:"os"`
+				PackageManager  string `json:"package_manager"`
+				PackageDatabase string `json:"package_database"`
+			}
+			if err := json.Unmarshal(output, &result); err != nil {
+				t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+			}
+			if result.OS.ID != test.id || !result.OS.Supported || result.PackageManager != "zypper" || result.PackageDatabase != "rpm" {
+				t.Fatalf("unexpected openSUSE inspection: %#v", result)
+			}
+		})
+	}
+}
+
 // ensureIntegrationImage keeps optional read-only coverage useful when a
 // vendor retires a specifically reviewed image tag. A pull failure is an
 // unavailable external test prerequisite, not evidence that Bebop accepts an

@@ -26,6 +26,102 @@ func enterpriseLinuxHost(id, version string) facts.HostFacts {
 	return facts.HostFacts{OS: os, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
 }
 
+func openSUSEHost(id, version string) facts.HostFacts {
+	return facts.HostFacts{OS: facts.OS{ID: id, Family: "opensuse", VersionID: version, Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "zypper", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
+}
+
+func TestOpenSUSEDockerUsesOnlyReviewedDistributionPackages(t *testing.T) {
+	host := openSUSEHost("opensuse-leap", "16.0")
+	host.Docker.PackageSetAvailable = true
+	changes, _, err := (Docker{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) < 2 {
+		t.Fatalf("openSUSE Docker plan = %#v, %v", changes, err)
+	}
+	script := changes[0].Action.Script
+	for _, required := range []string{"zypper --non-interactive install docker docker-compose"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("openSUSE Docker script missing %q: %s", required, script)
+		}
+	}
+	for _, forbidden := range []string{"docker-ce-stable", "curl | sh", "dnf", "OBS", "--no-gpg-checks", "--gpg-auto-import-keys", "/var/lib/docker"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("openSUSE Docker script contains forbidden %q: %s", forbidden, script)
+		}
+	}
+	host.Docker.PackageSetAvailable = false
+	changes, _, err = (Docker{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unavailable official Docker source was not blocked: %#v, %v", changes, err)
+	}
+	host.Docker.PackageSetAvailable, host.Docker.ConflictingPackages = true, true
+	changes, _, err = (Docker{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) != 1 || changes[0].Blocked == "" || strings.Contains(changes[0].Action.Script, "remove") {
+		t.Fatalf("external Docker CE conflict was not safely blocked: %#v, %v", changes, err)
+	}
+}
+
+func TestOpenSUSEAutomaticUpdatesUseDistinctLeapAndTumbleweedPolicies(t *testing.T) {
+	leap := openSUSEHost("opensuse-leap", "16.0")
+	changes, _, err := (Updates{}).Plan(leap, config.Defaults())
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("Leap update plan = %#v, %v", changes, err)
+	}
+	for _, required := range []string{"zypper --non-interactive refresh", "zypper --non-interactive patch", "bebop-zypper-patch.timer"} {
+		if !strings.Contains(changes[0].Action.Script, required) {
+			t.Fatalf("Leap update policy missing %q: %s", required, changes[0].Action.Script)
+		}
+	}
+	if strings.Contains(changes[0].Action.Script, " dup") || strings.Contains(changes[0].Action.Script, "REBOOT_CMD=") {
+		t.Fatalf("Leap update policy used rolling semantics: %s", changes[0].Action.Script)
+	}
+	tumbleweed := openSUSEHost("opensuse-tumbleweed", "20260122")
+	tumbleweed.AutomaticUpdates.PackageAvailable = true
+	changes, _, err = (Updates{}).Plan(tumbleweed, config.Defaults())
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("Tumbleweed update plan = %#v, %v", changes, err)
+	}
+	for _, required := range []string{"zypper --non-interactive install os-update", "UPDATE_CMD=dup", "REBOOT_CMD=none", "os-update.timer"} {
+		if !strings.Contains(changes[0].Action.Script, required) {
+			t.Fatalf("Tumbleweed update policy missing %q: %s", required, changes[0].Action.Script)
+		}
+	}
+	if strings.Contains(changes[0].Action.Script, "--auto-agree-with-licenses") || strings.Contains(changes[0].Action.Script, "--gpg-auto-import-keys") {
+		t.Fatalf("Tumbleweed update policy weakened Zypper trust: %s", changes[0].Action.Script)
+	}
+	tumbleweed.AutomaticUpdates.ConfigState = "unmanaged"
+	changes, _, err = (Updates{}).Plan(tumbleweed, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unmanaged Tumbleweed override was not blocked: %#v, %v", changes, err)
+	}
+	tumbleweed.AutomaticUpdates.ConfigState = "absent"
+	tumbleweed.AutomaticUpdates.PackageAvailable = false
+	changes, _, err = (Updates{}).Plan(tumbleweed, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unavailable Tumbleweed os-update package was not blocked: %#v, %v", changes, err)
+	}
+}
+
+func TestOpenSUSETailscaleUsesReviewedRepositoryWithoutInstallScript(t *testing.T) {
+	for _, test := range []struct{ id, version, path string }{{"opensuse-leap", "16.0", "stable/opensuse/leap/16.0"}, {"opensuse-tumbleweed", "20260916", "stable/opensuse/tumbleweed"}} {
+		host := openSUSEHost(test.id, test.version)
+		changes, _, err := (Tailscale{}).Plan(host, config.Defaults())
+		if err != nil || len(changes) == 0 {
+			t.Fatalf("openSUSE Tailscale plan = %#v, %v", changes, err)
+		}
+		script := changes[0].Action.Script
+		for _, required := range []string{test.path, "gpgcheck=1", "repo_gpgcheck=1", "pkg_gpgcheck=1", "zypper --non-interactive install tailscale"} {
+			if !strings.Contains(script, required) {
+				t.Fatalf("openSUSE Tailscale script missing %q: %s", required, script)
+			}
+		}
+		for _, forbidden := range []string{"curl", "| sh", "tailscale up", "--gpg-auto-import-keys"} {
+			if strings.Contains(script, forbidden) {
+				t.Fatalf("openSUSE Tailscale script is unsafe: %s", script)
+			}
+		}
+	}
+}
+
 func TestEnterpriseLinuxDockerUsesReviewedCERepositoriesAndPackages(t *testing.T) {
 	tests := []struct {
 		name, id, version, policy, repo string

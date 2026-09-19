@@ -14,6 +14,7 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * Rocky Linux 9.8/10.2
     * AlmaLinux 9.8/10.2
     * CentOS Stream 9/10
+    * openSUSE Leap 16.0 and Tumbleweed
 
 ## Quick start
 
@@ -201,7 +202,7 @@ release that a later deployment update replaces. Use named volumes or deliberate
 absolute target paths for persistent data; `absent` never removes those volumes
 or paths.
 
-On an SELinux-enforcing Fedora or Enterprise Linux target, a declared persistent bind resource must use
+On any SELinux-enforcing supported target, a declared persistent bind resource must use
 Compose's shared `z` relabel option (for example `/srv/app:/data:rw,z`). This
 lets both the service and Bebop's constrained backup/restore helper access the
 same explicitly declared path. Bebop blocks private `Z` or unlabeled declared
@@ -218,6 +219,16 @@ Oracle Linux, Amazon Linux, or generic `ID_LIKE=rhel` derivatives. Every
 Compose invocation receives an empty environment and
 `--context default`; controller `DOCKER_HOST` and `DOCKER_CONTEXT` are not
 used.
+
+On openSUSE Leap 16.0 and Tumbleweed, Bebop requires `zypper` and `rpm` and
+installs only the distribution `docker` and `docker-compose` packages from an
+enabled official openSUSE repository. It does not add Docker CE or OBS
+repositories. Leap 15.6, Leap 16.1 beta, Slowroll, MicroOS, Leap Micro, and
+transactional/immutable openSUSE hosts are unsupported.
+
+For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
+`stable/opensuse/leap/16.0` or `stable/opensuse/tumbleweed` with GPG checking;
+it never uses Tailscale's install script.
 
 For a small secret boundary, set `secret_env_file` to a controller-local file
 relative to the config and reference `.bebop-secret.env` from the Compose
@@ -403,8 +414,9 @@ data_root = "/srv/bebop"
 ```
 
 It can create and permission the configured data root, enable Debian's
-`unattended-upgrades`, Fedora's `dnf5-plugin-automatic`, or Enterprise Linux's
-`dnf-automatic` timer, install the reviewed distribution Docker stack and start `docker.service`, install
+`unattended-upgrades`, Fedora's `dnf5-plugin-automatic`, Enterprise Linux's
+`dnf-automatic`, Leap's fixed patch timer, or Tumbleweed's `os-update` timer,
+install the reviewed distribution Docker stack and start `docker.service`, install
 Tailscale from an explicit official repository mapping, and add a conservative
 SSH drop-in. Tailscale authentication remains manual: after installation run
 `sudo tailscale up` on the target.

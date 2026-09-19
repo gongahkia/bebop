@@ -4,8 +4,8 @@ package inspect
 
 import (
 	"context"
-	"encoding/xml"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/url"
 	"path"
@@ -198,8 +198,8 @@ if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
 `)
-	repositories := mustProbe(ctx, tr, "zypper --non-interactive --xmlout lr -u 2>/dev/null || true")
-	packages := mustProbe(ctx, tr, "zypper --non-interactive --xmlout search --details docker docker-compose 2>/dev/null || true")
+	repositories := mustProbe(ctx, tr, "zypper --non-interactive --no-refresh --xmlout lr -u 2>/dev/null || true")
+	packages := mustProbe(ctx, tr, "zypper --non-interactive --no-refresh --xmlout search --details docker docker-compose 2>/dev/null || true")
 	available := openSUSEPackagesAvailable(repositories, packages, "docker", "docker-compose")
 	composePackage := ""
 	if openSUSEPackagesAvailable(repositories, packages, "docker-compose") {
@@ -210,13 +210,13 @@ if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sb
 
 type zypperRepositoryList struct {
 	Repositories []struct {
-		Alias          string `xml:"alias,attr"`
-		Name           string `xml:"name,attr"`
-		Enabled        string `xml:"enabled,attr"`
-		GPGCheck       string `xml:"gpgcheck,attr"`
-		RepoGPGCheck   string `xml:"repo_gpgcheck,attr"`
+		Alias           string `xml:"alias,attr"`
+		Name            string `xml:"name,attr"`
+		Enabled         string `xml:"enabled,attr"`
+		GPGCheck        string `xml:"gpgcheck,attr"`
+		RepoGPGCheck    string `xml:"repo_gpgcheck,attr"`
 		PackageGPGCheck string `xml:"pkg_gpgcheck,attr"`
-		URL            string `xml:"url"`
+		URL             string `xml:"url"`
 	} `xml:"repo-list>repo"`
 }
 
@@ -559,7 +559,15 @@ if systemctl is-enabled os-update.timer >/dev/null 2>&1 || systemctl is-active o
 		}
 	}
 	lines := probeLines(ctx, tr, script)
-	return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"], ConflictingTimers: lines["conflicting_timers"] == "yes"}
+	available := false
+	if packageManager == "zypper" {
+		if mode, ok := facts.OpenSUSEUpdatePolicy(os); ok && mode == "tumbleweed" {
+			repositories := mustProbe(ctx, tr, "zypper --non-interactive --no-refresh --xmlout lr -u 2>/dev/null || true")
+			packages := mustProbe(ctx, tr, "zypper --non-interactive --no-refresh --xmlout search --details os-update 2>/dev/null || true")
+			available = openSUSEPackagesAvailable(repositories, packages, "os-update")
+		}
+	}
+	return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: available, Enabled: lines["enabled"] == "yes", ConfigState: lines["config"], ConflictingTimers: lines["conflicting_timers"] == "yes"}
 }
 
 func inspectFirewall(ctx context.Context, tr transport.Transport) facts.Firewall {

@@ -29,15 +29,45 @@ func TestParseAPTUpdateSimulation(t *testing.T) {
 }
 
 func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
-	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript} {
-		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update", "dnf install", "dnf upgrade", "dnf update"} {
+	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript, enterpriseDNFRefreshScript, enterpriseDNFUpdateCheckScript, enterpriseDNFUpdateCountScript, zypperRefreshScript, zypperLeapPatchCheckScript, zypperTumbleweedUpdateCheckScript} {
+		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update", "dnf install", "dnf upgrade", "dnf update", "zypper --non-interactive install", "zypper --non-interactive patch ", "zypper --non-interactive up"} {
 			if containsToken(script, forbidden) {
 				t.Fatalf("update-awareness script contains forbidden mutation %q: %s", forbidden, script)
 			}
 		}
 	}
-	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") || !containsToken(dnfUpdateCheckScript, "dnf5 -y check-upgrade") || !containsToken(dnfRefreshScript, "dnf5 -y makecache") || !containsToken(enterpriseDNFUpdateCheckScript, "dnf -y check-update") || !containsToken(enterpriseDNFRefreshScript, "dnf -y makecache") {
+	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") || !containsToken(dnfUpdateCheckScript, "dnf5 -y check-upgrade") || !containsToken(dnfRefreshScript, "dnf5 -y makecache") || !containsToken(enterpriseDNFUpdateCheckScript, "dnf -y check-update") || !containsToken(enterpriseDNFRefreshScript, "dnf -y makecache") || !containsToken(zypperLeapPatchCheckScript, "zypper --non-interactive patch-check") || !containsToken(zypperTumbleweedUpdateCheckScript, "zypper --non-interactive --xmlout dup --dry-run") {
 		t.Fatalf("update-awareness scripts lost explicit semantics: %q / %q", aptUpdateSimulationScript, aptRefreshScript)
+	}
+}
+
+func TestZypperUpdateExitAndDistributionUpgradeSemantics(t *testing.T) {
+	for _, test := range []struct {
+		code                int
+		available, security bool
+		failed              bool
+	}{{0, false, false, false}, {100, true, false, false}, {101, true, true, false}, {1, false, false, true}} {
+		var err error
+		if test.code != 0 {
+			err = &transport.ExitError{Code: test.code}
+		}
+		available, security, operational := zypperPatchUpdatesAvailable(err)
+		if available != test.available || security != test.security || (operational != nil) != test.failed {
+			t.Fatalf("zypper exit %d = available=%t security=%t err=%v", test.code, available, security, operational)
+		}
+	}
+	for _, test := range []struct {
+		output    string
+		available bool
+	}{
+		{`<?xml version="1.0"?><stream><message type="info">Nothing to do.</message></stream>`, false},
+		{`<?xml version="1.0"?><stream><update-status><toinstall name="new-package"/></update-status></stream>`, true},
+		{`<?xml version="1.0"?><stream><update-status><toremove name="old-package"/></update-status></stream>`, true},
+	} {
+		available, err := ParseZypperDistributionUpgrade(test.output)
+		if err != nil || available != test.available {
+			t.Fatalf("Tumbleweed solver result = %t, %v", available, err)
+		}
 	}
 }
 

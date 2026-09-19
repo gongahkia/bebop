@@ -186,6 +186,9 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		} else if host.AutomaticUpdates.ConflictingTimers {
 			change.Action.Script = ""
 			change.Blocked = "a Bebop Leap patch timer is enabled or active; remove the conflicting policy manually before Tumbleweed management"
+		} else if !host.AutomaticUpdates.Installed && !host.AutomaticUpdates.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "enabled official openSUSE repositories do not advertise os-update; Bebop will not add another rolling-update scheduler"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}

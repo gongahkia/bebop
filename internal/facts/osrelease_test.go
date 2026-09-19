@@ -58,6 +58,12 @@ func TestOpenSUSEVersionsAndDerivativesAreExplicitlyGated(t *testing.T) {
 			}
 		})
 	}
+	for _, version := range []string{"15.6", "16.1", "17.0", ""} {
+		actual, err := ParseOSRelease("ID=opensuse-leap\nVERSION_ID=" + version + "\n")
+		if err != nil || actual.Supported || actual.IsSupported() {
+			t.Fatalf("unreviewed Leap %q was accepted: %#v, %v", version, actual, err)
+		}
+	}
 }
 
 func TestOpenSUSERequiresZypperAndRPM(t *testing.T) {

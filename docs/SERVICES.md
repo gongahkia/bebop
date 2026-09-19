@@ -124,7 +124,13 @@ blocked. Bebop does not install Docker from a convenience script, infer an RPM
 repository from `ID_LIKE`, remove Podman, or mix a detected Docker CE stack with
 Fedora Moby packages.
 
-On an SELinux-enforcing Fedora or Enterprise Linux target, every declared persistent bind resource
+On openSUSE Leap 16.0 and Tumbleweed, Bebop uses only the enabled official
+openSUSE repository path for the reviewed `docker` and `docker-compose`
+packages through noninteractive Zypper. It does not add Docker CE, Docker
+convenience-installer, or OBS repositories. Leap 16.1 beta and immutable or
+transactional openSUSE variants remain unsupported.
+
+On any SELinux-enforcing supported target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and
 no label are blocked because Bebop's network-isolated backup/restore helper
