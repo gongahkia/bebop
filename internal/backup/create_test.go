@@ -15,13 +15,13 @@ import (
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
-func TestFedoraSELinuxBindBackupUsesSharedLabelWithoutPrivilegeEscalation(t *testing.T) {
+func TestSELinuxBindBackupUsesSharedLabelWithoutPrivilegeEscalation(t *testing.T) {
 	script := backupArchiveScript(services.PersistentResource{Type: "path", Path: "/srv/data", SELinuxShared: true})
 	if !strings.Contains(script, "/srv/data:/data:ro,z") || !strings.Contains(script, "--network none") || !strings.Contains(script, "--read-only") {
-		t.Fatalf("Fedora SELinux backup helper is not constrained: %s", script)
+		t.Fatalf("SELinux backup helper is not constrained: %s", script)
 	}
 	if strings.Contains(script, "--privileged") || strings.Contains(script, "label=disable") {
-		t.Fatalf("Fedora SELinux backup helper weakened container isolation: %s", script)
+		t.Fatalf("SELinux backup helper weakened container isolation: %s", script)
 	}
 }
 

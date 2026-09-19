@@ -43,7 +43,6 @@ func ParseOSRelease(contents string) (OS, error) {
 		// Fedora is deliberately version-gated. A new Fedora release is not
 		// supported until its package/runtime contract has been reviewed.
 		os.Supported = os.VersionID == "43" || os.VersionID == "44"
-<<<<<<< HEAD
 	case "rocky":
 		os.Family = "enterprise-linux"
 		os.Supported = os.VersionID == "9.8" || os.VersionID == "10.2"
@@ -55,8 +54,6 @@ func ParseOSRelease(contents string) (OS, error) {
 		// CentOS Linux also used ID=centos. Require both the Stream name and
 		// the matching machine-readable EL platform identity.
 		os.Supported = (os.VersionID == "9" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el9") || (os.VersionID == "10" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el10")
-=======
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 	default:
 		os.Family = "unsupported"
 	}
@@ -78,11 +75,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "raspberry-pi-os"
 		case "fedora":
 			family = "fedora"
-<<<<<<< HEAD
 		case "rocky", "almalinux", "centos":
 			family = "enterprise-linux"
-=======
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 		}
 	}
 	switch family {
@@ -90,11 +84,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "apt", "dpkg", true
 	case "fedora":
 		return "dnf5", "rpm", true
-<<<<<<< HEAD
 	case "enterprise-linux":
 		return "dnf", "rpm", true
-=======
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.
@@ -105,7 +96,6 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 	}
 }
 
-<<<<<<< HEAD
 // EnterpriseLinuxMajor returns the reviewed ABI major for a supported EL
 // target. It intentionally does not infer support from ID_LIKE or VERSION_ID
 // prefixes; callers must first work with an explicitly supported OS fact.
@@ -154,11 +144,6 @@ func TailscaleRPMRepositoryPolicy(os OS) (family, major string, ok bool) {
 func PackageToolsAvailable(os OS, manager, database string) bool {
 	requiredManager, requiredDatabase, ok := RequiredPackageTools(os)
 	return ok && manager == requiredManager && database == requiredDatabase
-=======
-func PackageToolsAvailable(os OS, manager string) bool {
-	requiredManager, _, ok := RequiredPackageTools(os)
-	return ok && manager == requiredManager
->>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 }
 
 func NormalizeSELinuxMode(raw string) string {

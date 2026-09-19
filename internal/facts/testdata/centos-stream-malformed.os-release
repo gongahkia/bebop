@@ -1,0 +1,4 @@
+NAME="CentOS Stream"
+ID="centos"
+VERSION_ID="9"
+PLATFORM_ID="platform:el10"

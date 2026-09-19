@@ -112,12 +112,19 @@ namespace through normal Bebop operations.
 Services require Docker Engine and Docker Compose v2. The existing Docker
 module remains the only installer: on Debian-family targets it uses reviewed
 apt packages, and on Fedora 43/44 it uses the distribution `moby-engine`,
-`docker-cli`, and `docker-compose` packages through DNF5. Otherwise the service
-action is blocked. Bebop does not install Docker from a convenience script, add
-Docker's external CE repository, or mix a detected Docker CE stack with Fedora
-Moby packages.
+`docker-cli`, and `docker-compose` packages through DNF5. On exactly Rocky
+9.8/10.2, AlmaLinux 9.8/10.2, and CentOS Stream 9/10 it uses the fixed reviewed
+Docker CE RPM repository and `docker-ce`, `docker-ce-cli`, `containerd.io`,
+`docker-buildx-plugin`, and `docker-compose-plugin` through DNF. Rocky and
+Alma deliberately select the reviewed RHEL major repository; CentOS Stream
+selects the reviewed CentOS major repository. Before it is trusted, Bebop checks
+the fixed Docker signing-key fingerprint `060A 61C5 1B55 8A7F 742B 77AA C52F
+EB6B 621E 9F35`. Otherwise the service action is
+blocked. Bebop does not install Docker from a convenience script, infer an RPM
+repository from `ID_LIKE`, remove Podman, or mix a detected Docker CE stack with
+Fedora Moby packages.
 
-On an SELinux-enforcing Fedora target, every declared persistent bind resource
+On an SELinux-enforcing Fedora or Enterprise Linux target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and
 no label are blocked because Bebop's network-isolated backup/restore helper

@@ -1,0 +1,4 @@
+NAME="AlmaLinux"
+ID="almalinux"
+VERSION_ID="10.3"
+PLATFORM_ID="platform:el10"

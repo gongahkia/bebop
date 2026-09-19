@@ -240,8 +240,9 @@ the run is recorded as a warning/failing scheduler invocation rather than
 pretending maintenance fully succeeded.
 
 `update-check` never installs an upgrade. It uses `apt-get -s upgrade` on
-Debian-family targets and `dnf5 -y check-upgrade` on Fedora; optional
-`refresh_metadata = true` runs only `apt-get update` or `dnf5 -y makecache`
+Debian-family targets, `dnf5 -y check-upgrade` on Fedora, and `dnf -y
+check-update` on supported Enterprise Linux targets; optional
+`refresh_metadata = true` runs only `apt-get update`, `dnf5 -y makecache`, or `dnf -y makecache`
 under the existing target lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
 timer cannot wait for an SSH host-key/password or sudo password prompt.
 

@@ -123,8 +123,8 @@ derive unvalidated shell fragments.
 uses the normal service inspection rather than an alternate SSH client and
 reports classified DNS, timeout, refused, host-key, authentication, client,
 sudo, and command failures. Inspector facts now include an optional machine ID
-and the supported target's detected package-management capability (apt/dpkg or
-dnf5/rpm).
+and the supported target's detected package-management capability (apt/dpkg,
+dnf5/rpm for Fedora, or dnf/rpm for Enterprise Linux).
 
 `internal/artifact` defines a versioned JSON plan-file contract. Its ordered
 canonical body has no timestamps or maps and is SHA-256 hashed. It records the

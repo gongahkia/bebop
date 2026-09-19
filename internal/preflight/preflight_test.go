@@ -59,6 +59,27 @@ func TestFromFactsReportsFedoraDNF5RequirementsAccurately(t *testing.T) {
 	}
 }
 
+func TestFromFactsReportsEnterpriseLinuxDNFRequirementsAccurately(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "rocky", Name: "Rocky Linux", Family: "enterprise-linux", VersionID: "9.8", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	result := FromFacts(target.Target{Kind: target.Local}, host)
+	if !result.Ready {
+		t.Fatalf("Enterprise Linux dnf/rpm host was not ready: %#v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Code == "package_manager.dnf" && check.Status == Pass {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Enterprise Linux package-manager check did not identify dnf/rpm: %#v", result.Checks)
+	}
+	host.PackageManager = "dnf5"
+	if FromFacts(target.Target{Kind: target.Local}, host).Ready {
+		t.Fatal("Enterprise Linux without dnf/rpm was ready")
+	}
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)

@@ -108,3 +108,26 @@ func TestSELinuxEnforcementParticipatesInConvergenceFingerprint(t *testing.T) {
 		t.Fatalf("SELinux enforcement change did not stale convergence state: %v", err)
 	}
 }
+
+func TestEnterpriseLinuxRepositoryPolicyAndSELinuxParticipateDeterministically(t *testing.T) {
+	host := HostFacts{OS: OS{ID: "rocky", Name: "Rocky Linux", VersionID: "9.8", Family: "enterprise-linux", Supported: true}, PackageManager: "dnf", PackageDatabase: "rpm", Docker: Docker{RepositoryState: "absent", RepositoryPolicy: "rhel-9"}, SELinux: SELinux{Mode: "permissive"}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("identical Enterprise Linux facts are not deterministic: %q %q %v", first, second, err)
+	}
+	host.Docker.RepositoryState = "unmanaged"
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || first == third {
+		t.Fatalf("Docker repository ownership did not affect convergence: %v", err)
+	}
+	host.Docker.RepositoryState = "absent"
+	host.SELinux.Mode = "enforcing"
+	fourth, err := host.ConvergenceFingerprint()
+	if err != nil || first == fourth {
+		t.Fatalf("Enterprise Linux SELinux enforcement did not affect convergence: %v", err)
+	}
+}

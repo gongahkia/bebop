@@ -1,0 +1,4 @@
+NAME="Rocky Linux"
+ID="rocky"
+VERSION_ID="9.9"
+PLATFORM_ID="platform:el9"
