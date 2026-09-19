@@ -29,7 +29,7 @@ func ParseOSRelease(contents string) (OS, error) {
 		return OS{}, err
 	}
 	id := strings.ToLower(values["ID"])
-	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], VersionCodename: strings.ToLower(values["VERSION_CODENAME"])}
+	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], VersionCodename: strings.ToLower(values["VERSION_CODENAME"]), PlatformID: strings.ToLower(values["PLATFORM_ID"])}
 	switch id {
 	case "debian":
 		os.Family, os.Supported = "debian", true
@@ -43,6 +43,17 @@ func ParseOSRelease(contents string) (OS, error) {
 		// Fedora is deliberately version-gated. A new Fedora release is not
 		// supported until its package/runtime contract has been reviewed.
 		os.Supported = os.VersionID == "43" || os.VersionID == "44"
+	case "rocky":
+		os.Family = "enterprise-linux"
+		os.Supported = os.VersionID == "9.8" || os.VersionID == "10.2"
+	case "almalinux":
+		os.Family = "enterprise-linux"
+		os.Supported = os.VersionID == "9.8" || os.VersionID == "10.2"
+	case "centos":
+		os.Family = "enterprise-linux"
+		// CentOS Linux also used ID=centos. Require both the Stream name and
+		// the matching machine-readable EL platform identity.
+		os.Supported = (os.VersionID == "9" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el9") || (os.VersionID == "10" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el10")
 	default:
 		os.Family = "unsupported"
 	}
@@ -64,6 +75,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "raspberry-pi-os"
 		case "fedora":
 			family = "fedora"
+		case "rocky", "almalinux", "centos":
+			family = "enterprise-linux"
 		}
 	}
 	switch family {
@@ -71,6 +84,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "apt", "dpkg", true
 	case "fedora":
 		return "dnf5", "rpm", true
+	case "enterprise-linux":
+		return "dnf", "rpm", true
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.
@@ -79,6 +94,51 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		}
 		return "", "", false
 	}
+}
+
+// EnterpriseLinuxMajor returns the reviewed ABI major for a supported EL
+// target. It intentionally does not infer support from ID_LIKE or VERSION_ID
+// prefixes; callers must first work with an explicitly supported OS fact.
+func EnterpriseLinuxMajor(os OS) (string, bool) {
+	if !os.IsSupported() || os.Family != "enterprise-linux" {
+		return "", false
+	}
+	switch os.ID {
+	case "rocky", "almalinux":
+		if os.VersionID == "9.8" {
+			return "9", true
+		}
+		if os.VersionID == "10.2" {
+			return "10", true
+		}
+	case "centos":
+		if os.VersionID == "9" {
+			return "9", true
+		}
+		if os.VersionID == "10" {
+			return "10", true
+		}
+	}
+	return "", false
+}
+
+// DockerCERepositoryPolicy identifies the fixed Docker RPM repository family
+// selected by Bebop's explicit Enterprise Linux support policy.
+func DockerCERepositoryPolicy(os OS) (family, major string, ok bool) {
+	major, ok = EnterpriseLinuxMajor(os)
+	if !ok {
+		return "", "", false
+	}
+	if os.ID == "centos" {
+		return "centos", major, true
+	}
+	return "rhel", major, true
+}
+
+// TailscaleRPMRepositoryPolicy identifies the fixed Tailscale RPM repository
+// family for an explicitly supported Enterprise Linux target.
+func TailscaleRPMRepositoryPolicy(os OS) (family, major string, ok bool) {
+	return DockerCERepositoryPolicy(os)
 }
 
 func PackageToolsAvailable(os OS, manager, database string) bool {

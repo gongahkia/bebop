@@ -41,6 +41,7 @@ type OS struct {
 	Name            string `json:"name"`
 	VersionID       string `json:"version_id"`
 	VersionCodename string `json:"version_codename"`
+	PlatformID      string `json:"platform_id,omitempty"`
 	Family          string `json:"family"`
 	Supported       bool   `json:"supported"`
 }
@@ -55,13 +56,22 @@ func (o OS) Display() string {
 	return o.Name + " " + o.VersionID
 }
 
-// IsSupported repeats Fedora's release gate at fact-consumption boundaries so
+// IsSupported repeats release gates at fact-consumption boundaries so
 // hand-constructed or deserialized facts cannot accidentally broaden support.
 func (o OS) IsSupported() bool {
 	if !o.Supported {
 		return false
 	}
-	return o.ID != "fedora" || o.VersionID == "43" || o.VersionID == "44"
+	switch o.ID {
+	case "fedora":
+		return o.VersionID == "43" || o.VersionID == "44"
+	case "rocky", "almalinux":
+		return o.VersionID == "9.8" || o.VersionID == "10.2"
+	case "centos":
+		return (o.VersionID == "9" && o.PlatformID == "platform:el9" && o.Name == "CentOS Stream") || (o.VersionID == "10" && o.PlatformID == "platform:el10" && o.Name == "CentOS Stream")
+	default:
+		return true
+	}
 }
 
 type SSH struct {
@@ -82,6 +92,8 @@ type Docker struct {
 	PackageSetComplete      bool   `json:"package_set_complete,omitempty"`
 	PackageSetAvailable     bool   `json:"package_set_available,omitempty"`
 	ConflictingPackages     bool   `json:"conflicting_packages,omitempty"`
+	RepositoryState         string `json:"repository_state,omitempty"`
+	RepositoryPolicy        string `json:"repository_policy,omitempty"`
 	ServiceEnabled          bool   `json:"service_enabled"`
 	ServiceActive           bool   `json:"service_active"`
 	Responsive              bool   `json:"responsive"`
@@ -116,9 +128,10 @@ type Tailscale struct {
 }
 
 type AutomaticUpdates struct {
-	Installed   bool   `json:"installed"`
-	Enabled     bool   `json:"enabled"`
-	ConfigState string `json:"config_state,omitempty"`
+	Installed         bool   `json:"installed"`
+	Enabled           bool   `json:"enabled"`
+	ConfigState       string `json:"config_state,omitempty"`
+	ConflictingTimers bool   `json:"conflicting_timers,omitempty"`
 }
 
 // SELinux records only the normalized enforcement state. It is relevant to
