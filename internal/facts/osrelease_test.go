@@ -28,9 +28,12 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"opensuse-tumbleweed-20260122.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 		{"opensuse-tumbleweed-20260916.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 		{"arch.os-release", "arch", "arch", "Arch Linux", true},
+<<<<<<< HEAD
 		{"alpine-3.24.0.os-release", "alpine", "alpine", "Alpine Linux", true},
 		{"alpine-3.24.2.os-release", "alpine", "alpine", "Alpine Linux", true},
 		{"alpine-3.24.99.os-release", "alpine", "alpine", "Alpine Linux", true},
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -49,6 +52,7 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestAlpineIdentityArchitectureAndPackageToolsAreExplicitlyGated(t *testing.T) {
 	for _, fixture := range []string{"alpine-3.23.9.os-release", "alpine-3.25.0.os-release", "alpine-edge.os-release", "alpine-rc.os-release", "generic-alpine-like.os-release"} {
 		contents, err := os.ReadFile(filepath.Join("testdata", fixture))
@@ -70,6 +74,8 @@ func TestAlpineIdentityArchitectureAndPackageToolsAreExplicitlyGated(t *testing.
 	}
 }
 
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 func TestArchIdentityAndArchitectureAreExplicitlyGated(t *testing.T) {
 	for _, fixture := range []string{"arch-build-invalid.os-release", "manjaro.os-release", "endeavouros.os-release", "cachyos.os-release", "generic-arch-like.os-release"} {
 		t.Run(fixture, func(t *testing.T) {

@@ -148,6 +148,7 @@ func TestArchRequiresOfficialRollingX8664AndPacman(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestAlpineRequiresOpenRCAPKAndMutationTools(t *testing.T) {
 	p := planner.New()
 	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: facts.InitSystemOpenRC, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
@@ -176,6 +177,8 @@ func TestAlpineRequiresOpenRCAPKAndMutationTools(t *testing.T) {
 	}
 }
 
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

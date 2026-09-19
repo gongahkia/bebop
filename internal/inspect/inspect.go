@@ -139,8 +139,11 @@ func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.O
 		script = "if command -v zypper >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'zypper rpm'; fi"
 	case "pacman":
 		script = "if command -v pacman >/dev/null 2>&1; then printf pacman; fi"
+<<<<<<< HEAD
 	case "apk":
 		script = "if command -v apk >/dev/null 2>&1; then printf apk; fi"
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	}
 	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
 		// The probe itself tests the paired database executable before writing
@@ -199,6 +202,7 @@ if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=ye
 	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
+<<<<<<< HEAD
 func inspectOpenRCSSH(ctx context.Context, tr transport.Transport) facts.SSH {
 	lines := probeLines(ctx, tr, `
 if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -220,6 +224,9 @@ func inspectDocker(ctx context.Context, tr transport.Transport, init facts.InitS
 	if packageManager == "apk" && os.Family == "alpine" {
 		return inspectAlpineDocker(ctx, tr)
 	}
+=======
+func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Docker {
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchDocker(ctx, tr, systemd)
 	}
@@ -260,6 +267,7 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: policy, ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
 }
 
+<<<<<<< HEAD
 const alpineBebopRepositoriesPath = "/etc/apk/repositories.d/50-bebop.list"
 
 const alpineBebopRepositories = `# Managed by Bebop. Manual edits may be replaced.
@@ -285,6 +293,8 @@ if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sb
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: "alpine-v3.24", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-cli-compose", CgroupsAvailable: lines["cgroups"] == "yes", CgroupsServiceExists: lines["cgroups_service"] == "yes", CgroupsServiceEnabled: lines["cgroups_enabled"] == "yes", CgroupsServiceActive: lines["cgroups_active"] == "yes"}
 }
 
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 // inspectArchDocker queries only Pacman's existing sync database. In
 // particular, pacman -Si does not synchronize /var/lib/pacman/sync, so this
 // probe can determine whether the reviewed official packages are available
@@ -293,7 +303,11 @@ func inspectArchDocker(ctx context.Context, tr transport.Transport, systemd bool
 	lines := probeLines(ctx, tr, `
 if pacman -Q docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if pacman -Q docker docker-compose >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+<<<<<<< HEAD
 if LC_ALL=C pacman -Si docker 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }' && LC_ALL=C pacman -Si docker-compose 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker-compose" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+=======
+if pacman -Si --print-format '%r %n' docker 2>/dev/null | grep -Eq '^(core|extra|multilib) docker$' && pacman -Si --print-format '%r %n' docker-compose 2>/dev/null | grep -Eq '^(core|extra|multilib) docker-compose$'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
@@ -574,11 +588,15 @@ func aggregateRuntime(states []dockerContainerState) (string, string, int) {
 	return "starting", "starting", len(states)
 }
 
+<<<<<<< HEAD
 func inspectTailscale(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.Tailscale {
 	systemd := init == facts.InitSystemSystemd
 	if packageManager == "apk" && os.Family == "alpine" {
 		return inspectAlpineTailscale(ctx, tr)
 	}
+=======
+func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool, packageManager string, os facts.OS) facts.Tailscale {
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchTailscale(ctx, tr, systemd)
 	}
@@ -642,6 +660,7 @@ if test ! -e /etc/zypp/repos.d/tailscale.repo; then printf 'repository=absent\n'
 	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState, RepositoryState: lines["repository"]}
 }
 
+<<<<<<< HEAD
 func inspectAlpineTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
 	lines := probeLines(ctx, tr, `
 if apk info -e tailscale tailscale-openrc >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -657,6 +676,12 @@ func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd b
 	lines := probeLines(ctx, tr, `
 if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if LC_ALL=C pacman -Si tailscale 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "tailscale" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+=======
+func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
+	lines := probeLines(ctx, tr, `
+if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if pacman -Si --print-format '%r %n' tailscale 2>/dev/null | grep -Eq '^(core|extra|multilib) tailscale$'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\([^"]*\)".*/backend=\1/p' | head -n 1; fi
@@ -665,6 +690,7 @@ if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/nul
 	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: backend == "Running", BackendState: backend}
 }
 
+<<<<<<< HEAD
 func inspectUpdates(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.AutomaticUpdates {
 	if packageManager == "pacman" && os.Family == "arch" {
 		return facts.AutomaticUpdates{ConfigState: "unsupported"}
@@ -694,6 +720,12 @@ printf 'config=%s\n' "$config"
 if apk policy apk-cron 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi`)
 		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceExists: lines["service_exists"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
 	}
+=======
+func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string, os facts.OS) facts.AutomaticUpdates {
+	if packageManager == "pacman" && os.Family == "arch" {
+		return facts.AutomaticUpdates{ConfigState: "unsupported"}
+	}
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' && apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Update-Package-Lists "1";'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi

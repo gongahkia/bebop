@@ -173,6 +173,7 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
 		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Arch rolling system upgrades", Reason: "automatic Arch system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Arch upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "arch"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Arch rolling system upgrades; perform a reviewed full pacman -Syu manually and retry without automatic_updates"}}, nil, nil
 	}
+<<<<<<< HEAD
 	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
 		change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic updates", Reason: "apk-cron or OpenRC crond is not ready", Risk: plan.Privileged, RequiresRoot: true, Current: "Alpine automatic updates disabled or unmanaged", Desired: "apk-cron applies same-branch Alpine v3.24 updates through OpenRC crond without reboot", Preconditions: []plan.Precondition{{ID: "updates.alpine-repositories-safe", Description: "all active APK repositories remain official Alpine v3.24 main/community", Script: alpineAutomaticRepositoriesSafeScript}}, Action: plan.Action{Kind: "updates.enable-unattended", Resource: "alpine", Script: alpineUpdatesScript}, Verification: "apk-cron is package-owned, active repositories are v3.24-only, and crond is enabled and running"}
 		if host.AutomaticUpdates.ConfigState == "unmanaged" || host.Docker.RepositoryState == "unmanaged" {
@@ -189,6 +190,8 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		}
 		return []plan.Change{change}, nil, nil
 	}
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" || host.AutomaticUpdates.ConfigState == "managed"
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled && managed && !host.AutomaticUpdates.ConflictingTimers {
 		return nil, nil, nil

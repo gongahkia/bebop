@@ -123,6 +123,7 @@ func TestFromFactsReportsArchPacmanAndArchitectureRequirementsAccurately(t *test
 	}
 }
 
+<<<<<<< HEAD
 func TestFromFactsReportsAlpineOpenRCAPKAndLockToolsAccurately(t *testing.T) {
 	host := facts.HostFacts{OS: facts.OS{ID: "alpine", Name: "Alpine Linux", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: facts.InitSystemOpenRC, SudoAvailable: true, PrivilegeMode: "doas", RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
 	result := FromFacts(target.Target{Kind: target.Local}, host)
@@ -135,6 +136,8 @@ func TestFromFactsReportsAlpineOpenRCAPKAndLockToolsAccurately(t *testing.T) {
 	}
 }
 
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)

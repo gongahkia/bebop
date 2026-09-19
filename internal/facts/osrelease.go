@@ -67,11 +67,14 @@ func ParseOSRelease(contents string) (OS, error) {
 		// support signals.
 		os.Family = "arch"
 		os.Supported = os.BuildID == "rolling"
+<<<<<<< HEAD
 	case "alpine":
 		// Alpine 3.24 is a reviewed stable branch. Patch releases are normal
 		// maintenance, while a new minor branch requires fresh review.
 		os.Family = "alpine"
 		os.Supported = isAlpine324(os.VersionID)
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	default:
 		os.Family = "unsupported"
 	}
@@ -116,8 +119,11 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "enterprise-linux"
 		case "arch":
 			family = "arch"
+<<<<<<< HEAD
 		case "alpine":
 			family = "alpine"
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		}
 	}
 	switch family {
@@ -131,8 +137,11 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "zypper", "rpm", true
 	case "arch":
 		return "pacman", "", true
+<<<<<<< HEAD
 	case "alpine":
 		return "apk", "", true
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.

@@ -28,9 +28,12 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
 		return planArchDocker(host, cfg)
 	}
+<<<<<<< HEAD
 	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
 		return planAlpineDocker(host, cfg)
 	}
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
 	}
@@ -73,6 +76,7 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	return changes, nil, nil
 }
 
+<<<<<<< HEAD
 const alpineDockerRepositorySafeScript = `if test -e /etc/apk/repositories.d/50-bebop.list; then
   grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/apk/repositories.d/50-bebop.list
   grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
@@ -153,6 +157,10 @@ func planAlpineDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 
 const archDockerPackagesAvailableScript = `LC_ALL=C pacman -Si docker 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'
 LC_ALL=C pacman -Si docker-compose 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != "") { if (name == "docker-compose" && (repository == "core" || repository == "extra" || repository == "multilib")) count++; else invalid=1; name=""; repository="" } } $1 == "Repository" { finish(); repository=$2 } $1 == "Name" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'`
+=======
+const archDockerPackagesAvailableScript = `pacman -Si --print-format '%r %n' docker 2>/dev/null | grep -Eq '^(core|extra|multilib) docker$'
+pacman -Si --print-format '%r %n' docker-compose 2>/dev/null | grep -Eq '^(core|extra|multilib) docker-compose$'`
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 
 // planArchDocker intentionally uses Pacman's already-synchronized database.
 // It must not add -y or turn capability installation into a system upgrade:
@@ -454,9 +462,12 @@ func (Docker) Apply(ctx context.Context, tr transport.Transport, _ config.Config
 }
 func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "docker.install-engine" {
+<<<<<<< HEAD
 		if change.Action.Resource == "alpine" {
 			return verify(ctx, tr, "apk info -e docker docker-cli-compose docker-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
 		}
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q docker docker-compose >/dev/null")
 		}

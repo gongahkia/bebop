@@ -100,8 +100,11 @@ func (o OS) IsSupported() bool {
 		return true
 	case "arch":
 		return o.BuildID == "rolling"
+<<<<<<< HEAD
 	case "alpine":
 		return isAlpine324(o.VersionID)
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	default:
 		return true
 	}
@@ -115,6 +118,7 @@ func (o OS) SupportsArchitecture(architecture string) bool {
 	if !o.IsSupported() {
 		return false
 	}
+<<<<<<< HEAD
 	switch o.ID {
 	case "arch":
 		return architecture == "amd64"
@@ -139,6 +143,9 @@ func InitSystemAvailable(os OS, init InitSystem, legacySystemd bool) bool {
 		init = InitSystemSystemd
 	}
 	return init == os.RequiredInitSystem()
+=======
+	return o.ID != "arch" || architecture == "amd64"
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 }
 
 type SSH struct {

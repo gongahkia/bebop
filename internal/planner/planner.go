@@ -33,8 +33,13 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if !host.OS.SupportsArchitecture(host.Architecture) {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose a reviewed architecture: "+host.Architecture, nil)
 	}
+<<<<<<< HEAD
 	if !facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+string(host.OS.RequiredInitSystem())+" init system", nil)
+=======
+	if !host.Systemd {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	}
 	if host.MutationBlocked {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "target mutation is unsafe: "+host.MutationBlockReason, nil)
@@ -46,6 +51,7 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 			required += "/" + database
 		}
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+required+" package tools", nil)
+<<<<<<< HEAD
 	}
 	if host.OS.Family == "alpine" && (!host.RequiredTools.Flock || !host.RequiredTools.LSBLK || !host.RequiredTools.Findmnt) {
 		missing := make([]string, 0, 3)
@@ -59,6 +65,8 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 			missing = append(missing, "findmnt")
 		}
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "Alpine target is missing required mutation/storage tools: "+strings.Join(missing, ", ")+"; install them manually with apk add flock findmnt lsblk before Bebop apply", nil)
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	}
 	result := plan.Plan{Version: 1, Target: host.Target}
 	if !host.ArchitectureKnown {

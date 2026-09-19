@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"io"
 	"path"
+<<<<<<< HEAD
 	"sort"
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	"strconv"
 	"strings"
 	"time"
@@ -145,13 +148,22 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
+<<<<<<< HEAD
 	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" && host.PackageManager != "apk" {
+=======
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" && host.PackageManager != "pacman" {
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
 	if host.PackageManager == "pacman" {
+<<<<<<< HEAD
 		if checkErr := requireArchCheckupdates(ctx, tr); checkErr != nil {
 			return Outcome{Result: Failure, Details: details}, checkErr
+=======
+		if _, checkErr := tr.Run(ctx, transport.Request{Script: "command -v checkupdates >/dev/null 2>&1"}); checkErr != nil {
+			return Outcome{Result: Failure, Details: details}, errs.New(errs.UnsupportedOS, "Arch update awareness requires checkupdates from pacman-contrib; install it during a reviewed full pacman -Syu and retry", checkErr)
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		}
 	}
 	if job.RefreshMetadata {
@@ -172,8 +184,11 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 			refreshScript, packageManager = zypperRefreshScript, "Zypper"
 		} else if host.PackageManager == "pacman" {
 			refreshScript, packageManager = archCheckupdatesRefreshScript(host.DataRoot.Path), "Arch checkupdates"
+<<<<<<< HEAD
 		} else if host.PackageManager == "apk" {
 			refreshScript, packageManager = apkRefreshScript, "APK"
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		}
 		_, refreshErr := tr.Run(ctx, transport.Request{Script: refreshScript, Privileged: true})
 		releaseErr := lock.Release()
@@ -274,6 +289,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+<<<<<<< HEAD
 	if host.PackageManager == "apk" {
 		result, checkErr := tr.Run(ctx, transport.Request{Script: apkUpdateCheckScript})
 		if checkErr != nil {
@@ -284,6 +300,8 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
 		return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available apt package updates: %w", err)
@@ -340,6 +358,30 @@ func archCheckupdatesScript(dataRoot string) string {
 	return "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C CHECKUPDATES_DB=" + database + " checkupdates --nocolor --nosync"
 }
 
+func archCheckupdatesDatabase(dataRoot string) string {
+	if dataRoot == "" {
+		dataRoot = config.DefaultDataRoot
+	}
+	return path.Join(dataRoot, "checkupdates")
+}
+
+// archCheckupdatesRefreshScript lets checkupdates refresh only its own Pacman
+// database. It never touches /var/lib/pacman/sync, which avoids the partial
+// upgrade hazard of synchronizing Arch's live package database separately.
+func archCheckupdatesRefreshScript(dataRoot string) string {
+	database := transport.ShellQuote(archCheckupdatesDatabase(dataRoot))
+	return `install -d -o root -g root -m 0750 ` + database + `
+set +e
+env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C CHECKUPDATES_DB=` + database + ` checkupdates --nocolor >/dev/null
+status=$?
+if test "$status" -ne 0 && test "$status" -ne 2; then exit "$status"; fi`
+}
+
+func archCheckupdatesScript(dataRoot string) string {
+	database := transport.ShellQuote(archCheckupdatesDatabase(dataRoot))
+	return "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C CHECKUPDATES_DB=" + database + " checkupdates --nocolor --nosync"
+}
+
 func dnfUpdatesAvailable(err error) (bool, error) {
 	if err == nil {
 		return false, nil
@@ -362,6 +404,7 @@ func archUpdatesAvailable(err error) (bool, error) {
 	return false, err
 }
 
+<<<<<<< HEAD
 func parseAPKUpdates(output string) []string {
 	seen := map[string]bool{}
 	for _, line := range strings.Fields(output) {
@@ -377,6 +420,8 @@ func parseAPKUpdates(output string) []string {
 	return updates
 }
 
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 func zypperPatchUpdatesAvailable(err error) (available, security bool, operational error) {
 	if err == nil {
 		return false, false, nil

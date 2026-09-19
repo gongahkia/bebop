@@ -80,6 +80,7 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	return changes, warnings, nil
 }
 
+<<<<<<< HEAD
 func planAlpineTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, error) {
 	changes := []plan.Change{}
 	needPackage := !host.Tailscale.Installed || host.Tailscale.RepositoryState != "managed"
@@ -143,6 +144,9 @@ apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop
 apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list tailscale@bebop-community tailscale-openrc@bebop-community`
 
 const archTailscalePackageAvailableScript = "LC_ALL=C pacman -Si tailscale 2>/dev/null | awk -F ' *: *' 'function finish() { if (name != \"\") { if (name == \"tailscale\" && (repository == \"core\" || repository == \"extra\" || repository == \"multilib\")) count++; else invalid=1; name=\"\"; repository=\"\" } } $1 == \"Repository\" { finish(); repository=$2 } $1 == \"Name\" { name=$2 } END { finish(); exit !(count == 1 && !invalid) }'"
+=======
+const archTailscalePackageAvailableScript = "pacman -Si --print-format '%r %n' tailscale 2>/dev/null | grep -Eq '^(core|extra|multilib) tailscale$'"
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 
 func archTailscaleChange(host facts.HostFacts) plan.Change {
 	change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "official Arch tailscale package installed", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! pacman -Q tailscale >/dev/null 2>&1"}, {ID: "tailscale.arch-package-available", Description: "the existing Pacman sync database advertises the official tailscale package", Script: archTailscalePackageAvailableScript}}, Action: plan.Action{Kind: "tailscale.install", Resource: "arch", Script: "pacman -S --needed --noconfirm tailscale"}, Verification: "tailscale package is installed"}
@@ -312,9 +316,12 @@ func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Con
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
+<<<<<<< HEAD
 		if change.Action.Resource == "alpine" {
 			return verify(ctx, tr, "apk info -e tailscale tailscale-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
 		}
+=======
+>>>>>>> ed26a864879e487a10601aa9e94aa897a6c2a215
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q tailscale >/dev/null")
 		}
