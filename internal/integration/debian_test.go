@@ -112,6 +112,9 @@ func TestEnterpriseLinuxInspect(t *testing.T) {
 		{"quay.io/centos/centos:stream10", "centos", "10"},
 	} {
 		t.Run(test.image, func(t *testing.T) {
+			if !ensureIntegrationImage(t, test.image) {
+				return
+			}
 			command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", test.image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
 			output, err := command.CombinedOutput()
 			if err != nil {
@@ -134,4 +137,20 @@ func TestEnterpriseLinuxInspect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ensureIntegrationImage keeps optional read-only coverage useful when a
+// vendor retires a specifically reviewed image tag. A pull failure is an
+// unavailable external test prerequisite, not evidence that Bebop accepts an
+// unsupported OS; fixture and unit tests retain that release-policy coverage.
+func ensureIntegrationImage(t *testing.T, image string) bool {
+	t.Helper()
+	if err := exec.Command("docker", "image", "inspect", image).Run(); err == nil {
+		return true
+	}
+	if output, err := exec.Command("docker", "pull", image).CombinedOutput(); err != nil {
+		t.Skipf("external integration image %s unavailable: %v\n%s", image, err, output)
+		return false
+	}
+	return true
 }

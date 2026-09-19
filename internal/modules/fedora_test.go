@@ -75,6 +75,12 @@ func TestEnterpriseLinuxDockerConflictsAndUnmanagedRepositoryBlock(t *testing.T)
 	if err != nil || len(changes) != 1 || changes[0].ID != "docker.repository" || changes[0].Blocked == "" {
 		t.Fatalf("EL unmanaged Docker repository was accepted: %#v, %v", changes, err)
 	}
+	host.Docker.RepositoryState = "absent"
+	host.Docker.Installed, host.Docker.PackageSetComplete = true, true
+	changes, _, err = (Docker{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) == 0 || changes[0].ID != "docker.engine" || !strings.Contains(changes[0].Action.Script, "docker-ce-stable.repo") {
+		t.Fatalf("existing Docker CE without reviewed repository was accepted: %#v, %v", changes, err)
+	}
 }
 
 func TestEnterpriseLinuxAutomaticUpdatesUseDNFAutomatic(t *testing.T) {
@@ -125,6 +131,12 @@ func TestEnterpriseLinuxTailscaleMappingsAreReviewed(t *testing.T) {
 		if strings.Contains(script, "curl") || strings.Contains(script, "| sh") || strings.Contains(script, "tailscale up") {
 			t.Fatalf("EL Tailscale script is unsafe: %s", script)
 		}
+	}
+	host := enterpriseLinuxHost("rocky", "9.8")
+	host.Tailscale.Installed = true
+	changes, _, err := (Tailscale{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) == 0 || changes[0].ID != "tailscale.package" || !strings.Contains(changes[0].Action.Script, "stable/rhel/9/$basearch") {
+		t.Fatalf("existing EL Tailscale package without reviewed repository was accepted: %#v, %v", changes, err)
 	}
 }
 

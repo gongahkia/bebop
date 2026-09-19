@@ -32,7 +32,8 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	}
 	changes := []plan.Change{}
 	warnings := []plan.Warning{}
-	if !host.Tailscale.Installed {
+	needsRPMRepository := (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf")) && host.Tailscale.RepositoryState != "managed"
+	if !host.Tailscale.Installed || needsRPMRepository {
 		if host.PackageManager == "dnf5" {
 			change := fedoraTailscaleChange(host)
 			changes = append(changes, change)

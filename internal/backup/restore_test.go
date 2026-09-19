@@ -17,13 +17,13 @@ import (
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
-func TestFedoraSELinuxBindRestoreUsesSharedLabelWithoutPrivilegeEscalation(t *testing.T) {
+func TestSELinuxBindRestoreUsesSharedLabelWithoutPrivilegeEscalation(t *testing.T) {
 	script := restoreArchiveScript(services.PersistentResource{Type: "path", Path: "/srv/data", SELinuxShared: true})
 	if !strings.Contains(script, "/srv/data:/data:z") || !strings.Contains(script, "--network none") || !strings.Contains(script, "--read-only") {
-		t.Fatalf("Fedora SELinux restore helper is not constrained: %s", script)
+		t.Fatalf("SELinux restore helper is not constrained: %s", script)
 	}
 	if strings.Contains(script, "--privileged") || strings.Contains(script, "label=disable") {
-		t.Fatalf("Fedora SELinux restore helper weakened container isolation: %s", script)
+		t.Fatalf("SELinux restore helper weakened container isolation: %s", script)
 	}
 }
 

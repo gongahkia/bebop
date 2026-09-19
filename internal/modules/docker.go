@@ -75,9 +75,18 @@ func planEnterpriseLinuxDocker(host facts.HostFacts, cfg config.Config) ([]plan.
 	}
 	policy := family + "-" + major
 	changes := []plan.Change{}
-	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	// A complete RPM set without Bebop's reviewed repository is not a trusted
+	// converged Docker CE state: the same action establishes the fixed source
+	// before reconciling the fixed package set.
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete || host.Docker.RepositoryState != "managed"
 	if needEngine {
-		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Docker CE package stack is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker CE engine, CLI, containerd, Buildx, or Compose plugin is not installed", Desired: "Docker CE, CLI, containerd, Buildx, and Compose plugin installed from the reviewed repository", Preconditions: []plan.Precondition{{ID: "docker.no-runtime-conflict", Description: "incompatible distribution Docker/runtime packages are still absent", Script: enterpriseDockerNoConflictScript}, {ID: "docker.repository-safe", Description: "the Docker CE repository is absent or Bebop-managed", Script: enterpriseDockerRepositorySafeScript(family, major)}}, Action: plan.Action{Kind: "docker.install-engine", Resource: policy, Script: enterpriseDockerInstallScript(family, major)}, Verification: "reviewed Docker CE packages are installed"}
+		reason := "the reviewed Docker CE package stack is incomplete"
+		current := "Docker CE engine, CLI, containerd, Buildx, or Compose plugin is not installed"
+		if host.Docker.PackageSetComplete && host.Docker.RepositoryState != "managed" {
+			reason = "the reviewed Docker CE repository is absent"
+			current = "Docker CE packages are present without Bebop's reviewed repository"
+		}
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: reason, Risk: plan.Privileged, RequiresRoot: true, Current: current, Desired: "Docker CE, CLI, containerd, Buildx, and Compose plugin installed from the reviewed repository", Preconditions: []plan.Precondition{{ID: "docker.no-runtime-conflict", Description: "incompatible distribution Docker/runtime packages are still absent", Script: enterpriseDockerNoConflictScript}, {ID: "docker.repository-safe", Description: "the Docker CE repository is absent or Bebop-managed", Script: enterpriseDockerRepositorySafeScript(family, major)}}, Action: plan.Action{Kind: "docker.install-engine", Resource: policy, Script: enterpriseDockerInstallScript(family, major)}, Verification: "reviewed Docker CE packages are installed"}
 		if host.Docker.RepositoryState == "managed" && !host.Docker.PackageSetAvailable {
 			change.Action.Script = ""
 			change.Blocked = "the reviewed Docker CE repository does not advertise the required package set"
