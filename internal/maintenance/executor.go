@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,8 +140,8 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
-	if host.PackageManager != "apt" {
-		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness supports Debian-family apt targets only", nil)
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" {
+		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
 	if job.RefreshMetadata {
@@ -151,15 +153,39 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		if lockErr != nil {
 			return Outcome{Result: Failure}, errs.New(errs.ApplyLocked, "acquire target apply lock for update metadata refresh", lockErr)
 		}
-		_, refreshErr := tr.Run(ctx, transport.Request{Script: aptRefreshScript, Privileged: true})
+		refreshScript, packageManager := aptRefreshScript, "apt"
+		if host.PackageManager == "dnf5" {
+			refreshScript, packageManager = dnfRefreshScript, "DNF5"
+		}
+		_, refreshErr := tr.Run(ctx, transport.Request{Script: refreshScript, Privileged: true})
 		releaseErr := lock.Release()
 		if refreshErr != nil {
-			return Outcome{Result: Failure, Details: details}, fmt.Errorf("refresh apt package metadata: %w", refreshErr)
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("refresh %s package metadata: %w", packageManager, refreshErr)
 		}
 		if releaseErr != nil {
 			return Outcome{Result: Failure, Details: details}, fmt.Errorf("release target apply lock after package metadata refresh: %w", releaseErr)
 		}
 		details.MetadataRefreshed = true
+	}
+	if host.PackageManager == "dnf5" {
+		_, checkErr := tr.Run(ctx, transport.Request{Script: dnfUpdateCheckScript})
+		available, operationalErr := dnfUpdatesAvailable(checkErr)
+		if operationalErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available DNF5 package updates: %w", operationalErr)
+		}
+		if available {
+			// DNF5 defines 100 as the non-error "updates available" result.
+			count, countErr := tr.Run(ctx, transport.Request{Script: dnfUpdateCountScript})
+			if countErr != nil {
+				return Outcome{Result: Failure, Details: details}, fmt.Errorf("count available DNF5 package updates: %w", countErr)
+			}
+			details.UpdatesAvailable, _ = strconv.Atoi(strings.TrimSpace(count.Stdout))
+			if details.UpdatesAvailable < 1 {
+				return Outcome{Result: Failure, Details: details}, fmt.Errorf("count available DNF5 package updates: check-upgrade reported updates but deterministic query returned %q", strings.TrimSpace(count.Stdout))
+			}
+		}
+		details.SecurityClassification = "unknown"
+		return Outcome{Result: Success, Details: details}, nil
 	}
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
@@ -174,6 +200,20 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 
 const aptRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root DEBIAN_FRONTEND=noninteractive apt-get update"
 const aptUpdateSimulationScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C apt-get -s -o Debug::NoLocking=true upgrade"
+const dnfRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 -y makecache"
+const dnfUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 -y check-upgrade"
+const dnfUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf5 repoquery --upgrades --queryformat '%{name}\\n' | LC_ALL=C sort -u | sed '/^$/d' | wc -l"
+
+func dnfUpdatesAvailable(err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	var exit *transport.ExitError
+	if errors.As(err, &exit) && exit.Code == 100 {
+		return true, nil
+	}
+	return false, err
+}
 
 type APTUpdateSummary struct {
 	Total                  int

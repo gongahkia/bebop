@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
@@ -41,6 +42,27 @@ func TestInspectStorageNormalizesDevicesMountsAndFallback(t *testing.T) {
 	}
 }
 
+func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
+	tr := packageProbeTransport{}
+	manager, database := inspectPackageTools(context.Background(), tr, facts.OS{ID: "fedora", Family: "fedora", VersionID: "43", Supported: true})
+	if manager != "dnf5" || database != "rpm" {
+		t.Fatalf("Fedora package facts = %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "fedora", Family: "fedora", VersionID: "43", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("Fedora without dnf5/rpm was accepted as %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = false
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "debian", Family: "debian", VersionID: "12", Supported: true})
+	if manager != "apt" || database != "dpkg" {
+		t.Fatalf("Debian package facts = %q/%q", manager, database)
+	}
+	if mode := inspectSELinux(context.Background(), tr).Mode; mode != "enforcing" {
+		t.Fatalf("SELinux state was not normalized: %q", mode)
+	}
+}
+
 type storageTransport struct{ output string }
 
 func (s storageTransport) Run(context.Context, transport.Request) (transport.Result, error) {
@@ -61,3 +83,24 @@ func (s scriptedStorageTransport) Run(_ context.Context, request transport.Reque
 func (scriptedStorageTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
 func (scriptedStorageTransport) FileExists(context.Context, string) (bool, error) { return false, nil }
 func (scriptedStorageTransport) Description() string                              { return "scripted-storage-fake" }
+
+type packageProbeTransport struct{ missingDNFOrRPM bool }
+
+func (tr packageProbeTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
+	switch {
+	case strings.Contains(request.Script, "command -v dnf5"):
+		if tr.missingDNFOrRPM {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "dnf5 rpm"}, nil
+	case strings.Contains(request.Script, "command -v apt-get"):
+		return transport.Result{Stdout: "apt dpkg"}, nil
+	case strings.Contains(request.Script, "getenforce"):
+		return transport.Result{Stdout: "Enforcing"}, nil
+	default:
+		return transport.Result{}, nil
+	}
+}
+func (packageProbeTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
+func (packageProbeTransport) FileExists(context.Context, string) (bool, error) { return false, nil }
+func (packageProbeTransport) Description() string                              { return "package-probe" }

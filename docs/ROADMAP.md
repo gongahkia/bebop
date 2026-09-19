@@ -91,16 +91,16 @@
 
 ## Implemented in M0/M1
 
-- Deterministic local/OpenSSH transport, normalized Debian-family facts, strict
+- Deterministic local/OpenSSH transport, normalized supported-Linux facts, strict
   TOML, immutable structured plans, apply verification, and no-op tests.
-- Debian, Ubuntu, and Raspberry Pi OS target recognition.
+- Debian, Ubuntu, Raspberry Pi OS, and Fedora 43/44 target recognition.
 - Base filesystem, automatic updates, Docker, Tailscale package/service, and
   conservative SSH hardening.
 - Read-only diagnostics/status, JSON, CI, and opt-in disposable Debian inspect.
 
 ## Deliberately later
 
-- Fedora and Arch targets; macOS targets through a Linux VM; Windows targets
+- Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
 - Broader Linux distribution support, then macOS/Windows target adapters.

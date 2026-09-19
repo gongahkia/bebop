@@ -26,14 +26,15 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if err := config.Validate(cfg); err != nil {
 		return plan.Plan{}, err
 	}
-	if !host.OS.Supported {
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, fmt.Sprintf("unsupported target OS %q; Bebop M0 supports Debian, Ubuntu, and Raspberry Pi OS", host.OS.ID), nil)
+	if !host.OS.IsSupported() {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, fmt.Sprintf("unsupported target OS %q; Bebop supports Debian, Ubuntu, Raspberry Pi OS, and Fedora 43/44", host.OS.ID), nil)
 	}
 	if !host.Systemd {
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported Debian-family target does not expose systemd; Bebop M0 requires systemd", nil)
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
 	}
-	if host.PackageManager != "apt" {
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported Debian-family target does not expose the required apt/dpkg package tools", nil)
+	if !facts.PackageToolsAvailable(host.OS, host.PackageManager) {
+		manager, database, _ := facts.RequiredPackageTools(host.OS)
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+manager+"/"+database+" package tools", nil)
 	}
 	result := plan.Plan{Version: 1, Target: host.Target}
 	if !host.ArchitectureKnown {

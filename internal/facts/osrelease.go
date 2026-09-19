@@ -38,10 +38,61 @@ func ParseOSRelease(contents string) (OS, error) {
 	case "raspbian":
 		os.Family, os.Supported = "raspberry-pi-os", true
 		os.Name = "Raspberry Pi OS"
+	case "fedora":
+		os.Family = "fedora"
+		// Fedora is deliberately version-gated. A new Fedora release is not
+		// supported until its package/runtime contract has been reviewed.
+		os.Supported = os.VersionID == "43" || os.VersionID == "44"
 	default:
 		os.Family = "unsupported"
 	}
 	return os, nil
+}
+
+// RequiredPackageTools is the small platform capability model used by
+// inspection and planning. A manager value is reported only when its paired
+// installed-package database tool is also available.
+func RequiredPackageTools(os OS) (manager, database string, ok bool) {
+	family := os.Family
+	if family == "" {
+		switch os.ID {
+		case "debian":
+			family = "debian"
+		case "ubuntu":
+			family = "ubuntu"
+		case "raspbian":
+			family = "raspberry-pi-os"
+		case "fedora":
+			family = "fedora"
+		}
+	}
+	switch family {
+	case "debian", "ubuntu", "raspberry-pi-os":
+		return "apt", "dpkg", true
+	case "fedora":
+		return "dnf5", "rpm", true
+	default:
+		// Hand-constructed facts in callers predating the family field retain
+		// the original apt contract. Real inspection always supplies an OS ID.
+		if os.Supported && os.ID == "" {
+			return "apt", "dpkg", true
+		}
+		return "", "", false
+	}
+}
+
+func PackageToolsAvailable(os OS, manager string) bool {
+	requiredManager, _, ok := RequiredPackageTools(os)
+	return ok && manager == requiredManager
+}
+
+func NormalizeSELinuxMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "enforcing", "permissive", "disabled":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return "unavailable"
+	}
 }
 
 func NormalizeArchitecture(raw string) (string, bool) {

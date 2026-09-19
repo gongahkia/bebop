@@ -110,6 +110,37 @@ source = "services/two"
 	}
 }
 
+func TestPersistentBindRetainsSharedSELinuxOption(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "services/hello/compose.yaml", `services:
+  hello:
+    image: alpine:3.20
+    volumes:
+      - type: bind
+        source: /srv/data
+        target: /data
+        bind:
+          selinux: z
+`)
+	writeFixture(t, root, "bebop.toml", `version = 1
+[services.hello]
+type = "compose"
+source = "services/hello"
+[[services.hello.data]]
+name = "data"
+type = "path"
+path = "/srv/data"
+`)
+	cfg, err := config.LoadFile(filepath.Join(root, "bebop.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := ResolveOne(cfg, "hello")
+	if err != nil || len(deployment.Data) != 1 || !deployment.Data[0].SELinuxShared {
+		t.Fatalf("long Compose SELinux shared option was lost: %#v %v", deployment.Data, err)
+	}
+}
+
 func TestResolveAllRejectsUnsupportedComposeFeatures(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, "services/hello/compose.yaml", `services:

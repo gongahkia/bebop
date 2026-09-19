@@ -99,9 +99,9 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	if current.Kind == target.SSH {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "ssh.authenticated", Message: "SSH authentication succeeded using the controller's OpenSSH configuration"})
 	}
-	result.SupportedOS = host.OS.Supported
-	if host.OS.Supported {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "os.supported", Message: "supported Debian-family OS: " + host.OS.Display()})
+	result.SupportedOS = host.OS.IsSupported()
+	if result.SupportedOS {
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "os.supported", Message: "supported OS: " + host.OS.Display()})
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "os.unsupported", Message: "unsupported target OS: " + host.OS.Display()})
 	}
@@ -112,10 +112,15 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "architecture.unsupported", Message: "unsupported or unknown target architecture: " + host.Architecture})
 	}
 	result.PackageManager = host.PackageManager
-	if host.PackageManager == "apt" {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "package_manager.apt", Message: "apt and dpkg package tools available"})
+	if facts.PackageToolsAvailable(host.OS, host.PackageManager) {
+		manager, database, _ := facts.RequiredPackageTools(host.OS)
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "package_manager." + manager, Message: manager + " and " + database + " package tools available"})
 	} else {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "package_manager.unsupported", Message: "required apt/dpkg package tools are unavailable"})
+		manager, database, known := facts.RequiredPackageTools(host.OS)
+		if !known {
+			manager, database = "reviewed", "package"
+		}
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "package_manager.unsupported", Message: "required " + manager + "/" + database + " package tools are unavailable"})
 	}
 	result.Systemd = host.Systemd
 	if host.Systemd {
@@ -160,7 +165,7 @@ func appendOperationalChecks(result *Result, host facts.HostFacts) {
 		} else if host.Docker.ComposePackageAvailable != "" {
 			result.Checks = append(result.Checks, Check{Status: Warn, Code: "docker.compose_missing", Message: "Docker Compose v2 missing; Bebop can install " + host.Docker.ComposePackageAvailable + " during a reviewed service plan"})
 		} else {
-			result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.compose_missing", Message: "Docker Compose v2 missing and no reviewed package is advertised by apt"})
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.compose_missing", Message: "Docker Compose v2 missing and no reviewed package is advertised by the target package manager"})
 		}
 		for _, service := range host.Services {
 			if service.DesiredState == "running" && service.DeploymentPresent && service.Runtime == "running" && (service.Health == "healthy" || service.Health == "no-healthcheck") {

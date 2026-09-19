@@ -72,6 +72,14 @@ func TestValidateObservedRejectsRelevantDriftConfigAndWrongHost(t *testing.T) {
 	}
 }
 
+func TestValidateObservedRejectsSELinuxPolicyStateDrift(t *testing.T) {
+	saved, host, desired, planner := fixture(t)
+	host.SELinux.Mode = "enforcing"
+	if _, err := ValidateObserved(saved, desired, host, planner); !hasCode(err, errs.PlanStale) {
+		t.Fatalf("expected SELinux state to stale saved plan, got %v", err)
+	}
+}
+
 func TestValidateObservedNeverTreatsSelfHashedArtifactScriptsAsAuthority(t *testing.T) {
 	saved, host, desired, planner := fixture(t)
 	saved.Plan.Changes[0].Action.Script = "arbitrary command"

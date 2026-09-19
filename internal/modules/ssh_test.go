@@ -43,7 +43,7 @@ func TestPlannedScriptsPassPOSIXShellSyntax(t *testing.T) {
 	host := facts.HostFacts{EffectiveUser: "pi", SudoAvailable: true, OS: facts.OS{ID: "debian", VersionID: "12", VersionCodename: "bookworm"}, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}, DataRoot: facts.Directory{Path: "/srv/bebop's"}}
 	cfg := config.Defaults()
 	cfg.Storage.DataRoot = host.DataRoot.Path
-	scripts := []string{updatesScript, tailscaleInstallScript("debian", "bookworm")}
+	scripts := []string{updatesScript, tailscaleInstallScript("debian", "bookworm"), fedoraUpdatesScript, fedoraTailscaleInstallScript, fedoraDockerNoConflictScript}
 	for _, capability := range []interface {
 		Plan(facts.HostFacts, config.Config) ([]plan.Change, []plan.Warning, error)
 	}{Base{}, Docker{}, SSH{}} {

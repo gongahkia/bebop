@@ -37,6 +37,27 @@ func TestFromFactsSeparatesReadinessFailuresFromOperationalWarnings(t *testing.T
 	}
 }
 
+func TestFromFactsReportsFedoraDNF5RequirementsAccurately(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "fedora", Family: "fedora", VersionID: "44", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf5", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	result := FromFacts(target.Target{Kind: target.Local}, host)
+	if !result.Ready {
+		t.Fatalf("Fedora 44 dnf5/rpm host was not ready: %#v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Code == "package_manager.dnf5" && check.Status == Pass {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Fedora package-manager check did not identify dnf5/rpm: %#v", result.Checks)
+	}
+	host.PackageManager = "unknown"
+	if FromFacts(target.Target{Kind: target.Local}, host).Ready {
+		t.Fatal("Fedora without dnf5/rpm was ready")
+	}
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)

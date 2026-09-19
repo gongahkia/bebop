@@ -59,6 +59,22 @@ func TestPlanIsCanonicalAndIdempotentAfterTransitions(t *testing.T) {
 	}
 }
 
+func TestFedoraRequiresDNF5RPMAndExplicitlySupportedRelease(t *testing.T) {
+	p := planner.New()
+	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "fedora", Family: "fedora", VersionID: "43", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf5", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	if _, err := p.Build(host, config.Defaults()); err != nil {
+		t.Fatalf("Fedora 43 with dnf5/rpm was rejected: %v", err)
+	}
+	host.PackageManager = "apt"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Fedora was accepted with apt instead of dnf5/rpm")
+	}
+	host.PackageManager, host.OS.VersionID = "dnf5", "45"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Fedora 45 was accepted")
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

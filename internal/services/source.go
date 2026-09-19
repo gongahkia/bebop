@@ -89,6 +89,7 @@ type PersistentResource struct {
 	External      bool   `json:"external,omitempty"`
 	Path          string `json:"path,omitempty"`
 	Storage       string `json:"storage,omitempty"`
+	SELinuxShared bool   `json:"selinux_shared,omitempty"`
 }
 
 type composeVolume struct {
@@ -100,8 +101,13 @@ type composeVolume struct {
 type composeValidation struct {
 	Ports   []Port
 	Volumes map[string]composeVolume
-	Paths   map[string]bool
+	Paths   map[string]bindMount
 }
+
+// bindMount retains the one mount option Bebop needs for target safety. It is
+// not a general Compose model: only shared SELinux relabeling matters because
+// a declared data path is mounted by both the service and the backup helper.
+type bindMount struct{ SELinuxShared bool }
 
 // Input is the persistent, non-secret portion of a resolved deployment. A
 // keyed HMAC detects secret rotation without exposing a low-entropy digest.
@@ -614,7 +620,7 @@ func validateCompose(filename string, files []File, secretConfigured bool, proje
 	}
 	ports := make([]Port, 0)
 	usedVolumes := map[string]bool{}
-	usedPaths := map[string]bool{}
+	usedPaths := map[string]bindMount{}
 	for index := 0; index < len(servicesNode.Content); index += 2 {
 		serviceName, definition := servicesNode.Content[index], servicesNode.Content[index+1]
 		if serviceName.Kind != yaml.ScalarNode || definition.Kind != yaml.MappingNode {
@@ -639,8 +645,16 @@ func validateCompose(filename string, files []File, secretConfigured bool, proje
 		for _, key := range volumeKeys {
 			usedVolumes[key] = true
 		}
-		for _, bindPath := range bindPaths {
-			usedPaths[bindPath] = true
+		for bindPath, bind := range bindPaths {
+			previous, found := usedPaths[bindPath]
+			if !found {
+				usedPaths[bindPath] = bind
+			} else {
+				// Every use of a declared path must request shared labeling; a
+				// second plain/private mount must not weaken the safety result.
+				previous.SELinuxShared = previous.SELinuxShared && bind.SELinuxShared
+				usedPaths[bindPath] = previous
+			}
 		}
 		parsed, err := parsePorts(mappingValue(definition, "ports"))
 		if err != nil {
@@ -697,7 +711,7 @@ func parseComposeVolumes(node *yaml.Node, project string, used map[string]bool) 
 
 var volumeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-func resolvePersistentResources(storage config.Storage, declared []config.DataResource, volumes map[string]composeVolume, paths map[string]bool) ([]PersistentResource, error) {
+func resolvePersistentResources(storage config.Storage, declared []config.DataResource, volumes map[string]composeVolume, paths map[string]bindMount) ([]PersistentResource, error) {
 	resources := make([]PersistentResource, 0, len(declared))
 	for _, resource := range declared {
 		resolvedPath := resource.Path
@@ -718,8 +732,10 @@ func resolvePersistentResources(storage config.Storage, declared []config.DataRe
 				return nil, fmt.Errorf("declared volume key %q is not mounted by the Compose service", resource.Volume)
 			}
 			resolved.RuntimeVolume, resolved.External = volume.Runtime, volume.External
-		} else if !paths[resolvedPath] {
+		} else if bind, found := paths[resolvedPath]; !found {
 			return nil, fmt.Errorf("declared bind path %q is not mounted by the Compose service", resolvedPath)
+		} else {
+			resolved.SELinuxShared = bind.SELinuxShared
 		}
 		resources = append(resources, resolved)
 	}
@@ -779,7 +795,7 @@ func validateEnvFiles(node *yaml.Node, sourceFiles map[string]bool, secretConfig
 // Releases are replaceable deployment content. A relative bind mount would
 // make a service write persistent data below that replaceable tree, so M3
 // requires named volumes or deliberate absolute target paths instead.
-func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]string, []string, error) {
+func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]string, map[string]bindMount, error) {
 	if node == nil {
 		return nil, nil, nil
 	}
@@ -787,7 +803,7 @@ func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]s
 		return nil, nil, fmt.Errorf("volumes must be a sequence")
 	}
 	keys := make([]string, 0)
-	paths := make([]string, 0)
+	paths := map[string]bindMount{}
 	for _, value := range node.Content {
 		switch value.Kind {
 		case yaml.ScalarNode:
@@ -803,7 +819,7 @@ func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]s
 				if !strings.HasPrefix(resolved, "/") {
 					return nil, nil, fmt.Errorf("storage bind mount %q did not resolve to an absolute target path", value.Value)
 				}
-				paths = append(paths, resolved)
+				paths[resolved] = bindMount{SELinuxShared: shortSELinuxShared(value.Value)}
 			} else if found && source != "" {
 				if strings.Contains(source, "$") {
 					return nil, nil, fmt.Errorf("bind mount interpolation is only allowed for declared Bebop storage resources")
@@ -831,12 +847,38 @@ func validateVolumes(node *yaml.Node, storageEnvironment map[string]string) ([]s
 			if err != nil || (!strings.HasPrefix(sourceNode.Value, "/") && !interpolation) || !strings.HasPrefix(resolved, "/") {
 				return nil, nil, fmt.Errorf("bind mounts require an absolute target source path or declared Bebop storage interpolation")
 			}
-			paths = append(paths, resolved)
+			paths[resolved] = bindMount{SELinuxShared: longSELinuxShared(value)}
 		default:
 			return nil, nil, fmt.Errorf("volume must use string or long mapping syntax")
 		}
 	}
 	return keys, paths, nil
+}
+
+func shortSELinuxShared(value string) bool {
+	parts := strings.Split(value, ":")
+	if len(parts) < 3 {
+		return false
+	}
+	shared := false
+	for _, option := range strings.Split(strings.Join(parts[2:], ":"), ",") {
+		switch strings.TrimSpace(option) {
+		case "z":
+			shared = true
+		case "Z":
+			return false
+		}
+	}
+	return shared
+}
+
+func longSELinuxShared(value *yaml.Node) bool {
+	bind := mappingValue(value, "bind")
+	if bind == nil || bind.Kind != yaml.MappingNode {
+		return false
+	}
+	option := mappingValue(bind, "selinux")
+	return option != nil && option.Kind == yaml.ScalarNode && option.Value == "z"
 }
 
 func resolveStorageInterpolation(source string, storageEnvironment map[string]string) (string, bool, error) {

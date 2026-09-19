@@ -557,6 +557,9 @@ func restoreArchiveScript(resource services.PersistentResource) string {
 	mount := resource.RuntimeVolume + ":/data"
 	if resource.Type == "path" {
 		mount = resource.Path + ":/data"
+		if resource.SELinuxShared {
+			mount += ":z"
+		}
 	}
 	return dockerPrefix() + " run --rm -i --network none --read-only -v " + transport.ShellQuote(mount) + " " + transport.ShellQuote(HelperImage) + " tar -C /data -xpf -"
 }

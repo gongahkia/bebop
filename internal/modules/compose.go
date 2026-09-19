@@ -32,6 +32,15 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	}
 	changes := make([]plan.Change, 0)
 	for _, deployment := range deployments {
+		if blocked := serviceSELinuxBlocked(host, deployment); blocked != "" {
+			for _, resource := range deployment.Data {
+				if resource.Type != "path" || resource.SELinuxShared {
+					continue
+				}
+				changes = append(changes, plan.Change{ID: "service." + deployment.Name + ".selinux." + resource.Name, Module: "services", Summary: "review SELinux bind labeling", Reason: "Fedora SELinux is enforcing", Risk: plan.Privileged, RequiresRoot: true, Current: "persistent bind resource is not shared-labeled", Desired: "persistent bind resource uses Compose shared z SELinux labeling", Action: plan.Action{Kind: "service.selinux-blocked", Resource: deployment.Name}, Verification: "not applicable until the Compose source is corrected", Blocked: blocked})
+			}
+			continue
+		}
 		current := serviceFact(host, deployment.Name)
 		dependencies := serviceDependencies(host, deployment.State)
 		blocked := serviceBlocked(host, current, deployment.State)
@@ -113,6 +122,18 @@ func (Compose) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		}
 	}
 	return changes, nil, nil
+}
+
+func serviceSELinuxBlocked(host facts.HostFacts, deployment services.Deployment) string {
+	if host.OS.ID != "fedora" || host.SELinux.Mode != "enforcing" || deployment.State == "absent" {
+		return ""
+	}
+	for _, resource := range deployment.Data {
+		if resource.Type == "path" && !resource.SELinuxShared {
+			return "Fedora SELinux is enforcing: persistent bind resource " + resource.Name + " must use shared z SELinux labeling so the service and Bebop backup/restore helper can both access it"
+		}
+	}
+	return ""
 }
 
 // serviceStoragePolicy makes a declared storage-relative path an operational

@@ -239,9 +239,10 @@ run. If retention itself cannot complete, the new verified snapshot remains and
 the run is recorded as a warning/failing scheduler invocation rather than
 pretending maintenance fully succeeded.
 
-`update-check` never installs an upgrade. It uses `apt-get -s upgrade`; optional
-`refresh_metadata = true` runs only `apt-get update` under the existing target
-lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
+`update-check` never installs an upgrade. It uses `apt-get -s upgrade` on
+Debian-family targets and `dnf5 -y check-upgrade` on Fedora; optional
+`refresh_metadata = true` runs only `apt-get update` or `dnf5 -y makecache`
+under the existing target lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
 timer cannot wait for an SSH host-key/password or sudo password prompt.
 
 ## M8 notification boundary

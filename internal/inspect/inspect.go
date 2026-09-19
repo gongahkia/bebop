@@ -36,7 +36,7 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	if err != nil {
 		return facts.HostFacts{}, fmt.Errorf("parse target os-release: %w", err)
 	}
-	f := facts.HostFacts{Target: target.String(), OS: osFacts, PackageManager: "unknown", DataRoot: facts.Directory{Path: dataRoot}}
+	f := facts.HostFacts{Target: target.String(), OS: osFacts, PackageManager: "unknown", DataRoot: facts.Directory{Path: dataRoot}, SELinux: facts.SELinux{Mode: "unavailable"}}
 	f.Hostname = firstLine(mustProbe(ctx, tr, "hostname"))
 	f.MachineID = firstLine(mustProbe(ctx, tr, "cat /etc/machine-id 2>/dev/null || true"))
 	rawArchitecture := firstLine(mustProbe(ctx, tr, "uname -m"))
@@ -45,23 +45,22 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.EffectiveUser = firstLine(mustProbe(ctx, tr, "id -un"))
 	f.SudoAvailable = firstLine(mustProbe(ctx, tr, "if test \"$(id -u)\" -eq 0 || (command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then printf yes; else printf no; fi")) == "yes"
 	f.Systemd = firstLine(mustProbe(ctx, tr, "if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then printf yes; else printf no; fi")) == "yes"
-	if firstLine(mustProbe(ctx, tr, "if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then printf apt; fi")) == "apt" {
-		f.PackageManager = "apt"
-	}
+	f.PackageManager, f.PackageDatabase = inspectPackageTools(ctx, tr, f.OS)
 	if f.Systemd {
 		f.InitSystem = "systemd"
 	} else {
 		f.InitSystem = "unknown"
 	}
 	f.SSH = inspectSSH(ctx, tr)
-	f.Docker = inspectDocker(ctx, tr, f.Systemd)
+	f.SELinux = inspectSELinux(ctx, tr)
+	f.Docker = inspectDocker(ctx, tr, f.Systemd, f.PackageManager)
 	deployments, err := services.ResolveAll(cfg)
 	if err != nil {
 		return facts.HostFacts{}, err
 	}
 	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
-	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd)
-	f.AutomaticUpdates = inspectUpdates(ctx, tr)
+	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd, f.PackageManager)
+	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.PackageManager)
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
@@ -73,6 +72,32 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	}
 	f.DataRoot = inspectDataRoot(ctx, tr, dataRoot)
 	return f, nil
+}
+
+func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.OS) (string, string) {
+	manager, database, known := facts.RequiredPackageTools(os)
+	if !known {
+		return "unknown", ""
+	}
+	var script string
+	switch manager {
+	case "apt":
+		script = "if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then printf 'apt dpkg'; fi"
+	case "dnf5":
+		script = "if command -v dnf5 >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'dnf5 rpm'; fi"
+	}
+	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
+		// The probe itself tests the paired database executable before writing
+		// the manager token. The second token makes real facts self-describing;
+		// accepting the historical single token keeps existing fake transports
+		// compatible without weakening the target-side probe.
+		return manager, database
+	}
+	return "unknown", ""
+}
+
+func inspectSELinux(ctx context.Context, tr transport.Transport) facts.SELinux {
+	return facts.SELinux{Mode: facts.NormalizeSELinuxMode(mustProbe(ctx, tr, "if command -v getenforce >/dev/null 2>&1; then getenforce; fi"))}
 }
 
 func inspectManagedMountConfigs(ctx context.Context, tr transport.Transport, resources []config.StorageResource) []facts.StorageMountConfig {
@@ -115,16 +140,30 @@ if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=ye
 	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
-func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool) facts.Docker {
-	lines := probeLines(ctx, tr, `
+func inspectDocker(ctx context.Context, tr transport.Transport, systemd bool, packageManager string) facts.Docker {
+	script := `
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
 if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
 if apt-cache show docker-compose-plugin >/dev/null 2>&1; then printf 'compose_package=docker-compose-plugin\n'; elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then printf 'compose_package=docker-compose-v2\n'; else printf 'compose_package=\n'; fi
-`)
-	return facts.Docker{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+`
+	if packageManager == "dnf5" {
+		script = `
+if rpm -q moby-engine >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if rpm -q moby-engine docker-cli docker-compose >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if dnf5 repoquery --available --queryformat '%{name}\n' moby-engine 2>/dev/null | grep -qx moby-engine && dnf5 repoquery --available --queryformat '%{name}\n' docker-cli 2>/dev/null | grep -qx docker-cli && dnf5 repoquery --available --queryformat '%{name}\n' docker-compose 2>/dev/null | grep -qx docker-compose; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+for package in docker-ce docker-ce-cli containerd.io; do if rpm -q "$package" >/dev/null 2>&1; then printf 'conflict=yes\n'; fi; done
+if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compose_package=docker-compose\n'; else printf 'compose_package=\n'; fi
+`
+	}
+	lines := probeLines(ctx, tr, script)
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
 }
 
 func inspectServices(ctx context.Context, tr transport.Transport, dataRoot string, deployments []services.Deployment, dockerResponsive bool) []facts.Service {
@@ -257,12 +296,21 @@ func aggregateRuntime(states []dockerContainerState) (string, string, int) {
 	return "starting", "starting", len(states)
 }
 
-func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
-	lines := probeLines(ctx, tr, `
+func inspectTailscale(ctx context.Context, tr transport.Transport, systemd bool, packageManager string) facts.Tailscale {
+	script := `
 if dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
-`)
+`
+	if packageManager == "dnf5" {
+		script = `
+if rpm -q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if test ! -e /etc/yum.repos.d/tailscale.repo; then printf 'repository=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/yum.repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'baseurl=https://pkgs.tailscale.com/stable/fedora/$basearch' /etc/yum.repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'gpgcheck=1' /etc/yum.repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'repo_gpgcheck=1' /etc/yum.repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'gpgkey=https://pkgs.tailscale.com/stable/fedora/repo.gpg' /etc/yum.repos.d/tailscale.repo 2>/dev/null; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
+`
+	}
+	lines := probeLines(ctx, tr, script)
 	status := struct {
 		BackendState string `json:"BackendState"`
 		Self         *struct {
@@ -271,15 +319,23 @@ if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=y
 	}{}
 	_ = json.Unmarshal([]byte(mustProbe(ctx, tr, "if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null || true; fi")), &status)
 	connected := status.BackendState == "Running" && status.Self != nil && status.Self.Online
-	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState}
+	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState, RepositoryState: lines["repository"]}
 }
 
-func inspectUpdates(ctx context.Context, tr transport.Transport) facts.AutomaticUpdates {
-	lines := probeLines(ctx, tr, `
+func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string) facts.AutomaticUpdates {
+	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' && apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Update-Package-Lists "1";'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
-`)
-	return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", Enabled: lines["enabled"] == "yes"}
+`
+	if packageManager == "dnf5" {
+		script = `
+if rpm -q dnf5-plugin-automatic >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test ! -e /etc/dnf/automatic.conf; then printf 'config=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic.conf 2>/dev/null && grep -Eq '^[[:space:]]*apply_updates[[:space:]]*=[[:space:]]*yes[[:space:]]*$' /etc/dnf/automatic.conf 2>/dev/null; then printf 'config=managed\n'; else printf 'config=unmanaged\n'; fi
+if systemctl is-enabled dnf5-automatic.timer >/dev/null 2>&1 && systemctl is-active dnf5-automatic.timer >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+`
+	}
+	lines := probeLines(ctx, tr, script)
+	return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
 }
 
 func inspectFirewall(ctx context.Context, tr transport.Transport) facts.Firewall {

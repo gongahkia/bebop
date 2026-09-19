@@ -225,6 +225,9 @@ func backupArchiveScript(resource services.PersistentResource) string {
 	mount := resource.RuntimeVolume + ":/data:ro"
 	if resource.Type == "path" {
 		mount = resource.Path + ":/data:ro"
+		if resource.SELinuxShared {
+			mount += ",z"
+		}
 	}
 	return dockerPrefix() + " run --rm -i --network none --read-only -v " + transport.ShellQuote(mount) + " " + transport.ShellQuote(HelperImage) + " tar -C /data -cf - ."
 }

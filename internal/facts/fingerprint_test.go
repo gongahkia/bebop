@@ -94,3 +94,16 @@ func TestStorageThresholdPolicyParticipatesWithoutFreeSpaceChurn(t *testing.T) {
 		t.Fatalf("device path churn changed placement fingerprint: %v", err)
 	}
 }
+
+func TestSELinuxEnforcementParticipatesInConvergenceFingerprint(t *testing.T) {
+	host := HostFacts{OS: OS{ID: "fedora", VersionID: "43", Family: "fedora", Supported: true}, PackageManager: "dnf5", PackageDatabase: "rpm", SELinux: SELinux{Mode: "permissive"}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.SELinux.Mode = "enforcing"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first == second {
+		t.Fatalf("SELinux enforcement change did not stale convergence state: %v", err)
+	}
+}
