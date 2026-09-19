@@ -1,4 +1,4 @@
-# Bebop
+# `Bebop` 🚀
 
 Bebop is a deterministic, agentless home-server control plane for machines you
 already own. It keeps a local inventory, inspects Debian-family targets through
