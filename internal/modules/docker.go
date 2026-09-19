@@ -160,6 +160,7 @@ done`
 func enterpriseDockerInstallScript(family, major string) string {
 	baseURL := "https://download.docker.com/linux/" + family + "/" + major + "/$basearch/stable"
 	keyURL := "https://download.docker.com/linux/" + family + "/gpg"
+<<<<<<< HEAD
 	return `set -eu
 command -v curl >/dev/null 2>&1
 command -v gpg >/dev/null 2>&1
@@ -171,6 +172,10 @@ test "$fingerprint" = ` + transport.ShellQuote(dockerCESigningKeyFingerprint) + 
 rpm --import "$key_tmp"
 tmp=$(mktemp /etc/yum.repos.d/.docker-ce-stable.repo.XXXXXX)
 trap 'rm -f "$key_tmp" "$tmp"' EXIT
+=======
+	return `tmp=$(mktemp /etc/yum.repos.d/.docker-ce-stable.repo.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+>>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 cat >"$tmp" <<'EOF'
 # Managed by Bebop. Manual edits may be replaced.
 [docker-ce-stable]
@@ -183,10 +188,15 @@ EOF
 chown root:root "$tmp"
 chmod 0644 "$tmp"
 mv -f "$tmp" /etc/yum.repos.d/docker-ce-stable.repo
+<<<<<<< HEAD
 rm -f "$key_tmp"
 trap - EXIT
 dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 rpm -qa --qf '%{VERSION}\n' gpg-pubkey | grep -Fxi ` + transport.ShellQuote(dockerCESigningKeyFingerprint)
+=======
+trap - EXIT
+dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`
+>>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 }
 
 func planFedoraDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
@@ -259,7 +269,11 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 			return verify(ctx, tr, "rpm -q moby-engine docker-cli docker-compose >/dev/null")
 		}
 		if change.Action.Resource == "centos-9" || change.Action.Resource == "centos-10" || change.Action.Resource == "rhel-9" || change.Action.Resource == "rhel-10" {
+<<<<<<< HEAD
 			return verify(ctx, tr, "rpm -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null\nrpm -qa --qf '%{VERSION}\\n' gpg-pubkey | grep -Fxi "+transport.ShellQuote(dockerCESigningKeyFingerprint))
+=======
+			return verify(ctx, tr, "rpm -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null")
+>>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' docker.io | grep -qx installed")
 	}

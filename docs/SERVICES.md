@@ -117,9 +117,13 @@ apt packages, and on Fedora 43/44 it uses the distribution `moby-engine`,
 Docker CE RPM repository and `docker-ce`, `docker-ce-cli`, `containerd.io`,
 `docker-buildx-plugin`, and `docker-compose-plugin` through DNF. Rocky and
 Alma deliberately select the reviewed RHEL major repository; CentOS Stream
+<<<<<<< HEAD
 selects the reviewed CentOS major repository. Before it is trusted, Bebop checks
 the fixed Docker signing-key fingerprint `060A 61C5 1B55 8A7F 742B 77AA C52F
 EB6B 621E 9F35`. Otherwise the service action is
+=======
+selects the reviewed CentOS major repository. Otherwise the service action is
+>>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 blocked. Bebop does not install Docker from a convenience script, infer an RPM
 repository from `ID_LIKE`, remove Podman, or mix a detected Docker CE stack with
 Fedora Moby packages.
