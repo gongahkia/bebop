@@ -112,7 +112,11 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "architecture.unsupported", Message: "unsupported or unknown target architecture: " + host.Architecture})
 	}
 	result.PackageManager = host.PackageManager
+<<<<<<< HEAD
 	if facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
+=======
+	if facts.PackageToolsAvailable(host.OS, host.PackageManager) {
+>>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 		manager, database, _ := facts.RequiredPackageTools(host.OS)
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "package_manager." + manager, Message: manager + " and " + database + " package tools available"})
 	} else {

@@ -35,7 +35,11 @@ func TestFedoraDockerUsesOnlyReviewedMobyPackages(t *testing.T) {
 }
 
 func TestDebianDockerPackagePlanRemainsAPTBased(t *testing.T) {
+<<<<<<< HEAD
 	host := facts.HostFacts{OS: facts.OS{ID: "debian", Family: "debian", VersionID: "12", Supported: true}, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true}
+=======
+	host := facts.HostFacts{OS: facts.OS{ID: "debian", Family: "debian", VersionID: "12", Supported: true}, PackageManager: "apt", Systemd: true, SudoAvailable: true}
+>>>>>>> ec75e0b1f029ace3dc3e4bc860ddf3f796980d3b
 	changes, _, err := (Docker{}).Plan(host, config.Defaults())
 	if err != nil || len(changes) == 0 || !strings.Contains(changes[0].Action.Script, "apt-get install -y docker.io") || strings.Contains(changes[0].Action.Script, "dnf5") {
 		t.Fatalf("Debian Docker plan changed unexpectedly: %#v, %v", changes, err)
