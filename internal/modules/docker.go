@@ -28,6 +28,9 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
 		return planArchDocker(host, cfg)
 	}
+	if host.OS.Family == "alpine" && host.PackageManager == "apk" {
+		return planAlpineDocker(host, cfg)
+	}
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
 	}
@@ -63,6 +66,84 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 			change.Blocked = "the target apt repositories do not advertise a reviewed Docker Compose v2 package"
 		} else {
 			change.Action.Script = "export DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y " + host.Docker.ComposePackageAvailable
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+const alpineDockerRepositorySafeScript = `if test -e /etc/apk/repositories.d/50-bebop.list; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  test "$(grep -Ec '^(# Managed by Bebop\\. Manual edits may be replaced\\.|v2( @bebop-(main|community))? https://dl-cdn\\.alpinelinux\\.org/alpine/v3\\.24 (main|community))$' /etc/apk/repositories.d/50-bebop.list)" -eq 5
+fi`
+
+const alpineDockerInstallScript = `set -eu
+if test -e /etc/apk/repositories.d/50-bebop.list; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' /etc/apk/repositories.d/50-bebop.list
+  grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' /etc/apk/repositories.d/50-bebop.list
+  test "$(grep -Ec '^(# Managed by Bebop\\. Manual edits may be replaced\\.|v2( @bebop-(main|community))? https://dl-cdn\\.alpinelinux\\.org/alpine/v3\\.24 (main|community))$' /etc/apk/repositories.d/50-bebop.list)" -eq 5
+fi
+install -d -m 0755 /etc/apk/repositories.d
+tmp=$(mktemp /etc/apk/repositories.d/.50-bebop.list.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/apk/repositories.d/50-bebop.list
+trap - EXIT
+apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop.list
+apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list docker@bebop-community docker-cli-compose@bebop-community docker-openrc@bebop-community`
+
+func planAlpineDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	changes := []plan.Change{}
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete || host.Docker.RepositoryState != "managed"
+	if !host.Docker.CgroupsAvailable {
+		return []plan.Change{{ID: "docker.cgroups", Module: "docker", Summary: "review Alpine cgroup support", Reason: "Docker requires a usable cgroup v2 hierarchy", Risk: plan.Privileged, RequiresRoot: true, Current: "cgroup v2 hierarchy unavailable", Desired: "usable Alpine cgroup v2 hierarchy", Action: plan.Action{Kind: "docker.cgroups-blocked", Resource: "alpine"}, Verification: "not applicable", Blocked: "Alpine Docker support requires a usable cgroup v2 hierarchy; Bebop will not rewrite a custom cgroup configuration"}}, nil, nil
+	}
+	if host.Docker.CgroupsServiceExists && (!host.Docker.CgroupsServiceEnabled || !host.Docker.CgroupsServiceActive) {
+		change := plan.Change{ID: "docker.cgroups", Module: "docker", Summary: "enable Alpine cgroups", Reason: "the OpenRC cgroups service is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "cgroups service not ready", Desired: "cgroups enabled in OpenRC default runlevel and running", Action: plan.Action{Kind: "docker.enable-cgroups", Resource: "alpine", Script: "rc-update add cgroups default\nrc-service cgroups start"}, Verification: "cgroups OpenRC service is enabled and running"}
+		rootBlocked(&change, host.SudoAvailable)
+		changes = append(changes, change)
+	}
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Alpine Docker package set or repository definition is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "docker, docker-cli-compose, docker-openrc, or Bebop's v3.24 repository file is absent", Desired: "reviewed Alpine v3.24 community Docker packages installed", Preconditions: []plan.Precondition{{ID: "docker.alpine-repository-safe", Description: "Bebop's APK repository definition is absent or exact", Script: alpineDockerRepositorySafeScript}, {ID: "docker.alpine-packages-available", Description: "the official Alpine v3.24 community repository advertises the reviewed Docker package set", Script: "for package in docker docker-cli-compose docker-openrc; do apk policy \"$package\" 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' || exit 1; done"}}, Action: plan.Action{Kind: "docker.install-engine", Resource: "alpine", Script: alpineDockerInstallScript}, Verification: "reviewed Alpine Docker package set and repository definition are installed"}
+		if host.Docker.RepositoryState == "unmanaged" {
+			change.Action.Script = ""
+			change.Blocked = "existing /etc/apk/repositories.d/50-bebop.list is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the target's official Alpine v3.24 community repository does not advertise the reviewed Docker package set"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if host.Docker.CgroupsServiceExists && (!host.Docker.CgroupsServiceEnabled || !host.Docker.CgroupsServiceActive) {
+			dependencies = append(dependencies, "docker.cgroups")
+		}
+		if needEngine {
+			dependencies = append(dependencies, "docker.engine")
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "OpenRC Docker service is disabled, inactive, or daemon unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker OpenRC service not ready", Desired: "Docker enabled in default runlevel, running, and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "alpine", Script: "rc-update add docker default\nrc-service docker start"}, Verification: "Docker OpenRC service is enabled and docker info succeeds as root"}
+		if needEngine && len(changes) > 0 && changes[len(changes)-1].ID == "docker.engine" && changes[len(changes)-1].Blocked != "" {
+			change.Blocked = "Alpine Docker package installation is blocked"
+		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
 		changes = append(changes, change)
@@ -373,6 +454,9 @@ func (Docker) Apply(ctx context.Context, tr transport.Transport, _ config.Config
 }
 func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "docker.install-engine" {
+		if change.Action.Resource == "alpine" {
+			return verify(ctx, tr, "apk info -e docker docker-cli-compose docker-openrc >/dev/null\n"+alpineDockerRepositorySafeScript)
+		}
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q docker docker-compose >/dev/null")
 		}
@@ -389,6 +473,12 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 	}
 	if change.Action.Kind == "docker.install-compose" {
 		return verify(ctx, tr, "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null")
+	}
+	if change.Action.Kind == "docker.enable-cgroups" {
+		return verify(ctx, tr, "test -r /sys/fs/cgroup/cgroup.controllers\nrc-update show default | grep -Eq '^[[:space:]]*cgroups([[:space:]]|$)'\nrc-service cgroups status >/dev/null")
+	}
+	if change.Action.Resource == "alpine" {
+		return verify(ctx, tr, "rc-update show default | grep -Eq '^[[:space:]]*docker([[:space:]]|$)'\nrc-service docker status >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null")
 	}
 	return verify(ctx, tr, "systemctl is-enabled docker.service >/dev/null\nsystemctl is-active docker.service >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null")
 }

@@ -109,8 +109,10 @@ const (
 	FailureRemoteCommand      FailureKind = "remote_command"
 )
 
-// ClassifyFailure makes a best-effort classification from OpenSSH and sudo's
-// stable diagnostic wording while preserving the original error for debugging.
+// ClassifyFailure makes a best-effort classification from OpenSSH and
+// noninteractive elevation diagnostics while preserving the original error for
+// debugging. The historical sudo categories also cover doas so callers retain
+// their existing public error handling.
 func ClassifyFailure(err error) FailureKind {
 	if err == nil {
 		return FailureUnknown
@@ -132,9 +134,9 @@ func ClassifyFailure(err error) FailureKind {
 		return FailureAuthentication
 	case strings.Contains(text, "executable file not found"), strings.Contains(text, "ssh client"):
 		return FailureSSHClient
-	case strings.Contains(text, "a password is required"), strings.Contains(text, "no tty present and no askpass"):
+	case strings.Contains(text, "a password is required"), strings.Contains(text, "no tty present and no askpass"), strings.Contains(text, "doas: authorization required"), strings.Contains(text, "doas: authentication failed"), strings.Contains(text, "doas: not permitted"):
 		return FailureSudoAuthentication
-	case strings.Contains(text, "sudo: not found"), strings.Contains(text, "command not found: sudo"):
+	case strings.Contains(text, "sudo: not found"), strings.Contains(text, "command not found: sudo"), strings.Contains(text, "doas: not found"), strings.Contains(text, "command not found: doas"):
 		return FailureSudoUnavailable
 	default:
 		return FailureRemoteCommand

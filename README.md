@@ -16,6 +16,7 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * CentOS Stream 9/10
     * openSUSE Leap 16.0 and Tumbleweed
     * Arch Linux x86_64
+    * Alpine Linux 3.24.x on x86_64/aarch64
 
 ## Quick start
 
@@ -235,6 +236,13 @@ or silently upgrades the system; if current package metadata is unsuitable,
 perform a reviewed full `pacman -Syu` manually and retry. Arch derivatives and
 Arch Linux ARM are unsupported.
 
+On Alpine Linux 3.24.x, Bebop requires a conventional persistent OpenRC host,
+APK, and the preinstalled `flock`, `lsblk`, and `findmnt` utilities. It uses
+only fixed HTTPS v3.24 main/community APK definitions for `docker`,
+`docker-cli-compose`, `docker-openrc`, `tailscale`, and `tailscale-openrc`;
+diskless/data/overlay-root Alpine modes, Alpine 3.23 and 3.25+, Edge, Testing,
+and other Alpine branches are unsupported.
+
 For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
 `stable/opensuse/leap/16.0/$basearch` or
 `stable/opensuse/tumbleweed/$basearch`, verifies the reviewed signing key, and
@@ -426,7 +434,8 @@ data_root = "/srv/bebop"
 It can create and permission the configured data root, enable Debian's
 `unattended-upgrades`, Fedora's `dnf5-plugin-automatic`, Enterprise Linux's
 `dnf-automatic`, Leap's fixed patch timer, or Tumbleweed's `os-update` timer,
-install the reviewed distribution Docker stack and start `docker.service`, install
+or Alpine's stable `apk-cron` through OpenRC `crond`, install the reviewed
+distribution Docker stack and start its reviewed target service, install
 Tailscale from an explicit official repository mapping, and add a conservative
 SSH drop-in. Tailscale authentication remains manual: after installation run
 `sudo tailscale up` on the target.
@@ -436,6 +445,11 @@ Arch intentionally has no Bebop automatic-update implementation: set
 an unattended rolling upgrade. Arch maintenance update awareness requires the
 operator-installed `pacman-contrib` `checkupdates` utility and never updates
 the live Pacman database.
+
+Alpine automatic updates remain on the reviewed 3.24 branch; Bebop refuses to
+enable them when active APK repositories include Edge, Testing, another branch,
+or an unreviewed source. Alpine target OpenRC is unrelated to Bebop's
+controller-side systemd-user maintenance scheduler.
 
 `network.firewall` accepts only `"disabled"` in this milestone. Bebop reports
 UFW/nftables/firewalld state but never changes firewall rules.

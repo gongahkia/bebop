@@ -234,8 +234,8 @@ func (r *Runner) init(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if !host.OS.Supported || !host.Systemd {
-		return errs.New(errs.UnsupportedOS, "target is not a supported Debian-family system with systemd", nil)
+	if !host.OS.IsSupported() || !facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) {
+		return errs.New(errs.UnsupportedOS, "target is not a supported host with its required init system", nil)
 	}
 	if !*force {
 		if _, err := os.Stat(*output); err == nil {

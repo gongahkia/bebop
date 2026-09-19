@@ -136,6 +136,14 @@ adds a Docker repository, uses the AUR, synchronizes package metadata for a
 targeted install, or converts the install into `pacman -Syu`; an unavailable
 package database requires a reviewed manual full upgrade before retrying.
 
+On Alpine Linux 3.24.x, Bebop uses only fixed HTTPS v3.24 community APK
+definitions and installs `docker`, `docker-cli-compose`, and `docker-openrc`.
+It manages the `docker` OpenRC service (and the packaged `cgroups` service when
+present), never adds Docker CE, Edge/Testing, an OBS-style repository, or a
+static installer. Alpine support is limited to persistent x86_64/aarch64 hosts;
+diskless, data, read-only, and overlay-root targets block before mutation.
+Alpine 3.23, 3.25+, Edge, Testing, and derivatives are not supported.
+
 On any SELinux-enforcing supported target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and

@@ -2,6 +2,7 @@ package planner_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/bebop-home/bebop/internal/apply"
@@ -144,6 +145,34 @@ func TestArchRequiresOfficialRollingX8664AndPacman(t *testing.T) {
 	host.Architecture, host.OS.BuildID = "amd64", "not-rolling"
 	if _, err := p.Build(host, config.Defaults()); err == nil {
 		t.Fatal("Arch with a non-rolling build identity was accepted")
+	}
+}
+
+func TestAlpineRequiresOpenRCAPKAndMutationTools(t *testing.T) {
+	p := planner.New()
+	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: facts.InitSystemOpenRC, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	if _, err := p.Build(host, config.Defaults()); err != nil {
+		t.Fatalf("Alpine 3.24 arm64 with OpenRC/APK/tools was rejected: %v", err)
+	}
+	host.PackageManager = "apt"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Alpine was accepted with apt")
+	}
+	host.PackageManager, host.InitSystem = "apk", facts.InitSystemSystemd
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Alpine was accepted with systemd instead of OpenRC")
+	}
+	host.InitSystem, host.RequiredTools.Flock = facts.InitSystemOpenRC, false
+	if _, err := p.Build(host, config.Defaults()); err == nil || !strings.Contains(err.Error(), "flock") {
+		t.Fatalf("Alpine was accepted without flock before the apply lock: %v", err)
+	}
+	host.RequiredTools = facts.RequiredTools{Flock: true}
+	if _, err := p.Build(host, config.Defaults()); err == nil || !strings.Contains(err.Error(), "lsblk, findmnt") {
+		t.Fatalf("Alpine missing storage prerequisites were not reported deterministically: %v", err)
+	}
+	host.RequiredTools, host.OS.VersionID = facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, "3.25.0"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Alpine 3.25 was accepted")
 	}
 }
 

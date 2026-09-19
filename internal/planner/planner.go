@@ -4,6 +4,7 @@ package planner
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
@@ -32,8 +33,8 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 	if !host.OS.SupportsArchitecture(host.Architecture) {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose a reviewed architecture: "+host.Architecture, nil)
 	}
-	if !host.Systemd {
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
+	if !facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+string(host.OS.RequiredInitSystem())+" init system", nil)
 	}
 	if host.MutationBlocked {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "target mutation is unsafe: "+host.MutationBlockReason, nil)
@@ -45,6 +46,19 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 			required += "/" + database
 		}
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+required+" package tools", nil)
+	}
+	if host.OS.Family == "alpine" && (!host.RequiredTools.Flock || !host.RequiredTools.LSBLK || !host.RequiredTools.Findmnt) {
+		missing := make([]string, 0, 3)
+		if !host.RequiredTools.Flock {
+			missing = append(missing, "flock")
+		}
+		if !host.RequiredTools.LSBLK {
+			missing = append(missing, "lsblk")
+		}
+		if !host.RequiredTools.Findmnt {
+			missing = append(missing, "findmnt")
+		}
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "Alpine target is missing required mutation/storage tools: "+strings.Join(missing, ", ")+"; install them manually with apk add flock findmnt lsblk before Bebop apply", nil)
 	}
 	result := plan.Plan{Version: 1, Target: host.Target}
 	if !host.ArchitectureKnown {

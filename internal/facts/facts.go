@@ -202,6 +202,7 @@ type Tailscale struct {
 type AutomaticUpdates struct {
 	Installed         bool   `json:"installed"`
 	PackageAvailable  bool   `json:"package_available,omitempty"`
+	ServiceExists     bool   `json:"service_exists,omitempty"`
 	Enabled           bool   `json:"enabled"`
 	ConfigState       string `json:"config_state,omitempty"`
 	ConflictingTimers bool   `json:"conflicting_timers,omitempty"`

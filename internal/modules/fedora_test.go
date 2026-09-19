@@ -35,6 +35,73 @@ func archHost() facts.HostFacts {
 	return facts.HostFacts{OS: facts.OS{ID: "arch", Family: "arch", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
 }
 
+func alpineHost() facts.HostFacts {
+	return facts.HostFacts{OS: facts.OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: facts.InitSystemOpenRC, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent", DataRoot: facts.Directory{Path: config.DefaultDataRoot, Exists: true, Mode: "750"}}
+}
+
+func TestAlpineDockerTailscaleAndAutomaticUpdatesUseReviewedAPKOpenRCPaths(t *testing.T) {
+	host := alpineHost()
+	host.Docker.PackageSetAvailable = true
+	host.Docker.CgroupsAvailable = true
+	changes, _, err := (Docker{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) < 2 {
+		t.Fatalf("Alpine Docker plan = %#v, %v", changes, err)
+	}
+	dockerScript := changes[0].Action.Script
+	for _, required := range []string{"v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community", "apk --interactive=no update --repositories-file /etc/apk/repositories.d/50-bebop.list", "apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list docker@bebop-community docker-cli-compose@bebop-community docker-openrc@bebop-community", "rc-update add docker default", "rc-service docker start"} {
+		if !strings.Contains(strings.Join([]string{dockerScript, changes[len(changes)-1].Action.Script}, "\n"), required) {
+			t.Fatalf("Alpine Docker plan missing %q: %#v", required, changes)
+		}
+	}
+	for _, forbidden := range []string{"--allow-untrusted", "/edge/", "/testing/", "latest-stable", "curl | sh", "docker-ce", "/var/lib/docker"} {
+		if strings.Contains(dockerScript, forbidden) {
+			t.Fatalf("Alpine Docker policy contains %q: %s", forbidden, dockerScript)
+		}
+	}
+	host.Docker.RepositoryState = "unmanaged"
+	changes, _, err = (Docker{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unmanaged Alpine repository was not blocked: %#v, %v", changes, err)
+	}
+
+	host = alpineHost()
+	host.Tailscale.PackageAvailable = true
+	changes, _, err = (Tailscale{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) < 2 || !strings.Contains(changes[0].Action.Script, "apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list tailscale@bebop-community tailscale-openrc@bebop-community") || !strings.Contains(changes[1].Action.Script, "rc-service tailscale start") {
+		t.Fatalf("Alpine Tailscale plan = %#v, %v", changes, err)
+	}
+	if strings.Contains(changes[0].Action.Script, "tailscale up") || strings.Contains(changes[0].Action.Script, "curl | sh") {
+		t.Fatalf("Alpine Tailscale path was unsafe: %s", changes[0].Action.Script)
+	}
+
+	host = alpineHost()
+	host.AutomaticUpdates = facts.AutomaticUpdates{PackageAvailable: true, ServiceExists: true}
+	changes, _, err = (Updates{}).Plan(host, config.Defaults())
+	if err != nil || len(changes) != 1 {
+		t.Fatalf("Alpine automatic-update plan = %#v, %v", changes, err)
+	}
+	for _, required := range []string{"apk --interactive=no add --repositories-file /etc/apk/repositories.d/50-bebop.list apk-cron@bebop-main", "rc-update add crond default", "rc-service crond start", "v3.24"} {
+		if !strings.Contains(changes[0].Action.Script, required) {
+			t.Fatalf("Alpine updates missing %q: %s", required, changes[0].Action.Script)
+		}
+	}
+	for _, forbidden := range []string{"apk-autoupdate", "--allow-untrusted", "apk reboot", "/edge/", "/testing/", "latest-stable"} {
+		if strings.Contains(changes[0].Action.Script, forbidden) {
+			t.Fatalf("Alpine updates contain unsafe %q: %s", forbidden, changes[0].Action.Script)
+		}
+	}
+	host.AutomaticUpdates.ConfigState = "unmanaged"
+	changes, _, err = (Updates{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" {
+		t.Fatalf("unsafe Alpine automatic-update repositories were not blocked: %#v, %v", changes, err)
+	}
+	host.AutomaticUpdates = facts.AutomaticUpdates{PackageAvailable: true}
+	changes, _, err = (Updates{}).Plan(host, config.Defaults())
+	if err != nil || changes[0].Blocked == "" || changes[0].Action.Script != "" || !strings.Contains(changes[0].Blocked, "crond") {
+		t.Fatalf("missing Alpine OpenRC crond was not blocked: %#v, %v", changes, err)
+	}
+}
+
 func TestArchDockerUsesOnlyCurrentOfficialPackagesWithoutSynchronizingPacman(t *testing.T) {
 	host := archHost()
 	host.Docker.PackageSetAvailable = true

@@ -28,6 +28,9 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"opensuse-tumbleweed-20260122.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 		{"opensuse-tumbleweed-20260916.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 		{"arch.os-release", "arch", "arch", "Arch Linux", true},
+		{"alpine-3.24.0.os-release", "alpine", "alpine", "Alpine Linux", true},
+		{"alpine-3.24.2.os-release", "alpine", "alpine", "Alpine Linux", true},
+		{"alpine-3.24.99.os-release", "alpine", "alpine", "Alpine Linux", true},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -43,6 +46,27 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestAlpineIdentityArchitectureAndPackageToolsAreExplicitlyGated(t *testing.T) {
+	for _, fixture := range []string{"alpine-3.23.9.os-release", "alpine-3.25.0.os-release", "alpine-edge.os-release", "alpine-rc.os-release", "generic-alpine-like.os-release"} {
+		contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseOSRelease(string(contents))
+		if err != nil || parsed.Supported || parsed.IsSupported() {
+			t.Fatalf("unsupported Alpine-like fixture was accepted: %#v, %v", parsed, err)
+		}
+	}
+	alpine := OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}
+	if !alpine.IsSupported() || !alpine.SupportsArchitecture("amd64") || !alpine.SupportsArchitecture("arm64") || alpine.SupportsArchitecture("riscv64") || alpine.RequiredInitSystem() != InitSystemOpenRC {
+		t.Fatalf("Alpine identity/init/architecture gate was not strict: %#v", alpine)
+	}
+	manager, database, ok := RequiredPackageTools(alpine)
+	if !ok || manager != "apk" || database != "" || !PackageToolsAvailable(alpine, "apk", "") || PackageToolsAvailable(alpine, "apt", "dpkg") || PackageToolsAvailable(alpine, "dnf", "rpm") || PackageToolsAvailable(alpine, "zypper", "rpm") || PackageToolsAvailable(alpine, "pacman", "") {
+		t.Fatalf("Alpine package tools were not strictly normalized: %q/%q %t", manager, database, ok)
 	}
 }
 

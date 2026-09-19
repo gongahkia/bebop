@@ -248,8 +248,13 @@ uses `pacman-contrib`'s `checkupdates` against a Bebop-owned isolated database;
 it never synchronizes the live Pacman database. Optional
 `refresh_metadata = true` runs only `apt-get update`, `dnf5 -y makecache`,
 `dnf -y makecache`, `zypper --non-interactive refresh`, or that isolated
-`checkupdates` refresh under the existing target lock. Scheduled SSH remains BatchMode and target sudo remains `sudo -n`, so a
-timer cannot wait for an SSH host-key/password or sudo password prompt.
+`checkupdates` refresh under the existing target lock. Alpine 3.24 uses
+`apk version -l '<'`; optional refresh runs only `apk update` under that lock,
+never `apk upgrade`. Its fixed Bebop-owned repository file permits only the
+reviewed HTTPS v3.24 main/community sources and does not disable signature
+checks. Scheduled SSH remains BatchMode and target privilege elevation uses
+only `sudo -n` or `doas -n`, so a timer cannot wait for an SSH host-key/password
+or privilege password prompt.
 
 ## M8 notification boundary
 

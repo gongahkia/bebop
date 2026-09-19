@@ -69,7 +69,7 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	if f.OS.Family == "alpine" {
 		f.RootMode = inspectAlpineRootMode(ctx, tr, f.RootFilesystem)
 		if f.RootMode != "persistent" {
-			f.MutationBlocked, f.MutationBlockReason = true, "Alpine " + f.RootMode + " root cannot preserve Bebop mutations across reboot"
+			f.MutationBlocked, f.MutationBlockReason = true, "Alpine "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
 		}
 	}
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
@@ -102,7 +102,7 @@ elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>
 else
   printf unknown
 fi`)) {
-	case string(facts.InitSystemSystemd):
+	case string(facts.InitSystemSystemd), "yes":
 		return facts.InitSystemSystemd
 	case string(facts.InitSystemOpenRC):
 		return facts.InitSystemOpenRC
@@ -263,6 +263,8 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 const alpineBebopRepositoriesPath = "/etc/apk/repositories.d/50-bebop.list"
 
 const alpineBebopRepositories = `# Managed by Bebop. Manual edits may be replaced.
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main
+v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community
 v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main
 v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community`
 
@@ -270,8 +272,8 @@ func inspectAlpineDocker(ctx context.Context, tr transport.Transport) facts.Dock
 	lines := probeLines(ctx, tr, `
 if apk info -e docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if apk info -e docker docker-cli-compose docker-openrc >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
-if apk policy docker docker-cli-compose docker-openrc 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
-if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'repository=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && grep -Fqx 'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && grep -Fqx 'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
+if for package in docker docker-cli-compose docker-openrc; do apk policy "$package" 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' || exit 1; done; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'repository=absent\n'; elif test "$(cat `+transport.ShellQuote(alpineBebopRepositoriesPath)+`)" = "$(printf '%s\\n' `+transport.ShellQuote(alpineBebopRepositories)+`)"; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
 if test -x /etc/init.d/docker && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*docker([[:space:]]|$)'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if test -x /etc/init.d/docker && rc-service docker status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if test -r /sys/fs/cgroup/cgroup.controllers; then printf 'cgroups=yes\n'; else printf 'cgroups=no\n'; fi
@@ -643,11 +645,12 @@ if test ! -e /etc/zypp/repos.d/tailscale.repo; then printf 'repository=absent\n'
 func inspectAlpineTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
 	lines := probeLines(ctx, tr, `
 if apk info -e tailscale tailscale-openrc >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
-if apk policy tailscale tailscale-openrc 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if for package in tailscale tailscale-openrc; do apk policy "$package" 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' || exit 1; done; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'repository=absent\n'; elif test "$(cat `+transport.ShellQuote(alpineBebopRepositoriesPath)+`)" = "$(printf '%s\\n' `+transport.ShellQuote(alpineBebopRepositories)+`)"; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
 if test -x /etc/init.d/tailscale && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*tailscale([[:space:]]|$)'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
 if test -x /etc/init.d/tailscale && rc-service tailscale status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
 if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\([^"]*\)".*/backend=\1/p' | head -n 1; fi`)
-	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: "official"}
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: lines["repository"]}
 }
 
 func inspectArchTailscale(ctx context.Context, tr transport.Transport, systemd bool) facts.Tailscale {
@@ -669,10 +672,27 @@ func inspectUpdates(ctx context.Context, tr transport.Transport, init facts.Init
 	if packageManager == "apk" && os.Family == "alpine" {
 		lines := probeLines(ctx, tr, `
 if apk info -e apk-cron >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -x /etc/init.d/crond; then printf 'service_exists=yes\n'; else printf 'service_exists=no\n'; fi
 if test -x /etc/init.d/crond && rc-update show default 2>/dev/null | grep -Eq '^[[:space:]]*crond([[:space:]]|$)' && rc-service crond status >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
-if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then printf 'config=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' `+transport.ShellQuote(alpineBebopRepositoriesPath)+` 2>/dev/null && ! grep -E '/(edge|testing)/|latest-stable' /etc/apk/repositories `+transport.ShellQuote(alpineBebopRepositoriesPath)+` >/dev/null 2>&1; then printf 'config=managed\n'; else printf 'config=unmanaged\n'; fi
+config=unmanaged
+if test ! -e `+transport.ShellQuote(alpineBebopRepositoriesPath)+`; then
+  config=absent
+elif test "$(cat `+transport.ShellQuote(alpineBebopRepositoriesPath)+`)" = "$(printf '%s\\n' `+transport.ShellQuote(alpineBebopRepositories)+`)"; then
+  config=managed
+  for repository_file in /etc/apk/repositories /etc/apk/repositories.d/*.list; do
+    test -f "$repository_file" || continue
+    while IFS= read -r line || test -n "$line"; do
+      case "$line" in ''|'#'*) continue;; esac
+      case "$line" in
+        'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'|'https://dl-cdn.alpinelinux.org/alpine/v3.24/community'|'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 main'|'v2 https://dl-cdn.alpinelinux.org/alpine/v3.24 community'|'v2 @bebop-main https://dl-cdn.alpinelinux.org/alpine/v3.24 main'|'v2 @bebop-community https://dl-cdn.alpinelinux.org/alpine/v3.24 community') ;;
+        *) config=unmanaged; break 2;;
+      esac
+    done < "$repository_file"
+  done
+fi
+printf 'config=%s\n' "$config"
 if apk policy apk-cron 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi`)
-		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
+		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceExists: lines["service_exists"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
 	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -740,10 +760,17 @@ if systemctl is-active nftables.service >/dev/null 2>&1 || systemctl is-active f
 
 func inspectRootFilesystem(ctx context.Context, tr transport.Transport) facts.Filesystem {
 	fields := strings.Fields(mustProbe(ctx, tr, "findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL,OPTIONS --target / 2>/dev/null || true"))
-	if len(fields) != 5 {
-		return facts.Filesystem{}
+	if len(fields) == 5 {
+		return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3]), ReadOnly: containsOption(fields[4], "ro")}
 	}
-	return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3]), ReadOnly: containsOption(fields[4], "ro")}
+	// Alpine's required findmnt utility may be absent during read-only
+	// bootstrap. /proc/mounts still lets inspection fail closed for ephemeral
+	// roots instead of mistaking a container overlay for a persistent host.
+	fields = strings.Fields(mustProbe(ctx, tr, "awk '$2 == \"/\" { print $1, $3, $4; exit }' /proc/mounts 2>/dev/null || true"))
+	if len(fields) == 3 {
+		return facts.Filesystem{Source: fields[0], Type: fields[1], ReadOnly: containsOption(fields[2], "ro")}
+	}
+	return facts.Filesystem{}
 }
 
 func inspectMutationSafety(ctx context.Context, tr transport.Transport, root facts.Filesystem) (bool, string) {
