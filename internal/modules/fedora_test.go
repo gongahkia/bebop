@@ -357,6 +357,30 @@ func TestEnterpriseLinuxSELinuxUsesTheSameSharedBindRule(t *testing.T) {
 	}
 }
 
+func TestOpenSUSESELinuxUsesTheSameSharedBindRule(t *testing.T) {
+	for _, test := range []struct {
+		name, mount string
+		blocked     bool
+	}{
+		{name: "named volume", mount: "data:/data", blocked: false},
+		{name: "shared bind", mount: "/srv/data:/data:rw,z", blocked: false},
+		{name: "unlabeled bind", mount: "/srv/data:/data", blocked: true},
+		{name: "private bind", mount: "/srv/data:/data:Z", blocked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := !strings.HasPrefix(test.mount, "data:")
+			cfg := fedoraComposeConfig(t, test.mount, path)
+			host := openSUSEHost("opensuse-leap", "16.0")
+			host.SELinux.Mode = "enforcing"
+			host.Docker = facts.Docker{Installed: true, PackageSetComplete: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}
+			result, err := planner.New(Compose{}).Build(host, cfg)
+			if err != nil || len(result.Changes) == 0 || (result.Changes[0].Blocked != "") != test.blocked {
+				t.Fatalf("openSUSE SELinux plan = %#v, %v", result, err)
+			}
+		})
+	}
+}
+
 func TestEnterpriseLinuxPlansAreDeterministic(t *testing.T) {
 	for _, host := range []facts.HostFacts{
 		enterpriseLinuxHost("rocky", "9.8"),
