@@ -18,6 +18,12 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"fedora-44.os-release", "fedora", "fedora", "Fedora Linux", true},
 		{"fedora-42.os-release", "fedora", "fedora", "Fedora Linux", false},
 		{"fedora-45.os-release", "fedora", "fedora", "Fedora Linux", false},
+		{"rocky-9.8.os-release", "rocky", "enterprise-linux", "Rocky Linux", true},
+		{"rocky-10.2.os-release", "rocky", "enterprise-linux", "Rocky Linux", true},
+		{"almalinux-9.8.os-release", "almalinux", "enterprise-linux", "AlmaLinux", true},
+		{"almalinux-10.2.os-release", "almalinux", "enterprise-linux", "AlmaLinux", true},
+		{"centos-stream-9.os-release", "centos", "enterprise-linux", "CentOS Stream", true},
+		{"centos-stream-10.os-release", "centos", "enterprise-linux", "CentOS Stream", true},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -33,6 +39,57 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestEnterpriseLinuxVersionsAndDerivativesAreExplicitlyGated(t *testing.T) {
+	for _, fixture := range []string{
+		"rocky-9.7.os-release", "rocky-9.9.os-release", "rocky-10.1.os-release", "rocky-10.3.os-release",
+		"almalinux-9.7.os-release", "almalinux-9.9-beta.os-release", "almalinux-10.1.os-release", "almalinux-10.3-beta.os-release",
+		"centos-linux-9.os-release", "centos-stream-malformed.os-release", "oracle-9.os-release", "rhel-9.os-release", "generic-rhel-like.os-release", "almalinux-kitten-10.os-release",
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := ParseOSRelease(string(contents))
+			if err != nil || actual.Supported || actual.IsSupported() {
+				t.Fatalf("unsupported fixture was accepted: %#v, %v", actual, err)
+			}
+		})
+	}
+}
+
+func TestEnterpriseLinuxRepositoryPoliciesAreExplicit(t *testing.T) {
+	tests := []struct {
+		os                OS
+		docker, tailscale string
+	}{
+		{OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true}, "rhel-9", "rhel-9"},
+		{OS{ID: "rocky", Family: "enterprise-linux", VersionID: "10.2", Supported: true}, "rhel-10", "rhel-10"},
+		{OS{ID: "almalinux", Family: "enterprise-linux", VersionID: "9.8", Supported: true}, "rhel-9", "rhel-9"},
+		{OS{ID: "almalinux", Family: "enterprise-linux", VersionID: "10.2", Supported: true}, "rhel-10", "rhel-10"},
+		{OS{ID: "centos", Name: "CentOS Stream", Family: "enterprise-linux", VersionID: "9", PlatformID: "platform:el9", Supported: true}, "centos-9", "centos-9"},
+		{OS{ID: "centos", Name: "CentOS Stream", Family: "enterprise-linux", VersionID: "10", PlatformID: "platform:el10", Supported: true}, "centos-10", "centos-10"},
+	}
+	for _, test := range tests {
+		family, major, ok := DockerCERepositoryPolicy(test.os)
+		if !ok || family+"-"+major != test.docker {
+			t.Fatalf("Docker policy for %#v = %s-%s, %t", test.os, family, major, ok)
+		}
+		family, major, ok = TailscaleRPMRepositoryPolicy(test.os)
+		if !ok || family+"-"+major != test.tailscale {
+			t.Fatalf("Tailscale policy for %#v = %s-%s, %t", test.os, family, major, ok)
+		}
+	}
+}
+
+func TestEnterpriseLinuxRequiresDNFAndRPM(t *testing.T) {
+	os := OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true}
+	manager, database, ok := RequiredPackageTools(os)
+	if !ok || manager != "dnf" || database != "rpm" || !PackageToolsAvailable(os, "dnf", "rpm") || PackageToolsAvailable(os, "dnf5", "rpm") || PackageToolsAvailable(os, "dnf", "") {
+		t.Fatalf("Enterprise Linux package tools were not strictly normalized: %q/%q %t", manager, database, ok)
 	}
 }
 

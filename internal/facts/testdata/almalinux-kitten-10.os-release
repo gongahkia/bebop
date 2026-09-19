@@ -1,0 +1,5 @@
+NAME="AlmaLinux Kitten"
+ID="almalinux-kitten"
+ID_LIKE="rhel fedora"
+VERSION_ID="10"
+PLATFORM_ID="platform:el10"

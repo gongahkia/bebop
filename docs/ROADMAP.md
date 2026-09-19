@@ -93,7 +93,8 @@
 
 - Deterministic local/OpenSSH transport, normalized supported-Linux facts, strict
   TOML, immutable structured plans, apply verification, and no-op tests.
-- Debian, Ubuntu, Raspberry Pi OS, and Fedora 43/44 target recognition.
+- Debian, Ubuntu, Raspberry Pi OS, Fedora 43/44, Rocky Linux 9.8/10.2,
+  AlmaLinux 9.8/10.2, and CentOS Stream 9/10 target recognition.
 - Base filesystem, automatic updates, Docker, Tailscale package/service, and
   conservative SSH hardening.
 - Read-only diagnostics/status, JSON, CI, and opt-in disposable Debian inspect.
@@ -103,7 +104,7 @@
 - Arch targets; macOS targets through a Linux VM; Windows targets
   through WSL2/VM.
 - Passive LAN discovery and a TUI.
-- Broader Linux distribution support, then macOS/Windows target adapters.
+- Additional reviewed Linux distribution support, then macOS/Windows target adapters.
 - Broad application catalog, automated recipe update discovery, and richer
   drift controls.
 - Signed plans, generalized rollback, and transactions.

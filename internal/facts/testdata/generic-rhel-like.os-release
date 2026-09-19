@@ -1,0 +1,5 @@
+NAME="Example Enterprise Linux"
+ID="exampleel"
+ID_LIKE="rhel fedora"
+VERSION_ID="9.8"
+PLATFORM_ID="platform:el9"

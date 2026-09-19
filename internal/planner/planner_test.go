@@ -79,6 +79,36 @@ func TestFedoraRequiresDNF5RPMAndExplicitlySupportedRelease(t *testing.T) {
 	}
 }
 
+func TestEnterpriseLinuxRequiresDNFAndExplicitReviewedIdentity(t *testing.T) {
+	p := planner.New()
+	valid := []facts.OS{
+		{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true},
+		{ID: "rocky", Family: "enterprise-linux", VersionID: "10.2", Supported: true},
+		{ID: "almalinux", Family: "enterprise-linux", VersionID: "9.8", Supported: true},
+		{ID: "almalinux", Family: "enterprise-linux", VersionID: "10.2", Supported: true},
+		{ID: "centos", Name: "CentOS Stream", Family: "enterprise-linux", VersionID: "9", PlatformID: "platform:el9", Supported: true},
+		{ID: "centos", Name: "CentOS Stream", Family: "enterprise-linux", VersionID: "10", PlatformID: "platform:el10", Supported: true},
+	}
+	for _, os := range valid {
+		host := facts.HostFacts{Target: "local", OS: os, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+		if _, err := p.Build(host, config.Defaults()); err != nil {
+			t.Fatalf("%s was rejected with dnf/rpm: %v", os.Display(), err)
+		}
+		host.PackageManager = "dnf5"
+		if _, err := p.Build(host, config.Defaults()); err == nil {
+			t.Fatalf("%s accepted dnf5 instead of dnf", os.Display())
+		}
+		host.PackageManager, host.PackageDatabase = "dnf", ""
+		if _, err := p.Build(host, config.Defaults()); err == nil {
+			t.Fatalf("%s accepted without rpm", os.Display())
+		}
+	}
+	unsupported := facts.HostFacts{Target: "local", OS: facts.OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.9", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	if _, err := p.Build(unsupported, config.Defaults()); err == nil {
+		t.Fatal("future Rocky minor was accepted")
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

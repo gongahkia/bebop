@@ -54,6 +54,16 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 		t.Fatalf("Fedora without dnf5/rpm was accepted as %q/%q", manager, database)
 	}
 	tr.missingDNFOrRPM = false
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true})
+	if manager != "dnf" || database != "rpm" {
+		t.Fatalf("Enterprise Linux package facts = %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("Enterprise Linux without dnf/rpm was accepted as %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = false
 	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "debian", Family: "debian", VersionID: "12", Supported: true})
 	if manager != "apt" || database != "dpkg" {
 		t.Fatalf("Debian package facts = %q/%q", manager, database)
@@ -93,6 +103,11 @@ func (tr packageProbeTransport) Run(_ context.Context, request transport.Request
 			return transport.Result{}, nil
 		}
 		return transport.Result{Stdout: "dnf5 rpm"}, nil
+	case strings.Contains(request.Script, "command -v dnf"):
+		if tr.missingDNFOrRPM {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "dnf rpm"}, nil
 	case strings.Contains(request.Script, "command -v apt-get"):
 		return transport.Result{Stdout: "apt dpkg"}, nil
 	case strings.Contains(request.Script, "getenforce"):
