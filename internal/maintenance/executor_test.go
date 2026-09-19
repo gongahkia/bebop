@@ -1,6 +1,11 @@
 package maintenance
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/bebop-home/bebop/internal/transport"
+)
 
 func TestParseAPTUpdateSimulation(t *testing.T) {
 	for _, test := range []struct {
@@ -24,15 +29,38 @@ func TestParseAPTUpdateSimulation(t *testing.T) {
 }
 
 func TestUpdateCheckScriptsNeverInstallOrUpgradePackages(t *testing.T) {
-	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript} {
-		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade"} {
+	for _, script := range []string{aptRefreshScript, aptUpdateSimulationScript, dnfRefreshScript, dnfUpdateCheckScript, dnfUpdateCountScript} {
+		for _, forbidden := range []string{"apt upgrade", "apt-get upgrade", "apt full-upgrade", "apt-get install", "dist-upgrade", "dnf5 install", "dnf5 upgrade", "dnf5 update"} {
 			if containsToken(script, forbidden) {
 				t.Fatalf("update-awareness script contains forbidden mutation %q: %s", forbidden, script)
 			}
 		}
 	}
-	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") {
+	if !containsToken(aptUpdateSimulationScript, "apt-get -s") || !containsToken(aptRefreshScript, "apt-get update") || !containsToken(dnfUpdateCheckScript, "dnf5 -y check-upgrade") || !containsToken(dnfRefreshScript, "dnf5 -y makecache") {
 		t.Fatalf("update-awareness scripts lost explicit semantics: %q / %q", aptUpdateSimulationScript, aptRefreshScript)
+	}
+}
+
+func TestDNF5UpdateExitSemantics(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		available bool
+		failed    bool
+	}{
+		{name: "clear"},
+		{name: "updates", err: &transport.ExitError{Code: 100}, available: true},
+		{name: "failure", err: &transport.ExitError{Code: 1}, failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			available, err := dnfUpdatesAvailable(test.err)
+			if available != test.available || (err != nil) != test.failed {
+				t.Fatalf("dnf result available=%t err=%v", available, err)
+			}
+		})
+	}
+	if strings.Contains(dnfUpdateCheckScript, "install") {
+		t.Fatalf("DNF update check must not install packages: %s", dnfUpdateCheckScript)
 	}
 }
 

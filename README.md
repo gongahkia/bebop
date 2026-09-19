@@ -4,12 +4,13 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
 
 ## Features
 
-* Keeps a local inventory & inspects Debian-family targets through your existing OpenSSH setup
+* Keeps a local inventory & inspects supported Linux targets through your existing OpenSSH setup
 * Compares each with a small declarative `bebop.toml`, presents an ordered plan and applies only reviewed changes
 * Currently supports the below distros
     * Debian 12/13
     * Ubuntu 22.04/24.04
     * Raspberry Pi OS
+    * Fedora Linux 43/44
 
 ## Quick start
 
@@ -197,10 +198,17 @@ release that a later deployment update replaces. Use named volumes or deliberate
 absolute target paths for persistent data; `absent` never removes those volumes
 or paths.
 
-Services need Docker Engine and Docker Compose v2. Bebop detects Compose; when
-the target apt repositories advertise `docker-compose-plugin` or
-`docker-compose-v2`, its existing Docker module can install it through a
-reviewed plan. Every Compose invocation receives an empty environment and
+On Fedora with SELinux enforcing, a declared persistent bind resource must use
+Compose's shared `z` relabel option (for example `/srv/app:/data:rw,z`). This
+lets both the service and Bebop's constrained backup/restore helper access the
+same explicitly declared path. Bebop blocks private `Z` or unlabeled declared
+binds; it never disables SELinux or relabels undeclared host paths.
+
+Services need Docker Engine and Docker Compose v2. Bebop detects Compose; on
+Debian-family targets it can install reviewed apt Compose packages, and on
+Fedora it installs the distribution `moby-engine`, `docker-cli`, and
+`docker-compose` packages through DNF5. It never adds Docker's external CE
+repository. Every Compose invocation receives an empty environment and
 `--context default`; controller `DOCKER_HOST` and `DOCKER_CONTEXT` are not
 used.
 
@@ -388,7 +396,8 @@ data_root = "/srv/bebop"
 ```
 
 It can create and permission the configured data root, enable Debian's
-`unattended-upgrades`, install `docker.io` and start `docker.service`, install
+`unattended-upgrades` or Fedora's `dnf5-plugin-automatic` timer, install the
+reviewed distribution Docker stack and start `docker.service`, install
 Tailscale from an explicit official repository mapping, and add a conservative
 SSH drop-in. Tailscale authentication remains manual: after installation run
 `sudo tailscale up` on the target.

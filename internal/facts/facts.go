@@ -17,6 +17,7 @@ type HostFacts struct {
 	ArchitectureKnown   bool             `json:"architecture_known"`
 	Kernel              string           `json:"kernel"`
 	PackageManager      string           `json:"package_manager"`
+	PackageDatabase     string           `json:"package_database,omitempty"`
 	InitSystem          string           `json:"init_system"`
 	Systemd             bool             `json:"systemd"`
 	EffectiveUser       string           `json:"effective_user"`
@@ -26,6 +27,7 @@ type HostFacts struct {
 	Services            []Service        `json:"services,omitempty"`
 	Tailscale           Tailscale        `json:"tailscale"`
 	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
+	SELinux             SELinux          `json:"selinux"`
 	Firewall            Firewall         `json:"firewall"`
 	MemoryKiB           int64            `json:"memory_kib"`
 	RootFilesystem      Filesystem       `json:"root_filesystem"`
@@ -53,6 +55,15 @@ func (o OS) Display() string {
 	return o.Name + " " + o.VersionID
 }
 
+// IsSupported repeats Fedora's release gate at fact-consumption boundaries so
+// hand-constructed or deserialized facts cannot accidentally broaden support.
+func (o OS) IsSupported() bool {
+	if !o.Supported {
+		return false
+	}
+	return o.ID != "fedora" || o.VersionID == "43" || o.VersionID == "44"
+}
+
 type SSH struct {
 	Installed             bool   `json:"installed"`
 	Service               string `json:"service"`
@@ -68,6 +79,9 @@ type SSH struct {
 
 type Docker struct {
 	Installed               bool   `json:"installed"`
+	PackageSetComplete      bool   `json:"package_set_complete,omitempty"`
+	PackageSetAvailable     bool   `json:"package_set_available,omitempty"`
+	ConflictingPackages     bool   `json:"conflicting_packages,omitempty"`
 	ServiceEnabled          bool   `json:"service_enabled"`
 	ServiceActive           bool   `json:"service_active"`
 	Responsive              bool   `json:"responsive"`
@@ -93,16 +107,25 @@ type Service struct {
 }
 
 type Tailscale struct {
-	Installed      bool   `json:"installed"`
-	ServiceEnabled bool   `json:"service_enabled"`
-	ServiceActive  bool   `json:"service_active"`
-	Connected      bool   `json:"connected"`
-	BackendState   string `json:"backend_state,omitempty"`
+	Installed       bool   `json:"installed"`
+	ServiceEnabled  bool   `json:"service_enabled"`
+	ServiceActive   bool   `json:"service_active"`
+	Connected       bool   `json:"connected"`
+	BackendState    string `json:"backend_state,omitempty"`
+	RepositoryState string `json:"repository_state,omitempty"`
 }
 
 type AutomaticUpdates struct {
-	Installed bool `json:"installed"`
-	Enabled   bool `json:"enabled"`
+	Installed   bool   `json:"installed"`
+	Enabled     bool   `json:"enabled"`
+	ConfigState string `json:"config_state,omitempty"`
+}
+
+// SELinux records only the normalized enforcement state. It is relevant to
+// whether a declared persistent bind may safely be shared with a Compose
+// service and Bebop's backup helper; raw policy output is deliberately omitted.
+type SELinux struct {
+	Mode string `json:"mode"`
 }
 
 type Firewall struct {
@@ -217,6 +240,7 @@ type ConvergenceSnapshot struct {
 	Architecture        string            `json:"architecture"`
 	ArchitectureKnown   bool              `json:"architecture_known"`
 	PackageManager      string            `json:"package_manager"`
+	PackageDatabase     string            `json:"package_database,omitempty"`
 	Systemd             bool              `json:"systemd"`
 	EffectiveUser       string            `json:"effective_user"`
 	SudoAvailable       bool              `json:"sudo_available"`
@@ -225,6 +249,7 @@ type ConvergenceSnapshot struct {
 	Services            []ServiceSnapshot `json:"services,omitempty"`
 	Tailscale           Tailscale         `json:"tailscale"`
 	AutomaticUpdates    AutomaticUpdates  `json:"automatic_updates"`
+	SELinux             SELinux           `json:"selinux"`
 	Firewall            Firewall          `json:"firewall"`
 	UnconfiguredStorage []StorageDevice   `json:"unconfigured_storage,omitempty"`
 	Storage             StorageSnapshot   `json:"storage"`
@@ -279,9 +304,9 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	sort.Slice(mountConfigs, func(i, j int) bool { return mountConfigs[i].Name < mountConfigs[j].Name })
 	return ConvergenceSnapshot{
 		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
-		PackageManager: host.PackageManager, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
+		PackageManager: host.PackageManager, PackageDatabase: host.PackageDatabase, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
-		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, Firewall: host.Firewall,
+		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, SELinux: host.SELinux, Firewall: host.Firewall,
 		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, MountConfigs: mountConfigs, Policy: policy}, DataRoot: host.DataRoot, Services: services,
 	}
 }

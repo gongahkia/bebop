@@ -211,12 +211,15 @@ placement guards, target apply locking, `stop`/`live` consistency, service
 runtime restoration, helper isolation, and snapshot verification. It does not
 invoke the CLI as a subprocess. `doctor` calls the normal read-only preflight
 assessment and records pass/warn/fail counts. `update-check` inspects Debian
-apt availability with `apt-get -s upgrade`; available updates are information,
-not failure and never cause installation.
+apt availability with `apt-get -s upgrade` and Fedora availability with
+`dnf5 -y check-upgrade`; DNF5 exit 100 means updates are available, not a job
+failure. Available updates are information, not failure and never cause
+installation.
 
-`refresh_metadata = true` is explicit. It performs `apt-get update` only,
-under the existing target mutation lock, before the simulation. It never runs
-`apt upgrade`, `full-upgrade`, package installation, image update, or reboot.
+`refresh_metadata = true` is explicit. It performs `apt-get update` on
+Debian-family targets or `dnf5 -y makecache` on Fedora, under the existing
+target mutation lock, before the check. It never runs an apt or DNF upgrade,
+package installation, image update, or reboot.
 Without refresh, history reports availability from whatever target package
 metadata was already present. Security counts are `known` only when the apt
 simulation exposes a security origin for every available update; otherwise the

@@ -18,11 +18,16 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if !cfg.Features.Tailscale {
 		return nil, nil, nil
 	}
+	if host.PackageManager == "dnf5" && host.Tailscale.RepositoryState == "unmanaged" {
+		return []plan.Change{{ID: "tailscale.repository", Module: "tailscale", Summary: "review Tailscale repository ownership", Reason: "an unmanaged Fedora Tailscale repository definition exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged /etc/yum.repos.d/tailscale.repo", Desired: "Bebop-reviewed signed repository configuration", Action: plan.Action{Kind: "tailscale.repository-conflict", Resource: "fedora"}, Verification: "not applicable until repository ownership is resolved", Blocked: "Bebop will not accept an unmanaged Tailscale repository definition on Fedora; review it manually before enabling Tailscale management"}}, nil, nil
+	}
 	changes := []plan.Change{}
 	warnings := []plan.Warning{}
 	if !host.Tailscale.Installed {
-		distribution, codename, ok := tailscaleRepository(host.OS)
-		if !ok {
+		if host.PackageManager == "dnf5" {
+			change := fedoraTailscaleChange(host)
+			changes = append(changes, change)
+		} else if distribution, codename, ok := tailscaleRepository(host.OS); !ok {
 			changes = append(changes, plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Action: plan.Action{Kind: "tailscale.install", Resource: host.OS.ID}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale repository mapping for " + host.OS.Display()})
 		} else {
 			change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx installed"}}, Action: plan.Action{Kind: "tailscale.install", Resource: distribution + "/" + codename, Script: tailscaleInstallScript(distribution, codename)}, Verification: "tailscale package is installed"}
@@ -51,11 +56,43 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	return changes, warnings, nil
 }
 
+func fedoraTailscaleChange(host facts.HostFacts) plan.Change {
+	change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed Fedora repository", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! rpm -q tailscale >/dev/null 2>&1"}, {ID: "tailscale.repository-safe", Description: "the Tailscale repository is absent or Bebop-managed", Script: "if test -e /etc/yum.repos.d/tailscale.repo; then grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/yum.repos.d/tailscale.repo; fi"}}, Action: plan.Action{Kind: "tailscale.install", Resource: "fedora", Script: fedoraTailscaleInstallScript}, Verification: "tailscale package is installed"}
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		change.Action.Script = ""
+		change.Blocked = "existing /etc/yum.repos.d/tailscale.repo is not Bebop-managed; review it manually before Bebop can take ownership"
+	} else {
+		rootBlocked(&change, host.SudoAvailable)
+	}
+	return change
+}
+
+const fedoraTailscaleInstallScript = `tmp=$(mktemp /etc/yum.repos.d/.tailscale.repo.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[tailscale-stable]
+name=Tailscale stable
+baseurl=https://pkgs.tailscale.com/stable/fedora/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pkgs.tailscale.com/stable/fedora/repo.gpg
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/yum.repos.d/tailscale.repo
+trap - EXIT
+dnf5 -y install tailscale`
+
 func (Tailscale) Apply(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	return runAction(ctx, tr, change, "tailscale.install", "tailscale.enable-service")
 }
 func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Config, change plan.Change) error {
 	if change.Action.Kind == "tailscale.install" {
+		if change.Action.Resource == "fedora" {
+			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
+		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed")
 	}
 	return verify(ctx, tr, "systemctl is-enabled tailscaled.service >/dev/null\nsystemctl is-active tailscaled.service >/dev/null")

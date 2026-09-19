@@ -28,7 +28,7 @@ func testArtifact(t *testing.T) Artifact {
 	if err := result.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	host := facts.HostFacts{Target: current.String(), Hostname: "pi", MachineID: "machine-a", OS: facts.OS{ID: "debian", VersionID: "12", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: "/srv/bebop"}}
+	host := facts.HostFacts{Target: current.String(), Hostname: "pi", MachineID: "machine-a", OS: facts.OS{ID: "debian", VersionID: "12", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: "/srv/bebop"}}
 	artifact, err := New("pi", "/work/hosts/pi.toml", current, config.Defaults(), host, result)
 	if err != nil {
 		t.Fatal(err)

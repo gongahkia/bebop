@@ -17,6 +17,23 @@ import (
 	"github.com/bebop-home/bebop/internal/transport"
 )
 
+func TestFedoraSELinuxBindRestoreUsesSharedLabelWithoutPrivilegeEscalation(t *testing.T) {
+	script := restoreArchiveScript(services.PersistentResource{Type: "path", Path: "/srv/data", SELinuxShared: true})
+	if !strings.Contains(script, "/srv/data:/data:z") || !strings.Contains(script, "--network none") || !strings.Contains(script, "--read-only") {
+		t.Fatalf("Fedora SELinux restore helper is not constrained: %s", script)
+	}
+	if strings.Contains(script, "--privileged") || strings.Contains(script, "label=disable") {
+		t.Fatalf("Fedora SELinux restore helper weakened container isolation: %s", script)
+	}
+}
+
+func TestNamedVolumeRestoreHelperDoesNotAddSELinuxBindOptions(t *testing.T) {
+	script := restoreArchiveScript(services.PersistentResource{Type: "volume", RuntimeVolume: "bebop_data"})
+	if !strings.Contains(script, "bebop_data:/data") || strings.Contains(script, ":z") {
+		t.Fatalf("named volume restore helper changed unexpectedly: %s", script)
+	}
+}
+
 func TestRestorePlanIsCanonicalTamperAwareAndDetectsDestinationDrift(t *testing.T) {
 	repository, cfg, deployment, manifest := restoreFixture(t)
 	host := restoreHost(deployment)

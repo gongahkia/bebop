@@ -26,7 +26,7 @@ func fixture(t *testing.T) (artifact.Artifact, facts.HostFacts, config.Config, *
 	host := facts.HostFacts{
 		Target: current.String(), Hostname: "pi", MachineID: "machine-a",
 		OS:           facts.OS{ID: "debian", Name: "Debian", VersionID: "12", VersionCodename: "bookworm", Family: "debian", Supported: true},
-		Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", Systemd: true, SudoAvailable: true,
+		Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true,
 		EffectiveUser: "pi", SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true},
 		DataRoot: facts.Directory{Path: config.DefaultDataRoot},
 	}
@@ -69,6 +69,14 @@ func TestValidateObservedRejectsRelevantDriftConfigAndWrongHost(t *testing.T) {
 	host.MachineID = "machine-b"
 	if _, err := ValidateObserved(saved, desired, host, planner); !hasCode(err, errs.TargetIdentityMismatch) {
 		t.Fatalf("expected wrong-host rejection, got %v", err)
+	}
+}
+
+func TestValidateObservedRejectsSELinuxPolicyStateDrift(t *testing.T) {
+	saved, host, desired, planner := fixture(t)
+	host.SELinux.Mode = "enforcing"
+	if _, err := ValidateObserved(saved, desired, host, planner); !hasCode(err, errs.PlanStale) {
+		t.Fatalf("expected SELinux state to stale saved plan, got %v", err)
 	}
 }
 
@@ -130,7 +138,7 @@ secret_env_file = "secrets/hello.env"
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := facts.HostFacts{Target: current.String(), Hostname: "pi", MachineID: "machine-a", OS: facts.OS{ID: "debian", VersionID: "12", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apt", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: desired.Storage.DataRoot, Exists: true, Mode: "750", UID: 0, GID: 0}, Docker: facts.Docker{Installed: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}, Services: []facts.Service{{Name: "hello", Project: "bebop-home-hello-7e75664d57", DesiredState: "running", Runtime: "missing", Health: "missing"}}}
+	host := facts.HostFacts{Target: current.String(), Hostname: "pi", MachineID: "machine-a", OS: facts.OS{ID: "debian", VersionID: "12", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: desired.Storage.DataRoot, Exists: true, Mode: "750", UID: 0, GID: 0}, Docker: facts.Docker{Installed: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}, Services: []facts.Service{{Name: "hello", Project: "bebop-home-hello-7e75664d57", DesiredState: "running", Runtime: "missing", Health: "missing"}}}
 	planner := planner.New(modules.Default()...)
 	result, err := planner.Build(host, desired)
 	if err != nil {

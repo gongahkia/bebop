@@ -15,7 +15,7 @@ import (
 )
 
 func initialFacts() facts.HostFacts {
-	return facts.HostFacts{Target: "ssh://pi@home", OS: facts.OS{ID: "raspbian", Name: "Raspberry Pi OS", VersionID: "12", VersionCodename: "bookworm", Family: "raspberry-pi-os", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", InitSystem: "systemd", Systemd: true, EffectiveUser: "pi", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}, DataRoot: facts.Directory{Path: config.DefaultDataRoot}}
+	return facts.HostFacts{Target: "ssh://pi@home", OS: facts.OS{ID: "raspbian", Name: "Raspberry Pi OS", VersionID: "12", VersionCodename: "bookworm", Family: "raspberry-pi-os", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", InitSystem: "systemd", Systemd: true, EffectiveUser: "pi", SudoAvailable: true, SSH: facts.SSH{Installed: true, Service: "ssh.service", ConfigValid: true, DropInSupported: true, AuthorizedKeysPresent: true}, DataRoot: facts.Directory{Path: config.DefaultDataRoot}}
 }
 
 func TestPlanIsCanonicalAndIdempotentAfterTransitions(t *testing.T) {
@@ -56,6 +56,26 @@ func TestPlanIsCanonicalAndIdempotentAfterTransitions(t *testing.T) {
 	}
 	if len(converged.Changes) != 0 {
 		t.Fatalf("expected no changes after transition: %#v", converged.Changes)
+	}
+}
+
+func TestFedoraRequiresDNF5RPMAndExplicitlySupportedRelease(t *testing.T) {
+	p := planner.New()
+	host := facts.HostFacts{Target: "local", OS: facts.OS{ID: "fedora", Family: "fedora", VersionID: "43", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "dnf5", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	if _, err := p.Build(host, config.Defaults()); err != nil {
+		t.Fatalf("Fedora 43 with dnf5/rpm was rejected: %v", err)
+	}
+	host.PackageManager = "apt"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Fedora was accepted with apt instead of dnf5/rpm")
+	}
+	host.PackageManager, host.PackageDatabase = "dnf5", ""
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Fedora was accepted without rpm")
+	}
+	host.PackageDatabase, host.OS.VersionID = "rpm", "45"
+	if _, err := p.Build(host, config.Defaults()); err == nil {
+		t.Fatal("Fedora 45 was accepted")
 	}
 }
 

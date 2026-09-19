@@ -110,10 +110,19 @@ namespace through normal Bebop operations.
 ## Docker and health
 
 Services require Docker Engine and Docker Compose v2. The existing Docker
-module remains the only installer: if apt advertises `docker-compose-plugin` or
-`docker-compose-v2`, it can plan installation after the engine/service actions.
-Otherwise the service action is blocked. Bebop does not install Docker from a
-convenience script or add external Docker repositories.
+module remains the only installer: on Debian-family targets it uses reviewed
+apt packages, and on Fedora 43/44 it uses the distribution `moby-engine`,
+`docker-cli`, and `docker-compose` packages through DNF5. Otherwise the service
+action is blocked. Bebop does not install Docker from a convenience script, add
+Docker's external CE repository, or mix a detected Docker CE stack with Fedora
+Moby packages.
+
+On an SELinux-enforcing Fedora target, every declared persistent bind resource
+must use Compose's shared `z` label option. For short syntax, use for example
+`/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and
+no label are blocked because Bebop's network-isolated backup/restore helper
+also mounts that declared path. Named volumes need no SELinux option. Bebop
+never disables SELinux, uses `--privileged`, or relabels an undeclared path.
 
 Compose commands run with `env -i`, a fixed safe PATH, `HOME=/root`, and
 `docker --context default`. Ambient controller or target `DOCKER_HOST` and

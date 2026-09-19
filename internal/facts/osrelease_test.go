@@ -14,7 +14,10 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"debian.os-release", "debian", "debian", "Debian GNU/Linux", true},
 		{"ubuntu.os-release", "ubuntu", "ubuntu", "Ubuntu", true},
 		{"raspberry-pi-os.os-release", "raspbian", "raspberry-pi-os", "Raspberry Pi OS", true},
-		{"fedora.os-release", "fedora", "unsupported", "Fedora Linux", false},
+		{"fedora.os-release", "fedora", "fedora", "Fedora Linux", true},
+		{"fedora-44.os-release", "fedora", "fedora", "Fedora Linux", true},
+		{"fedora-42.os-release", "fedora", "fedora", "Fedora Linux", false},
+		{"fedora-45.os-release", "fedora", "fedora", "Fedora Linux", false},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -30,6 +33,34 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestFedoraVersionsAreExplicitlyGated(t *testing.T) {
+	for _, version := range []string{"42", "43", "44", "45", "rawhide", ""} {
+		os, err := ParseOSRelease("ID=fedora\nVERSION_ID=" + version + "\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := version == "43" || version == "44"
+		if os.Supported != want {
+			t.Fatalf("Fedora %q supported=%t, want %t", version, os.Supported, want)
+		}
+	}
+}
+
+func TestUnrelatedDistributionRemainsUnsupported(t *testing.T) {
+	os, err := ParseOSRelease("ID=rocky\nVERSION_ID=9.5\n")
+	if err != nil || os.Supported || os.Family != "unsupported" {
+		t.Fatalf("unrelated distribution was accepted: %#v %v", os, err)
+	}
+}
+
+func TestNormalizeSELinuxMode(t *testing.T) {
+	for _, test := range []struct{ raw, want string }{{"Enforcing", "enforcing"}, {"permissive", "permissive"}, {"Disabled", "disabled"}, {"", "unavailable"}, {"unknown", "unavailable"}} {
+		if got := NormalizeSELinuxMode(test.raw); got != test.want {
+			t.Fatalf("NormalizeSELinuxMode(%q) = %q, want %q", test.raw, got, test.want)
+		}
 	}
 }
 
