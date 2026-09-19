@@ -80,6 +80,28 @@ func TestFromFactsReportsEnterpriseLinuxDNFRequirementsAccurately(t *testing.T) 
 	}
 }
 
+func TestFromFactsReportsOpenSUSEZypperRequirementsAndMutableHostBoundary(t *testing.T) {
+	host := facts.HostFacts{OS: facts.OS{ID: "opensuse-leap", Name: "openSUSE Leap", Family: "opensuse", VersionID: "16.0", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "zypper", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+	result := FromFacts(target.Target{Kind: target.Local}, host)
+	if !result.Ready {
+		t.Fatalf("Leap zypper/rpm host was not ready: %#v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Code == "package_manager.zypper" && check.Status == Pass {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("openSUSE package-manager check did not identify zypper/rpm: %#v", result.Checks)
+	}
+	host.MutationBlocked, host.MutationBlockReason = true, "root filesystem is read-only"
+	result = FromFacts(target.Target{Kind: target.Local}, host)
+	if result.Ready || result.FailureError() == nil {
+		t.Fatalf("immutable target was reported ready: %#v", result)
+	}
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)
