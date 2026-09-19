@@ -1,0 +1,4 @@
+NAME="openSUSE MicroOS"
+ID="opensuse-microos"
+ID_LIKE="opensuse suse"
+VERSION_ID="20260101"

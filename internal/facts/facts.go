@@ -31,6 +31,8 @@ type HostFacts struct {
 	Firewall            Firewall         `json:"firewall"`
 	MemoryKiB           int64            `json:"memory_kib"`
 	RootFilesystem      Filesystem       `json:"root_filesystem"`
+	MutationBlocked     bool             `json:"mutation_blocked,omitempty"`
+	MutationBlockReason string           `json:"mutation_block_reason,omitempty"`
 	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
 	Storage             Storage          `json:"storage"`
 	DataRoot            Directory        `json:"data_root"`
@@ -69,6 +71,10 @@ func (o OS) IsSupported() bool {
 		return o.VersionID == "9.8" || o.VersionID == "10.2"
 	case "centos":
 		return (o.VersionID == "9" && o.PlatformID == "platform:el9" && o.Name == "CentOS Stream") || (o.VersionID == "10" && o.PlatformID == "platform:el10" && o.Name == "CentOS Stream")
+	case "opensuse-leap":
+		return o.VersionID == "16.0"
+	case "opensuse-tumbleweed":
+		return true
 	default:
 		return true
 	}
@@ -152,6 +158,7 @@ type Filesystem struct {
 	Type         string `json:"type,omitempty"`
 	SizeKiB      int64  `json:"size_kib,omitempty"`
 	AvailableKiB int64  `json:"available_kib,omitempty"`
+	ReadOnly     bool   `json:"read_only,omitempty"`
 }
 
 // StorageDevice is inspection-only. M0/M1 never creates a plan action from it.
@@ -267,6 +274,7 @@ type ConvergenceSnapshot struct {
 	UnconfiguredStorage []StorageDevice   `json:"unconfigured_storage,omitempty"`
 	Storage             StorageSnapshot   `json:"storage"`
 	DataRoot            Directory         `json:"data_root"`
+	MutationBlocked     bool              `json:"mutation_blocked,omitempty"`
 }
 
 // StorageSnapshot intentionally records only topology and mount state. Exact
@@ -315,12 +323,18 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	sort.Slice(policy, func(i, j int) bool { return policy[i].Name < policy[j].Name })
 	mountConfigs := append([]StorageMountConfig(nil), host.Storage.MountConfigs...)
 	sort.Slice(mountConfigs, func(i, j int) bool { return mountConfigs[i].Name < mountConfigs[j].Name })
+	os := host.OS
+	// Tumbleweed snapshot dates are not a release gate or a machine identity.
+	// Package/repository facts still stale a plan when their state changes.
+	if os.ID == "opensuse-tumbleweed" {
+		os.VersionID = ""
+	}
 	return ConvergenceSnapshot{
-		OS: host.OS, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
+		OS: os, Architecture: host.Architecture, ArchitectureKnown: host.ArchitectureKnown,
 		PackageManager: host.PackageManager, PackageDatabase: host.PackageDatabase, Systemd: host.Systemd, EffectiveUser: host.EffectiveUser,
 		SudoAvailable: host.SudoAvailable, SSH: host.SSH, Docker: host.Docker,
 		Tailscale: host.Tailscale, AutomaticUpdates: host.AutomaticUpdates, SELinux: host.SELinux, Firewall: host.Firewall,
-		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, MountConfigs: mountConfigs, Policy: policy}, DataRoot: host.DataRoot, Services: services,
+		UnconfiguredStorage: storage, Storage: StorageSnapshot{Available: host.Storage.Available, MountConfigs: mountConfigs, Policy: policy}, DataRoot: host.DataRoot, MutationBlocked: host.MutationBlocked, Services: services,
 	}
 }
 

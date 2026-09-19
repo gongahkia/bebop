@@ -54,6 +54,16 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 		t.Fatalf("Fedora without dnf5/rpm was accepted as %q/%q", manager, database)
 	}
 	tr.missingDNFOrRPM = false
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "opensuse-leap", Family: "opensuse", VersionID: "16.0", Supported: true})
+	if manager != "zypper" || database != "rpm" {
+		t.Fatalf("openSUSE package facts = %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = true
+	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "opensuse-tumbleweed", Family: "opensuse", VersionID: "20260122", Supported: true})
+	if manager != "unknown" || database != "" {
+		t.Fatalf("openSUSE without zypper/rpm was accepted as %q/%q", manager, database)
+	}
+	tr.missingDNFOrRPM = false
 	manager, database = inspectPackageTools(context.Background(), tr, facts.OS{ID: "rocky", Family: "enterprise-linux", VersionID: "9.8", Supported: true})
 	if manager != "dnf" || database != "rpm" {
 		t.Fatalf("Enterprise Linux package facts = %q/%q", manager, database)
@@ -70,6 +80,26 @@ func TestPackageToolProbeSelectsSupportedOSFamily(t *testing.T) {
 	}
 	if mode := inspectSELinux(context.Background(), tr).Mode; mode != "enforcing" {
 		t.Fatalf("SELinux state was not normalized: %q", mode)
+	}
+}
+
+func TestOpenSUSEPackageAvailabilityRequiresOfficialEnabledGPGCheckedRepository(t *testing.T) {
+	repositories := `<?xml version="1.0"?><stream><repo-list><repo alias="openSUSE:repo-oss" name="repo-oss" enabled="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1"><url>http://cdn.opensuse.org/distribution/leap/16.0/repo/oss/x86_64</url></repo></repo-list></stream>`
+	packages := `<?xml version="1.0"?><stream><search-result><solvable-list><solvable name="docker" kind="package" repository="repo-oss"/><solvable name="docker-compose" kind="package" repository="repo-oss"/></solvable-list></search-result></stream>`
+	if !openSUSEPackagesAvailable(repositories, packages, "docker", "docker-compose") {
+		t.Fatal("official openSUSE package source was rejected")
+	}
+	if openSUSEPackagesAvailable(strings.ReplaceAll(repositories, "cdn.opensuse.org", "home.example.invalid"), packages, "docker", "docker-compose") {
+		t.Fatal("third-party package source was accepted")
+	}
+	if openSUSEPackagesAvailable(strings.ReplaceAll(repositories, "pkg_gpgcheck=\"1\"", "pkg_gpgcheck=\"0\""), packages, "docker", "docker-compose") {
+		t.Fatal("repository without package GPG checking was accepted")
+	}
+}
+
+func TestMutationSafetyBlocksReadonlyAndTransactionalTargets(t *testing.T) {
+	if blocked, _ := inspectMutationSafety(context.Background(), packageProbeTransport{}, facts.Filesystem{ReadOnly: true}); !blocked {
+		t.Fatal("read-only root was not blocked")
 	}
 }
 
@@ -108,6 +138,11 @@ func (tr packageProbeTransport) Run(_ context.Context, request transport.Request
 			return transport.Result{}, nil
 		}
 		return transport.Result{Stdout: "dnf rpm"}, nil
+	case strings.Contains(request.Script, "command -v zypper"):
+		if tr.missingDNFOrRPM {
+			return transport.Result{}, nil
+		}
+		return transport.Result{Stdout: "zypper rpm"}, nil
 	case strings.Contains(request.Script, "command -v apt-get"):
 		return transport.Result{Stdout: "apt dpkg"}, nil
 	case strings.Contains(request.Script, "getenforce"):

@@ -109,6 +109,24 @@ func TestEnterpriseLinuxRequiresDNFAndExplicitReviewedIdentity(t *testing.T) {
 	}
 }
 
+func TestOpenSUSERequiresZypperRPMAndMutableRoot(t *testing.T) {
+	p := planner.New()
+	for _, os := range []facts.OS{{ID: "opensuse-leap", Family: "opensuse", VersionID: "16.0", Supported: true}, {ID: "opensuse-tumbleweed", Family: "opensuse", VersionID: "20260122", Supported: true}} {
+		host := facts.HostFacts{Target: "local", OS: os, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "zypper", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true}
+		if _, err := p.Build(host, config.Defaults()); err != nil {
+			t.Fatalf("%s with zypper/rpm was rejected: %v", os.Display(), err)
+		}
+		host.PackageManager = "dnf"
+		if _, err := p.Build(host, config.Defaults()); err == nil {
+			t.Fatalf("%s accepted dnf instead of zypper/rpm", os.Display())
+		}
+	}
+	blocked := facts.HostFacts{Target: "local", OS: facts.OS{ID: "opensuse-leap", Family: "opensuse", VersionID: "16.0", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "zypper", PackageDatabase: "rpm", Systemd: true, SudoAvailable: true, MutationBlocked: true, MutationBlockReason: "root filesystem is read-only"}
+	if _, err := p.Build(blocked, config.Defaults()); err == nil {
+		t.Fatal("read-only target was accepted for mutation")
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

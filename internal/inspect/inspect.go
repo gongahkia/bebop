@@ -4,8 +4,10 @@ package inspect
 
 import (
 	"context"
+	"encoding/xml"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -60,10 +62,11 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	}
 	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
 	f.Tailscale = inspectTailscale(ctx, tr, f.Systemd, f.PackageManager, f.OS)
-	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.PackageManager)
+	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.PackageManager, f.OS)
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
+	f.MutationBlocked, f.MutationBlockReason = inspectMutationSafety(ctx, tr, f.RootFilesystem)
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.Storage = inspectStorage(ctx, tr)
 	f.Storage.MountConfigs = inspectManagedMountConfigs(ctx, tr, cfg.Storage.Resources)
@@ -87,6 +90,8 @@ func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.O
 		script = "if command -v dnf5 >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'dnf5 rpm'; fi"
 	case "dnf":
 		script = "if command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'dnf rpm'; fi"
+	case "zypper":
+		script = "if command -v zypper >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then printf 'zypper rpm'; fi"
 	}
 	if fields := strings.Fields(mustProbe(ctx, tr, script)); len(fields) >= 1 && fields[0] == manager {
 		// The probe itself tests the paired database executable before writing
@@ -164,6 +169,9 @@ if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sb
 if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compose_package=docker-compose\n'; else printf 'compose_package=\n'; fi
 `
 	}
+	if packageManager == "zypper" && os.Family == "opensuse" {
+		return inspectOpenSUSEDocker(ctx, tr, systemd)
+	}
 	policy := ""
 	if packageManager == "dnf" {
 		family, major, ok := facts.DockerCERepositoryPolicy(os)
@@ -175,6 +183,90 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 	}
 	lines := probeLines(ctx, tr, script)
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: policy, ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+}
+
+// inspectOpenSUSEDocker accepts only packages resolved from enabled official
+// openSUSE repositories. It consumes Zypper XML only long enough to normalize
+// availability; raw repository metadata never becomes a host fact.
+func inspectOpenSUSEDocker(ctx context.Context, tr transport.Transport, systemd bool) facts.Docker {
+	lines := probeLines(ctx, tr, `
+if rpm -q docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if rpm -q docker docker-compose >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+for package in docker-ce docker-ce-cli docker-compose-plugin; do if rpm -q "$package" >/dev/null 2>&1; then printf 'conflict=yes\n'; fi; done
+if systemctl is-enabled docker.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active docker.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; } || { test "$(id -u)" -ne 0 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker --context default compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi
+`)
+	repositories := mustProbe(ctx, tr, "zypper --non-interactive --xmlout lr -u 2>/dev/null || true")
+	packages := mustProbe(ctx, tr, "zypper --non-interactive --xmlout search --details docker docker-compose 2>/dev/null || true")
+	available := openSUSEPackagesAvailable(repositories, packages, "docker", "docker-compose")
+	composePackage := ""
+	if openSUSEPackagesAvailable(repositories, packages, "docker-compose") {
+		composePackage = "docker-compose"
+	}
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: available, ConflictingPackages: lines["conflict"] == "yes", RepositoryPolicy: "opensuse-official", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: composePackage}
+}
+
+type zypperRepositoryList struct {
+	Repositories []struct {
+		Alias          string `xml:"alias,attr"`
+		Name           string `xml:"name,attr"`
+		Enabled        string `xml:"enabled,attr"`
+		GPGCheck       string `xml:"gpgcheck,attr"`
+		RepoGPGCheck   string `xml:"repo_gpgcheck,attr"`
+		PackageGPGCheck string `xml:"pkg_gpgcheck,attr"`
+		URL            string `xml:"url"`
+	} `xml:"repo-list>repo"`
+}
+
+type zypperSearchResult struct {
+	Packages []struct {
+		Name       string `xml:"name,attr"`
+		Kind       string `xml:"kind,attr"`
+		Repository string `xml:"repository,attr"`
+	} `xml:"search-result>solvable-list>solvable"`
+}
+
+func openSUSEPackagesAvailable(repoXML, packagesXML string, required ...string) bool {
+	var repositories zypperRepositoryList
+	var packages zypperSearchResult
+	if xml.Unmarshal([]byte(repoXML), &repositories) != nil || xml.Unmarshal([]byte(packagesXML), &packages) != nil {
+		return false
+	}
+	allowed := make(map[string]bool)
+	for _, repository := range repositories.Repositories {
+		parsed, err := url.Parse(strings.TrimSpace(repository.URL))
+		if err != nil || repository.Enabled != "1" || repository.GPGCheck != "1" || repository.RepoGPGCheck != "1" || repository.PackageGPGCheck != "1" || !strings.HasPrefix(repository.Alias, "openSUSE:") || !officialOpenSUSERepositoryHost(parsed.Hostname()) {
+			continue
+		}
+		allowed[repository.Name] = true
+	}
+	found := make(map[string]bool)
+	for _, candidate := range packages.Packages {
+		if candidate.Kind == "package" && allowed[candidate.Repository] {
+			for _, name := range required {
+				if candidate.Name == name {
+					found[name] = true
+				}
+			}
+		}
+	}
+	for _, name := range required {
+		if !found[name] {
+			return false
+		}
+	}
+	return true
+}
+
+func officialOpenSUSERepositoryHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "cdn.opensuse.org", "download.opensuse.org", "downloadcontent.opensuse.org":
+		return true
+	default:
+		return false
+	}
 }
 
 func enterpriseDockerProbeScript(family, major string) string {
@@ -396,6 +488,20 @@ if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=y
 			"gpgkey=" + keyURL,
 		}, "pkgs.tailscale.com/stable/")
 	}
+	if packageManager == "zypper" && os.Family == "opensuse" {
+		repository, ok := facts.OpenSUSETailscaleRepositoryPolicy(os)
+		if !ok {
+			return facts.Tailscale{}
+		}
+		baseURL := "https://pkgs.tailscale.com/" + repository
+		keyURL := baseURL + "/repo.gpg"
+		script = `
+if rpm -q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if test ! -e /etc/zypp/repos.d/tailscale.repo; then printf 'repository=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx ` + transport.ShellQuote("baseurl="+baseURL) + ` /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'enabled=1' /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'gpgcheck=1' /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'repo_gpgcheck=1' /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx 'pkg_gpgcheck=1' /etc/zypp/repos.d/tailscale.repo 2>/dev/null && grep -Fqx ` + transport.ShellQuote("gpgkey="+keyURL) + ` /etc/zypp/repos.d/tailscale.repo 2>/dev/null; then printf 'repository=managed\n'; else printf 'repository=unmanaged\n'; fi
+`
+	}
 	lines := probeLines(ctx, tr, script)
 	status := struct {
 		BackendState string `json:"BackendState"`
@@ -408,7 +514,7 @@ if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=y
 	return facts.Tailscale{Installed: lines["installed"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: connected, BackendState: status.BackendState, RepositoryState: lines["repository"]}
 }
 
-func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string) facts.AutomaticUpdates {
+func inspectUpdates(ctx context.Context, tr transport.Transport, packageManager string, os facts.OS) facts.AutomaticUpdates {
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' && apt-config dump 2>/dev/null | grep -Fqx 'APT::Periodic::Update-Package-Lists "1";'; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
@@ -430,6 +536,28 @@ for timer in dnf-automatic.timer dnf-automatic-download.timer dnf-automatic-noti
 done
 `
 	}
+	if packageManager == "zypper" {
+		mode, ok := facts.OpenSUSEUpdatePolicy(os)
+		if !ok {
+			return facts.AutomaticUpdates{}
+		}
+		if mode == "tumbleweed" {
+			script = `
+if rpm -q os-update >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test ! -e /etc/os-update.conf; then printf 'config=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/os-update.conf 2>/dev/null && grep -Eq '^[[:space:]]*UPDATE_CMD[[:space:]]*=[[:space:]]*dup[[:space:]]*$' /etc/os-update.conf 2>/dev/null && grep -Eq '^[[:space:]]*REBOOT_CMD[[:space:]]*=[[:space:]]*none[[:space:]]*$' /etc/os-update.conf 2>/dev/null; then printf 'config=managed\n'; else printf 'config=unmanaged\n'; fi
+if systemctl is-enabled os-update.timer >/dev/null 2>&1 && systemctl is-active os-update.timer >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-enabled bebop-zypper-patch.timer >/dev/null 2>&1 || systemctl is-active bebop-zypper-patch.timer >/dev/null 2>&1; then printf 'conflicting_timers=yes\n'; fi
+`
+		} else {
+			script = `
+if test -e /etc/systemd/system/bebop-zypper-patch.service && test -e /etc/systemd/system/bebop-zypper-patch.timer; then
+  if grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/systemd/system/bebop-zypper-patch.service 2>/dev/null && grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/systemd/system/bebop-zypper-patch.timer 2>/dev/null; then printf 'installed=yes\n'; printf 'config=managed\n'; else printf 'config=unmanaged\n'; fi
+else printf 'config=absent\n'; fi
+if systemctl is-enabled bebop-zypper-patch.timer >/dev/null 2>&1 && systemctl is-active bebop-zypper-patch.timer >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if systemctl is-enabled os-update.timer >/dev/null 2>&1 || systemctl is-active os-update.timer >/dev/null 2>&1; then printf 'conflicting_timers=yes\n'; fi
+`
+		}
+	}
 	lines := probeLines(ctx, tr, script)
 	return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"], ConflictingTimers: lines["conflicting_timers"] == "yes"}
 }
@@ -444,11 +572,30 @@ if systemctl is-active nftables.service >/dev/null 2>&1 || systemctl is-active f
 }
 
 func inspectRootFilesystem(ctx context.Context, tr transport.Transport) facts.Filesystem {
-	fields := strings.Fields(mustProbe(ctx, tr, "findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL --target / 2>/dev/null || true"))
-	if len(fields) != 4 {
+	fields := strings.Fields(mustProbe(ctx, tr, "findmnt -n -o SOURCE,FSTYPE,SIZE,AVAIL,OPTIONS --target / 2>/dev/null || true"))
+	if len(fields) != 5 {
 		return facts.Filesystem{}
 	}
-	return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3])}
+	return facts.Filesystem{Source: fields[0], Type: fields[1], SizeKiB: parseSizeKiB(fields[2]), AvailableKiB: parseSizeKiB(fields[3]), ReadOnly: containsOption(fields[4], "ro")}
+}
+
+func inspectMutationSafety(ctx context.Context, tr transport.Transport, root facts.Filesystem) (bool, string) {
+	if root.ReadOnly {
+		return true, "root filesystem is read-only"
+	}
+	if firstLine(mustProbe(ctx, tr, "if command -v transactional-update >/dev/null 2>&1; then printf yes; fi")) == "yes" {
+		return true, "transactional-update is present; Bebop supports only conventional mutable hosts"
+	}
+	return false, ""
+}
+
+func containsOption(options, wanted string) bool {
+	for _, option := range strings.Split(options, ",") {
+		if option == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectUnconfiguredStorage(ctx context.Context, tr transport.Transport) []facts.StorageDevice {

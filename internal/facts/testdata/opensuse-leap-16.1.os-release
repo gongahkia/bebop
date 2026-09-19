@@ -1,0 +1,5 @@
+NAME="openSUSE Leap"
+VERSION="16.1 Beta"
+ID="opensuse-leap"
+ID_LIKE="suse opensuse"
+VERSION_ID="16.1"

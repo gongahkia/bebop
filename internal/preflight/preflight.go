@@ -128,6 +128,9 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "init.unsupported", Message: "systemd unavailable; Bebop requires systemd"})
 	}
+	if host.MutationBlocked {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.mutation_unsupported", Message: "target mutation is unsafe: " + host.MutationBlockReason})
+	}
 	result.SudoAvailable = host.SudoAvailable
 	if host.SudoAvailable {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "privilege.noninteractive", Message: "non-interactive root access available"})

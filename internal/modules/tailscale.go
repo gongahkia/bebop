@@ -19,7 +19,7 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if !cfg.Features.Tailscale {
 		return nil, nil, nil
 	}
-	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf")) && host.Tailscale.RepositoryState == "unmanaged" {
+	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf") || (host.OS.Family == "opensuse" && host.PackageManager == "zypper")) && host.Tailscale.RepositoryState == "unmanaged" {
 		platform := "Fedora"
 		resource := "fedora"
 		if host.PackageManager == "dnf" {
@@ -28,17 +28,22 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 				resource = family + "-" + major
 			}
 		}
+		if host.PackageManager == "zypper" {
+			platform, resource = "openSUSE", "opensuse"
+		}
 		return []plan.Change{{ID: "tailscale.repository", Module: "tailscale", Summary: "review Tailscale repository ownership", Reason: "an unmanaged " + platform + " Tailscale repository definition exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged /etc/yum.repos.d/tailscale.repo", Desired: "Bebop-reviewed signed repository configuration", Action: plan.Action{Kind: "tailscale.repository-conflict", Resource: resource}, Verification: "not applicable until repository ownership is resolved", Blocked: "Bebop will not accept an unmanaged Tailscale repository definition on " + platform + "; review it manually before enabling Tailscale management"}}, nil, nil
 	}
 	changes := []plan.Change{}
 	warnings := []plan.Warning{}
-	needsRPMRepository := (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf")) && host.Tailscale.RepositoryState != "managed"
+	needsRPMRepository := (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf") || (host.OS.Family == "opensuse" && host.PackageManager == "zypper")) && host.Tailscale.RepositoryState != "managed"
 	if !host.Tailscale.Installed || needsRPMRepository {
 		if host.PackageManager == "dnf5" {
 			change := fedoraTailscaleChange(host)
 			changes = append(changes, change)
 		} else if host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf" {
 			changes = append(changes, enterpriseTailscaleChange(host))
+		} else if host.OS.Family == "opensuse" && host.PackageManager == "zypper" {
+			changes = append(changes, openSUSETailscaleChange(host))
 		} else if distribution, codename, ok := tailscaleRepository(host.OS); !ok {
 			changes = append(changes, plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed package repository", Action: plan.Action{Kind: "tailscale.install", Resource: host.OS.ID}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale repository mapping for " + host.OS.Display()})
 		} else {
@@ -66,6 +71,65 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
 	}
 	return changes, warnings, nil
+}
+
+func openSUSETailscaleChange(host facts.HostFacts) plan.Change {
+	repository, ok := facts.OpenSUSETailscaleRepositoryPolicy(host.OS)
+	if !ok {
+		return plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed openSUSE repository", Action: plan.Action{Kind: "tailscale.install", Resource: "opensuse"}, Verification: "tailscale package is installed", Blocked: "Bebop does not have a reviewed Tailscale repository mapping for " + host.OS.Display()}
+	}
+	change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "Tailscale is not installed", Risk: plan.Privileged, RequiresRoot: true, Current: "not installed", Desired: "Tailscale installed from its official signed openSUSE repository", Preconditions: []plan.Precondition{{ID: "tailscale.package-absent", Description: "tailscale is still not installed", Script: "! rpm -q tailscale >/dev/null 2>&1"}, {ID: "tailscale.repository-safe", Description: "the Tailscale repository is absent or Bebop-managed", Script: openSUSETailscaleRepositorySafeScript(repository)}}, Action: plan.Action{Kind: "tailscale.install", Resource: "opensuse", Script: openSUSETailscaleInstallScript(repository)}, Verification: "tailscale package is installed"}
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		change.Action.Script = ""
+		change.Blocked = "existing /etc/zypp/repos.d/tailscale.repo is not Bebop-managed; review it manually before Bebop can take ownership"
+	} else {
+		rootBlocked(&change, host.SudoAvailable)
+	}
+	return change
+}
+
+func openSUSETailscaleRepositorySafeScript(repository string) string {
+	baseURL := "https://pkgs.tailscale.com/" + repository
+	keyURL := baseURL + "/repo.gpg"
+	return `if test -e /etc/zypp/repos.d/tailscale.repo; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx ` + transport.ShellQuote("baseurl="+baseURL) + ` /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx 'enabled=1' /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx 'gpgcheck=1' /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx 'repo_gpgcheck=1' /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx 'pkg_gpgcheck=1' /etc/zypp/repos.d/tailscale.repo
+  grep -Fqx ` + transport.ShellQuote("gpgkey="+keyURL) + ` /etc/zypp/repos.d/tailscale.repo
+fi
+for candidate in /etc/zypp/repos.d/*.repo; do
+  test -f "$candidate" || continue
+  test "$candidate" = /etc/zypp/repos.d/tailscale.repo && continue
+  ! grep -Fq 'pkgs.tailscale.com/stable/' "$candidate" 2>/dev/null
+done`
+}
+
+func openSUSETailscaleInstallScript(repository string) string {
+	baseURL := "https://pkgs.tailscale.com/" + repository
+	keyURL := baseURL + "/repo.gpg"
+	return `tmp=$(mktemp /etc/zypp/repos.d/.tailscale.repo.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[tailscale-stable]
+name=Tailscale stable
+baseurl=` + baseURL + `
+enabled=1
+autorefresh=1
+type=rpm-md
+gpgcheck=1
+repo_gpgcheck=1
+pkg_gpgcheck=1
+gpgkey=` + keyURL + `
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/zypp/repos.d/tailscale.repo
+trap - EXIT
+zypper --non-interactive install tailscale`
 }
 
 func enterpriseTailscaleChange(host facts.HostFacts) plan.Change {
@@ -161,6 +225,9 @@ func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Co
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}
 		if strings.HasPrefix(change.Action.Resource, "centos-") || strings.HasPrefix(change.Action.Resource, "rhel-") {
+			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
+		}
+		if change.Action.Resource == "opensuse" {
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}
 		return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed")

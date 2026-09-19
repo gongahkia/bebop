@@ -131,3 +131,24 @@ func TestEnterpriseLinuxRepositoryPolicyAndSELinuxParticipateDeterministically(t
 		t.Fatalf("Enterprise Linux SELinux enforcement did not affect convergence: %v", err)
 	}
 }
+
+func TestTumbleweedSnapshotDateIsNotConvergenceIdentityButPlannedStateIs(t *testing.T) {
+	host := HostFacts{MachineID: "tw-machine", OS: OS{ID: "opensuse-tumbleweed", Family: "opensuse", VersionID: "20260122", Supported: true}, PackageManager: "zypper", PackageDatabase: "rpm", Docker: Docker{PackageSetAvailable: true}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.OS.VersionID = "20260916"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("display-only Tumbleweed snapshot date changed convergence: %v", err)
+	}
+	if !host.Identity().Matches(Identity{MachineID: "tw-machine", OSID: "opensuse-tumbleweed", OSVersion: "20260122"}) {
+		t.Fatal("machine identity unexpectedly depends on Tumbleweed snapshot date")
+	}
+	host.Docker.PackageSetAvailable = false
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || third == second {
+		t.Fatalf("planner-relevant Tumbleweed package state did not stale convergence: %v", err)
+	}
+}

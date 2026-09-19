@@ -1,0 +1,4 @@
+NAME="Example SUSE derivative"
+ID="example-suse"
+ID_LIKE="opensuse suse"
+VERSION_ID="1"

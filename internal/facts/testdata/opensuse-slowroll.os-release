@@ -1,0 +1,4 @@
+NAME="openSUSE Slowroll"
+ID="opensuse-slowroll"
+ID_LIKE="opensuse suse"
+VERSION_ID="20260101"

@@ -24,6 +24,9 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 		{"almalinux-10.2.os-release", "almalinux", "enterprise-linux", "AlmaLinux", true},
 		{"centos-stream-9.os-release", "centos", "enterprise-linux", "CentOS Stream", true},
 		{"centos-stream-10.os-release", "centos", "enterprise-linux", "CentOS Stream", true},
+		{"opensuse-leap-16.0.os-release", "opensuse-leap", "opensuse", "openSUSE Leap", true},
+		{"opensuse-tumbleweed-20260122.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
+		{"opensuse-tumbleweed-20260916.os-release", "opensuse-tumbleweed", "opensuse", "openSUSE Tumbleweed", true},
 	}
 	for _, test := range tests {
 		t.Run(test.fixture, func(t *testing.T) {
@@ -39,6 +42,30 @@ func TestParseOSReleaseFixtures(t *testing.T) {
 				t.Fatalf("unexpected OS: %#v", actual)
 			}
 		})
+	}
+}
+
+func TestOpenSUSEVersionsAndDerivativesAreExplicitlyGated(t *testing.T) {
+	for _, fixture := range []string{"opensuse-leap-15.6.os-release", "opensuse-leap-16.1.os-release", "opensuse-microos.os-release", "opensuse-slowroll.os-release", "generic-opensuse-like.os-release"} {
+		t.Run(fixture, func(t *testing.T) {
+			contents, err := os.ReadFile(filepath.Join("testdata", fixture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := ParseOSRelease(string(contents))
+			if err != nil || actual.Supported || actual.IsSupported() {
+				t.Fatalf("unsupported openSUSE fixture was accepted: %#v, %v", actual, err)
+			}
+		})
+	}
+}
+
+func TestOpenSUSERequiresZypperAndRPM(t *testing.T) {
+	for _, os := range []OS{{ID: "opensuse-leap", Family: "opensuse", VersionID: "16.0", Supported: true}, {ID: "opensuse-tumbleweed", Family: "opensuse", VersionID: "20260122", Supported: true}} {
+		manager, database, ok := RequiredPackageTools(os)
+		if !ok || manager != "zypper" || database != "rpm" || !PackageToolsAvailable(os, "zypper", "rpm") || PackageToolsAvailable(os, "dnf", "rpm") || PackageToolsAvailable(os, "apt", "dpkg") {
+			t.Fatalf("openSUSE package tools were not strictly normalized: %#v -> %q/%q %t", os, manager, database, ok)
+		}
 	}
 }
 

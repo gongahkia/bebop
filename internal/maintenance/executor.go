@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/bebop-home/bebop/internal/bebop"
 	"github.com/bebop-home/bebop/internal/config"
 	"github.com/bebop-home/bebop/internal/errs"
+	"github.com/bebop-home/bebop/internal/facts"
 	"github.com/bebop-home/bebop/internal/preflight"
 	"github.com/bebop-home/bebop/internal/resolve"
 	"github.com/bebop-home/bebop/internal/transport"
@@ -140,7 +143,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	if err != nil {
 		return Outcome{}, err
 	}
-	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" {
+	if host.PackageManager != "apt" && host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" {
 		return Outcome{Result: Failure}, errs.New(errs.UnsupportedOS, "update awareness requires the target's reviewed package-management tools", nil)
 	}
 	details := Details{}
@@ -158,6 +161,8 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 			refreshScript, packageManager = dnfRefreshScript, "DNF5"
 		} else if host.PackageManager == "dnf" {
 			refreshScript, packageManager = enterpriseDNFRefreshScript, "DNF"
+		} else if host.PackageManager == "zypper" {
+			refreshScript, packageManager = zypperRefreshScript, "Zypper"
 		}
 		_, refreshErr := tr.Run(ctx, transport.Request{Script: refreshScript, Privileged: true})
 		releaseErr := lock.Release()
@@ -208,6 +213,41 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		details.SecurityClassification = "unknown"
 		return Outcome{Result: Success, Details: details}, nil
 	}
+	if host.PackageManager == "zypper" {
+		mode, ok := facts.OpenSUSEUpdatePolicy(host.OS)
+		if !ok {
+			return Outcome{Result: Failure, Details: details}, errs.New(errs.UnsupportedOS, "update awareness requires a reviewed openSUSE target", nil)
+		}
+		if mode == "leap" {
+			_, checkErr := tr.Run(ctx, transport.Request{Script: zypperLeapPatchCheckScript})
+			available, security, operationalErr := zypperPatchUpdatesAvailable(checkErr)
+			if operationalErr != nil {
+				return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available Zypper patches: %w", operationalErr)
+			}
+			if available {
+				details.UpdatesAvailable = 1
+			}
+			if security {
+				details.SecurityUpdates, details.SecurityClassification = 1, "known"
+			} else {
+				details.SecurityClassification = "unknown"
+			}
+			return Outcome{Result: Success, Details: details}, nil
+		}
+		result, checkErr := tr.Run(ctx, transport.Request{Script: zypperTumbleweedUpdateCheckScript})
+		if checkErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available Tumbleweed distribution updates: %w", checkErr)
+		}
+		available, parseErr := ParseZypperDistributionUpgrade(result.Stdout)
+		if parseErr != nil {
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect Tumbleweed distribution-upgrade result: %w", parseErr)
+		}
+		if available {
+			details.UpdatesAvailable = 1
+		}
+		details.SecurityClassification = "unknown"
+		return Outcome{Result: Success, Details: details}, nil
+	}
 	result, err := tr.Run(ctx, transport.Request{Script: aptUpdateSimulationScript})
 	if err != nil {
 		return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available apt package updates: %w", err)
@@ -227,6 +267,9 @@ const dnfUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sb
 const enterpriseDNFRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf -y makecache"
 const enterpriseDNFUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf -y check-update"
 const enterpriseDNFUpdateCountScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C dnf repoquery --upgrades --queryformat '%{name}\\n' | LC_ALL=C sort -u | sed '/^$/d' | wc -l"
+const zypperRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive refresh"
+const zypperLeapPatchCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive patch-check"
+const zypperTumbleweedUpdateCheckScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root LC_ALL=C zypper --non-interactive --xmlout dup --dry-run"
 
 func dnfUpdatesAvailable(err error) (bool, error) {
 	if err == nil {
@@ -237,6 +280,48 @@ func dnfUpdatesAvailable(err error) (bool, error) {
 		return true, nil
 	}
 	return false, err
+}
+
+func zypperPatchUpdatesAvailable(err error) (available, security bool, operational error) {
+	if err == nil {
+		return false, false, nil
+	}
+	var exit *transport.ExitError
+	if !errors.As(err, &exit) {
+		return false, false, err
+	}
+	switch exit.Code {
+	case 100:
+		return true, false, nil
+	case 101:
+		return true, true, nil
+	default:
+		return false, false, err
+	}
+}
+
+// ParseZypperDistributionUpgrade reads Zypper's XML solver result without
+// retaining locale-sensitive prose. Any transaction item means a new rolling
+// snapshot would change package state, including replacements/removals.
+func ParseZypperDistributionUpgrade(output string) (bool, error) {
+	decoder := xml.NewDecoder(strings.NewReader(output))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		switch start.Name.Local {
+		case "toinstall", "toupdate", "toremove", "toinstall-list", "toupdate-list", "toremove-list", "install", "update", "remove":
+			return true, nil
+		}
+	}
 }
 
 type APTUpdateSummary struct {

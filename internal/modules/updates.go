@@ -61,6 +61,63 @@ mv -f "$tmp" /etc/dnf/automatic.conf
 trap - EXIT
 systemctl enable --now dnf-automatic-install.timer`
 
+const openSUSELeapUpdatesScript = `set -eu
+for file in /etc/systemd/system/bebop-zypper-patch.service /etc/systemd/system/bebop-zypper-patch.timer; do
+  if test -e "$file"; then grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' "$file"; fi
+done
+if systemctl is-enabled os-update.timer >/dev/null 2>&1 || systemctl is-active os-update.timer >/dev/null 2>&1; then exit 1; fi
+service_tmp=$(mktemp /etc/systemd/system/.bebop-zypper-patch.service.XXXXXX)
+timer_tmp=$(mktemp /etc/systemd/system/.bebop-zypper-patch.timer.XXXXXX)
+trap 'rm -f "$service_tmp" "$timer_tmp"' EXIT
+cat >"$service_tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[Unit]
+Description=Bebop openSUSE Leap patch updates
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/zypper --non-interactive refresh
+ExecStart=/usr/bin/zypper --non-interactive patch
+EOF
+cat >"$timer_tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+[Unit]
+Description=Bebop openSUSE Leap patch update schedule
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+chown root:root "$service_tmp" "$timer_tmp"
+chmod 0644 "$service_tmp" "$timer_tmp"
+mv -f "$service_tmp" /etc/systemd/system/bebop-zypper-patch.service
+mv -f "$timer_tmp" /etc/systemd/system/bebop-zypper-patch.timer
+trap - EXIT
+systemctl daemon-reload
+systemctl enable --now bebop-zypper-patch.timer`
+
+const openSUSETumbleweedUpdatesScript = `set -eu
+if test -e /etc/os-update.conf; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/os-update.conf
+fi
+if systemctl is-enabled bebop-zypper-patch.timer >/dev/null 2>&1 || systemctl is-active bebop-zypper-patch.timer >/dev/null 2>&1; then exit 1; fi
+zypper --non-interactive install os-update
+tmp=$(mktemp /etc/.os-update.conf.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+# Managed by Bebop. Manual edits may be replaced.
+UPDATE_CMD=dup
+REBOOT_CMD=none
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/os-update.conf
+trap - EXIT
+systemctl enable --now os-update.timer`
+
 type Updates struct{}
 
 func (Updates) Name() string { return "updates" }
@@ -69,7 +126,7 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	if !cfg.Features.AutomaticUpdates {
 		return nil, nil, nil
 	}
-	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" || host.AutomaticUpdates.ConfigState == "managed"
+	managed := host.PackageManager != "dnf5" && host.PackageManager != "dnf" && host.PackageManager != "zypper" || host.AutomaticUpdates.ConfigState == "managed"
 	if host.AutomaticUpdates.Installed && host.AutomaticUpdates.Enabled && managed && !host.AutomaticUpdates.ConflictingTimers {
 		return nil, nil, nil
 	}
@@ -99,6 +156,36 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		} else if host.AutomaticUpdates.ConflictingTimers {
 			change.Action.Script = ""
 			change.Blocked = "another dnf-automatic timer is enabled or active; review and disable the competing automatic-update policy manually before Bebop manages updates"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		return []plan.Change{change}, nil, nil
+	}
+	if host.PackageManager == "zypper" && host.OS.Family == "opensuse" {
+		mode, ok := facts.OpenSUSEUpdatePolicy(host.OS)
+		if !ok {
+			return nil, nil, nil
+		}
+		if mode == "leap" {
+			change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic updates", Reason: "Bebop's Leap patch timer is not enabled", Risk: plan.Privileged, RequiresRoot: true, Current: "Bebop patch update timer is absent or inactive", Desired: "Bebop-owned noninteractive zypper patch timer enabled without automatic reboot", Action: plan.Action{Kind: "updates.enable-unattended", Resource: "opensuse-leap", Script: openSUSELeapUpdatesScript}, Verification: "Bebop Leap patch timer is enabled and the fixed noninteractive patch service is installed"}
+			if host.AutomaticUpdates.ConfigState == "unmanaged" {
+				change.Action.Script = ""
+				change.Blocked = "existing Bebop Leap update unit files are not Bebop-managed; review them manually before Bebop can take ownership"
+			} else if host.AutomaticUpdates.ConflictingTimers {
+				change.Action.Script = ""
+				change.Blocked = "os-update.timer is enabled or active; review the competing automatic-update policy manually before Bebop manages Leap patches"
+			} else {
+				rootBlocked(&change, host.SudoAvailable)
+			}
+			return []plan.Change{change}, nil, nil
+		}
+		change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic updates", Reason: "os-update is not configured for Tumbleweed distribution upgrades", Risk: plan.Privileged, RequiresRoot: true, Current: "os-update package, Bebop override, or timer is absent", Desired: "os-update performs noninteractive Tumbleweed dup updates with reboot disabled", Action: plan.Action{Kind: "updates.enable-unattended", Resource: "opensuse-tumbleweed", Script: openSUSETumbleweedUpdatesScript}, Verification: "os-update is configured for dup, reboot is disabled, and os-update.timer is active"}
+		if host.AutomaticUpdates.ConfigState == "unmanaged" {
+			change.Action.Script = ""
+			change.Blocked = "existing /etc/os-update.conf is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else if host.AutomaticUpdates.ConflictingTimers {
+			change.Action.Script = ""
+			change.Blocked = "a Bebop Leap patch timer is enabled or active; remove the conflicting policy manually before Tumbleweed management"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
@@ -134,6 +221,23 @@ for timer in dnf-automatic.timer dnf-automatic-download.timer dnf-automatic-noti
   ! systemctl is-enabled "$timer" >/dev/null 2>&1
   ! systemctl is-active "$timer" >/dev/null 2>&1
 done`)
+	}
+	if change.Action.Resource == "opensuse-leap" || change.Action.Script == openSUSELeapUpdatesScript {
+		return verify(ctx, tr, `grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/systemd/system/bebop-zypper-patch.service
+grep -Fqx 'ExecStart=/usr/bin/zypper --non-interactive refresh' /etc/systemd/system/bebop-zypper-patch.service
+grep -Fqx 'ExecStart=/usr/bin/zypper --non-interactive patch' /etc/systemd/system/bebop-zypper-patch.service
+systemctl is-enabled bebop-zypper-patch.timer >/dev/null
+systemctl is-active bebop-zypper-patch.timer >/dev/null
+! systemctl is-enabled os-update.timer >/dev/null 2>&1
+! systemctl is-active os-update.timer >/dev/null 2>&1`)
+	}
+	if change.Action.Resource == "opensuse-tumbleweed" || change.Action.Script == openSUSETumbleweedUpdatesScript {
+		return verify(ctx, tr, `rpm -q os-update >/dev/null
+grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/os-update.conf
+grep -Eq '^[[:space:]]*UPDATE_CMD[[:space:]]*=[[:space:]]*dup[[:space:]]*$' /etc/os-update.conf
+grep -Eq '^[[:space:]]*REBOOT_CMD[[:space:]]*=[[:space:]]*none[[:space:]]*$' /etc/os-update.conf
+systemctl is-enabled os-update.timer >/dev/null
+systemctl is-active os-update.timer >/dev/null`)
 	}
 	return verify(ctx, tr, `dpkg-query -W -f='${db:Status-Status}' unattended-upgrades | grep -qx installed
 apt-config dump | grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";'

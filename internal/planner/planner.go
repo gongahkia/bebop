@@ -27,10 +27,13 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 		return plan.Plan{}, err
 	}
 	if !host.OS.IsSupported() {
-		return plan.Plan{}, errs.New(errs.UnsupportedOS, fmt.Sprintf("unsupported target OS %q; Bebop supports Debian, Ubuntu, Raspberry Pi OS, and Fedora 43/44", host.OS.ID), nil)
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, fmt.Sprintf("unsupported target OS %q; Bebop requires an explicitly reviewed OS release", host.OS.ID), nil)
 	}
 	if !host.Systemd {
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported target does not expose systemd; Bebop requires systemd", nil)
+	}
+	if host.MutationBlocked {
+		return plan.Plan{}, errs.New(errs.UnsupportedOS, "target mutation is unsafe: "+host.MutationBlockReason, nil)
 	}
 	if !facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
 		manager, database, _ := facts.RequiredPackageTools(host.OS)

@@ -54,6 +54,13 @@ func ParseOSRelease(contents string) (OS, error) {
 		// CentOS Linux also used ID=centos. Require both the Stream name and
 		// the matching machine-readable EL platform identity.
 		os.Supported = (os.VersionID == "9" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el9") || (os.VersionID == "10" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el10")
+	case "opensuse-leap":
+		os.Family = "opensuse"
+		os.Supported = os.VersionID == "16.0"
+	case "opensuse-tumbleweed":
+		// Tumbleweed is rolling. Its snapshot date is useful display metadata,
+		// not a release gate; exact ID remains the support boundary.
+		os.Family, os.Supported = "opensuse", true
 	default:
 		os.Family = "unsupported"
 	}
@@ -86,6 +93,8 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "dnf5", "rpm", true
 	case "enterprise-linux":
 		return "dnf", "rpm", true
+	case "opensuse":
+		return "zypper", "rpm", true
 	default:
 		// Hand-constructed facts in callers predating the family field retain
 		// the original apt contract. Real inspection always supplies an OS ID.
@@ -94,6 +103,34 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		}
 		return "", "", false
 	}
+}
+
+// OpenSUSEUpdatePolicy identifies the fixed-release and rolling update
+// contracts. It is deliberately based on exact supported identities.
+func OpenSUSEUpdatePolicy(os OS) (string, bool) {
+	if !os.IsSupported() || os.Family != "opensuse" {
+		return "", false
+	}
+	switch os.ID {
+	case "opensuse-leap":
+		return "leap", true
+	case "opensuse-tumbleweed":
+		return "tumbleweed", true
+	}
+	return "", false
+}
+
+// OpenSUSETailscaleRepositoryPolicy returns the reviewed repository path for
+// an exact openSUSE target. Callers must not derive this from ID_LIKE.
+func OpenSUSETailscaleRepositoryPolicy(os OS) (string, bool) {
+	mode, ok := OpenSUSEUpdatePolicy(os)
+	if !ok {
+		return "", false
+	}
+	if mode == "leap" {
+		return "stable/opensuse/leap/16.0", true
+	}
+	return "stable/opensuse/tumbleweed", true
 }
 
 // EnterpriseLinuxMajor returns the reviewed ABI major for a supported EL
