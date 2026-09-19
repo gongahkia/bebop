@@ -48,20 +48,12 @@ func TestEnterpriseLinuxDockerUsesReviewedCERepositoriesAndPackages(t *testing.T
 			if engine.ID != "docker.engine" || engine.Action.Resource != test.policy {
 				t.Fatalf("EL Docker policy = %#v", engine)
 			}
-<<<<<<< HEAD
 			for _, required := range []string{test.repo, "gpgcheck=1", dockerCESigningKeyFingerprint, "dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"} {
-=======
-			for _, required := range []string{test.repo, "gpgcheck=1", "dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"} {
->>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 				if !strings.Contains(engine.Action.Script, required) {
 					t.Fatalf("EL Docker script missing %q: %s", required, engine.Action.Script)
 				}
 			}
-<<<<<<< HEAD
 			for _, forbidden := range []string{"moby-engine", "dnf5", "curl | sh", "dnf remove", "podman", "/var/lib/docker"} {
-=======
-			for _, forbidden := range []string{"moby-engine", "dnf5", "curl", "| sh", "dnf remove", "podman", "/var/lib/docker"} {
->>>>>>> 4a2c40eee91876bb5b53ec6ddf79c2d7ca282d90
 				if strings.Contains(engine.Action.Script, forbidden) {
 					t.Fatalf("EL Docker script contains forbidden %q: %s", forbidden, engine.Action.Script)
 				}
