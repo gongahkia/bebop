@@ -15,6 +15,8 @@ type Tailscale struct{}
 
 func (Tailscale) Name() string { return "tailscale" }
 
+const tailscaleOpenSUSESigningKeyFingerprint = "2596A99EAAB33821893C0A79458CA832957F5868"
+
 func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
 	if !cfg.Features.Tailscale {
 		return nil, nil, nil
@@ -89,8 +91,8 @@ func openSUSETailscaleChange(host facts.HostFacts) plan.Change {
 }
 
 func openSUSETailscaleRepositorySafeScript(repository string) string {
-	baseURL := "https://pkgs.tailscale.com/" + repository
-	keyURL := baseURL + "/repo.gpg"
+	baseURL := "https://pkgs.tailscale.com/" + repository + "/$basearch"
+	keyURL := "https://pkgs.tailscale.com/" + repository + "/repo.gpg"
 	return `if test -e /etc/zypp/repos.d/tailscale.repo; then
   grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/zypp/repos.d/tailscale.repo
   grep -Fqx ` + transport.ShellQuote("baseurl="+baseURL) + ` /etc/zypp/repos.d/tailscale.repo
@@ -108,10 +110,18 @@ done`
 }
 
 func openSUSETailscaleInstallScript(repository string) string {
-	baseURL := "https://pkgs.tailscale.com/" + repository
-	keyURL := baseURL + "/repo.gpg"
-	return `tmp=$(mktemp /etc/zypp/repos.d/.tailscale.repo.XXXXXX)
-trap 'rm -f "$tmp"' EXIT
+	baseURL := "https://pkgs.tailscale.com/" + repository + "/$basearch"
+	keyURL := "https://pkgs.tailscale.com/" + repository + "/repo.gpg"
+	return `set -eu
+command -v curl >/dev/null 2>&1
+command -v gpg >/dev/null 2>&1
+key_tmp=$(mktemp /tmp/.bebop-tailscale-key.XXXXXX)
+tmp=$(mktemp /etc/zypp/repos.d/.tailscale.repo.XXXXXX)
+trap 'rm -f "$key_tmp" "$tmp"' EXIT
+curl --fail --silent --show-error --location ` + transport.ShellQuote(keyURL) + ` --output "$key_tmp"
+fingerprint=$(gpg --show-keys --with-colons "$key_tmp" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+test "$fingerprint" = ` + transport.ShellQuote(tailscaleOpenSUSESigningKeyFingerprint) + `
+rpm --import "$key_tmp"
 cat >"$tmp" <<'EOF'
 # Managed by Bebop. Manual edits may be replaced.
 [tailscale-stable]
@@ -128,6 +138,7 @@ EOF
 chown root:root "$tmp"
 chmod 0644 "$tmp"
 mv -f "$tmp" /etc/zypp/repos.d/tailscale.repo
+rm -f "$key_tmp"
 trap - EXIT
 zypper --non-interactive install tailscale`
 }

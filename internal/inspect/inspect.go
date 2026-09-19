@@ -493,8 +493,8 @@ if systemctl is-active tailscaled.service >/dev/null 2>&1; then printf 'active=y
 		if !ok {
 			return facts.Tailscale{}
 		}
-		baseURL := "https://pkgs.tailscale.com/" + repository
-		keyURL := baseURL + "/repo.gpg"
+		baseURL := "https://pkgs.tailscale.com/" + repository + "/$basearch"
+		keyURL := "https://pkgs.tailscale.com/" + repository + "/repo.gpg"
 		script = `
 if rpm -q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi

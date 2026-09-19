@@ -227,8 +227,9 @@ repositories. Leap 15.6, Leap 16.1 beta, Slowroll, MicroOS, Leap Micro, and
 transactional/immutable openSUSE hosts are unsupported.
 
 For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
-`stable/opensuse/leap/16.0` or `stable/opensuse/tumbleweed` with GPG checking;
-it never uses Tailscale's install script.
+`stable/opensuse/leap/16.0/$basearch` or
+`stable/opensuse/tumbleweed/$basearch`, verifies the reviewed signing key, and
+never uses Tailscale's install script.
 
 For a small secret boundary, set `secret_env_file` to a controller-local file
 relative to the config and reference `.bebop-secret.env` from the Compose

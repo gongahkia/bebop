@@ -109,12 +109,12 @@ func TestOpenSUSETailscaleUsesReviewedRepositoryWithoutInstallScript(t *testing.
 			t.Fatalf("openSUSE Tailscale plan = %#v, %v", changes, err)
 		}
 		script := changes[0].Action.Script
-		for _, required := range []string{test.path, "gpgcheck=1", "repo_gpgcheck=1", "pkg_gpgcheck=1", "zypper --non-interactive install tailscale"} {
+		for _, required := range []string{test.path + "/$basearch", "gpgcheck=1", "repo_gpgcheck=1", "pkg_gpgcheck=1", tailscaleOpenSUSESigningKeyFingerprint, "zypper --non-interactive install tailscale"} {
 			if !strings.Contains(script, required) {
 				t.Fatalf("openSUSE Tailscale script missing %q: %s", required, script)
 			}
 		}
-		for _, forbidden := range []string{"curl", "| sh", "tailscale up", "--gpg-auto-import-keys"} {
+		for _, forbidden := range []string{"curl | sh", "tailscale up", "--gpg-auto-import-keys", "--no-gpg-checks"} {
 			if strings.Contains(script, forbidden) {
 				t.Fatalf("openSUSE Tailscale script is unsafe: %s", script)
 			}
