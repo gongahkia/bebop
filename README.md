@@ -7,13 +7,13 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
 * Keeps a local inventory & inspects supported Linux targets through your existing OpenSSH setup
 * Compares each with a small declarative `bebop.toml`, presents an ordered plan and applies only reviewed changes
 * Currently supports the below distros
-    * Debian 12/13
-    * Ubuntu 22.04/24.04
-    * Raspberry Pi OS 12/13
-    * Fedora Linux 43/44
-    * Rocky Linux 9.8/10.2
-    * AlmaLinux 9.8/10.2
-    * CentOS Stream 9/10
+    * [Debian](https://www.debian.org/) 12/13
+    * [Ubuntu](https://ubuntu.com/) 22.04/24.04
+    * [Raspberry Pi OS](https://www.raspberrypi.com/) 12/13
+    * [Fedora Linux](https://fedoraproject.org/) 43/44
+    * [Rocky Linux](https://rockylinux.org/) 9.8/10.2
+    * [AlmaLinux](https://almalinux.org/) 9.8/10.2
+    * [CentOS Stream](https://www.centos.org/) 9/10
     * [openSUSE Leap](https://get.opensuse.org/leap/16.0/) 16.0
     * [openSUSE Tumbleweed](https://get.opensuse.org/tumbleweed/)
     * [Arch Linux](https://archlinux.org/) x86_64
