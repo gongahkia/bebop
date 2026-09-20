@@ -92,3 +92,24 @@ func TestPlatformAutomaticUpdatePolicyIsExplicit(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatformReleaseModelControlsSavedPlanVersionState(t *testing.T) {
+	for _, policy := range PlatformPolicies() {
+		t.Run(policy.Key, func(t *testing.T) {
+			os := OS{ID: policy.Match.ID, Name: policy.Match.Name, VersionID: policy.Match.VersionID, VersionCodename: policy.Match.VersionCodename, BuildID: policy.Match.BuildID, PlatformID: policy.Match.PlatformID, Family: policy.Family, Supported: true}
+			if policy.Match.VersionPrefix != "" {
+				os.VersionID = policy.Match.VersionPrefix + "2"
+			}
+			if policy.ReleaseModel == ReleaseRolling {
+				os.VersionID = "20260920"
+			}
+			snapshot := (HostFacts{OS: os}).ConvergenceSnapshot()
+			if policy.ReleaseModel == ReleaseRolling && snapshot.OS.VersionID != "" {
+				t.Fatalf("rolling platform retained volatile version %q", snapshot.OS.VersionID)
+			}
+			if policy.ReleaseModel != ReleaseRolling && snapshot.OS.VersionID != os.VersionID {
+				t.Fatalf("fixed/stream platform lost reviewed version %q", os.VersionID)
+			}
+		})
+	}
+}

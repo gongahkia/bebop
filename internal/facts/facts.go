@@ -56,9 +56,9 @@ const (
 	InitSystemDinit   InitSystem = "dinit"
 )
 
-// RequiredTools records Alpine's low-level mutation prerequisites. They stay
-// separate from APK itself because flock is required before Bebop may acquire
-// its mandatory target mutation lock.
+// RequiredTools records platform low-level mutation prerequisites. They stay
+// separate from package-manager capability because flock is required before
+// Bebop may acquire its mandatory target mutation lock.
 type RequiredTools struct {
 	Flock   bool `json:"flock,omitempty"`
 	LSBLK   bool `json:"lsblk,omitempty"`
