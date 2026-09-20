@@ -298,7 +298,11 @@ func appendConfiguredCapabilityChecks(result *Result, cfg config.Config, host fa
 				if host.MaintenanceUpdateCheckAvailable {
 					result.Checks = append(result.Checks, Check{Status: Pass, Code: "maintenance.update_check", Message: "reviewed maintenance update-check backend available"})
 				} else {
-					result.Checks = append(result.Checks, Check{Status: Fail, Code: "maintenance.update_check", Message: "maintenance update-check prerequisite unavailable; install the reviewed package-manager helper manually before running the job"})
+					message := "maintenance update-check prerequisite unavailable; install the reviewed package-manager helper manually before running the job"
+					if host.PackageManager == "pacman" {
+						message = "maintenance update-check requires pacman-contrib checkupdates; install it during a reviewed full pacman -Syu manually, then retry"
+					}
+					result.Checks = append(result.Checks, Check{Status: Fail, Code: "maintenance.update_check", Message: message})
 				}
 				break
 			}
@@ -320,7 +324,7 @@ func appendDockerReadiness(result *Result, host facts.HostFacts) {
 		return
 	}
 	if !host.Docker.Installed && !host.Docker.PackageSetAvailable {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.package_unavailable", Message: "reviewed Docker packages are unavailable from the target's current package policy"})
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.package_unavailable", Message: packageUnavailableMessage(host, "Docker")})
 		return
 	}
 	if !host.Docker.Installed {
@@ -338,12 +342,21 @@ func appendTailscaleReadiness(result *Result, host facts.HostFacts) {
 		return
 	}
 	if !host.Tailscale.Installed && !host.Tailscale.PackageAvailable {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "tailscale.package_unavailable", Message: "reviewed Tailscale package is unavailable from the target's current package policy"})
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "tailscale.package_unavailable", Message: packageUnavailableMessage(host, "Tailscale")})
 		return
 	}
 	if !host.Tailscale.Installed {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "tailscale.package_pending", Message: "reviewed Tailscale package is available and can be installed by a plan"})
 	}
+}
+
+func packageUnavailableMessage(host facts.HostFacts, capability string) string {
+	if host.PackageManager == "pacman" {
+		if platform, ok := facts.PlatformPolicyFor(host.OS); ok {
+			return "the current Pacman sync database cannot safely resolve reviewed " + capability + " packages; perform a reviewed full " + platform.DisplayName + " upgrade manually with pacman -Syu, then retry; Bebop will not run pacman -Sy"
+		}
+	}
+	return "reviewed " + capability + " packages are unavailable from the target's current package policy"
 }
 
 // appendBackupChecks deliberately remains controller-local and read-only. A

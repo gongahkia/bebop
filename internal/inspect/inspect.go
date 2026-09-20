@@ -68,7 +68,7 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
 	f.Tailscale = inspectTailscale(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
 	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
-	f.MaintenanceUpdateCheckAvailable = inspectMaintenanceUpdateCheck(ctx, tr, f.PackageManager)
+	f.MaintenanceUpdateCheckAvailable = inspectMaintenanceUpdateCheck(ctx, tr, f.PackageManager, cfg)
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
@@ -149,7 +149,19 @@ if command -v findmnt >/dev/null 2>&1; then printf 'findmnt=yes\n'; else printf 
 	return facts.RequiredTools{Flock: lines["flock"] == "yes", LSBLK: lines["lsblk"] == "yes", Findmnt: lines["findmnt"] == "yes"}
 }
 
-func inspectMaintenanceUpdateCheck(ctx context.Context, tr transport.Transport, packageManager string) bool {
+func inspectMaintenanceUpdateCheck(ctx context.Context, tr transport.Transport, packageManager string, cfg config.Config) bool {
+	requested := false
+	if cfg.Maintenance != nil {
+		for _, job := range cfg.Maintenance.Jobs {
+			if job.Enabled && job.Type == "update-check" {
+				requested = true
+				break
+			}
+		}
+	}
+	if !requested {
+		return true
+	}
 	if packageManager == "pacman" {
 		return firstLine(mustProbe(ctx, tr, "if command -v checkupdates >/dev/null 2>&1; then printf yes; fi")) == "yes"
 	}

@@ -181,7 +181,10 @@ func (policy PlatformPolicy) SupportsLibc(libc string) bool {
 func (policy PlatformPolicy) Capability(capability Capability) CapabilityState {
 	for index, current := range requiredCapabilities {
 		if current == capability {
-			return policy.Capabilities[index]
+			if index < len(policy.Capabilities) {
+				return policy.Capabilities[index]
+			}
+			return ""
 		}
 	}
 	return ""

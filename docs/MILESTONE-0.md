@@ -19,8 +19,9 @@ Unmounted whole disks are observed with structured `lsblk` output and surfaced
 as warnings only; no storage module or storage action exists in M0/M1.
 
 The reviewed Tailscale map covers Debian/Raspberry Pi OS Bookworm or Trixie and
-Ubuntu Jammy or Noble. Other supported host versions can use base, updates, and
-Docker, but Tailscale installation is blocked until its mapping is reviewed.
+Ubuntu Jammy or Noble. The reviewed platform matrix correspondingly limits
+Raspberry Pi OS support to 12/13 rather than treating an unmapped release as a
+partially supported target.
 
 `plan` is read-only and `--show-commands` shows exact scripts. `apply` shows a
 fresh plan and asks for confirmation; `--yes` removes only the prompt. It
