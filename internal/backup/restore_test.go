@@ -85,7 +85,7 @@ func TestRestoreBlocksNonEmptyDestinationAndWrongHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "already contains data") {
+	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "destination persistent state changed") {
 		t.Fatalf("non-empty destination was not blocked: %v", err)
 	}
 	wrong := request
@@ -97,6 +97,27 @@ func TestRestoreBlocksNonEmptyDestinationAndWrongHost(t *testing.T) {
 		if !errorsAs(err, &categorized) || categorized.Code != errs.TargetIdentityMismatch {
 			t.Fatalf("wrong-host error lost category: %v", err)
 		}
+	}
+}
+
+func TestRestoreRechecksDestinationAfterAcquiringLock(t *testing.T) {
+	repository, cfg, deployment, manifest := restoreFixture(t)
+	host := restoreHost(deployment)
+	fake := &restoreTransport{}
+	request := RestoreRequest{SnapshotID: manifest.SnapshotID, Target: "local", Config: cfg, Host: host, Service: "hello", Transport: fake}
+	reviewed, err := BuildRestorePlan(context.Background(), repository, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model an external writer adding data after review but before the target
+	// lock is held. ApplyRestore must re-observe the destination under lock and
+	// must not begin archive extraction.
+	fake.onAcquireLock = func() { fake.exists, fake.empty = true, false }
+	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "already contains data") {
+		t.Fatalf("restore accepted destination data introduced after review: %v", err)
+	}
+	if fake.streamed {
+		t.Fatal("restore began archive extraction after under-lock destination drift")
 	}
 }
 
@@ -327,7 +348,11 @@ func simpleArchive(t *testing.T, name, contents string) io.Reader {
 	return bytes.NewReader(output.Bytes())
 }
 
-type restoreTransport struct{ exists, empty bool }
+type restoreTransport struct {
+	exists, empty bool
+	streamed      bool
+	onAcquireLock func()
+}
 
 func (tr *restoreTransport) Description() string                              { return "restore fake" }
 func (tr *restoreTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
@@ -351,12 +376,16 @@ func (tr *restoreTransport) Run(_ context.Context, request transport.Request) (t
 	}
 }
 func (tr *restoreTransport) RunStream(_ context.Context, request transport.StreamRequest, output io.Writer) (transport.Result, error) {
+	tr.streamed = true
 	if request.Stdin != nil {
 		_, _ = io.Copy(output, request.Stdin)
 	}
 	return transport.Result{}, nil
 }
-func (*restoreTransport) AcquireApplyLock(context.Context) (transport.ApplyLock, error) {
+func (tr *restoreTransport) AcquireApplyLock(context.Context) (transport.ApplyLock, error) {
+	if tr.onAcquireLock != nil {
+		tr.onAcquireLock()
+	}
 	return testLock{}, nil
 }
 

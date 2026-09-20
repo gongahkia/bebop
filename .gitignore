@@ -1,5 +1,7 @@
 AGENTS.md
 bin/
+dist/
+.bebop/vm/
 .bebop/cache/
 .bebop/history/
 .bebop/backups/

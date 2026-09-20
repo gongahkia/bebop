@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration test-schedulers test-launchd recipe-validate format check run cross
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration test-schedulers test-launchd recipe-validate format check run cross release-dry-run
 
 build:
 	@mkdir -p bin
@@ -105,3 +105,10 @@ cross:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/bebop-darwin-arm64 ./cmd/bebop
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/bebop-windows-amd64.exe ./cmd/bebop
 	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -o bin/bebop-windows-arm64.exe ./cmd/bebop
+
+# Builds release-shaped archives and SHA-256 sums locally. It never tags,
+# publishes, or contacts a release service. VERSION must be an exact vX.Y.Z
+# tag value because the embedded binary version is checked before packaging.
+release-dry-run:
+	@test -n "$(VERSION)" || (echo "VERSION=vX.Y.Z is required" >&2; exit 2)
+	./tools/release-dry-run.sh "$(VERSION)"
