@@ -1,5 +1,14 @@
 # Roadmap
 
+## v1 scope freeze
+
+The current reviewed product surface is frozen for v1 maintenance: platform
+reviews, safety fixes, verification, and release readiness may proceed, but
+new management domains do not enter v1 by default. See [V1.md](V1.md) for the
+included scope and explicit non-goals, and [PLATFORM-LIFECYCLE.md](PLATFORM-LIFECYCLE.md)
+for the required release-review process. Gentoo remains unsupported because
+the reviewed binary-package contract lacks the required Tailscale provenance.
+
 ## Implemented in M9: portable native controller schedulers
 
 - A centralized controller scheduler adapter boundary for the existing typed

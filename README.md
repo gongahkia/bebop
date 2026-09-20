@@ -555,7 +555,7 @@ guarded: it runs only on macOS when `BEBOP_LAUNCHD_INTEGRATION=1` and
 `BEBOP_LAUNCHD_BINARY` names a stable absolute installed binary. Normal Linux
 development skips it without touching a controller scheduler.
 
-Read [the architecture](docs/ARCHITECTURE.md), [support matrix](docs/SUPPORT.md), [safety policy](docs/SAFETY.md),
+Read [the architecture](docs/ARCHITECTURE.md), [support matrix](docs/SUPPORT.md), [v1 scope](docs/V1.md), [platform lifecycle](docs/PLATFORM-LIFECYCLE.md), [release verification](docs/RELEASES.md), [safety policy](docs/SAFETY.md),
 [M0/M1 scope](docs/MILESTONE-0.md), [M2 scope](docs/MILESTONE-2.md),
 [M3 scope](docs/MILESTONE-3.md), [M4 scope](docs/MILESTONE-4.md),
 [M5 scope](docs/MILESTONE-5.md), [M6 scope](docs/MILESTONE-6.md),
