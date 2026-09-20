@@ -47,6 +47,14 @@ func (SSH) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.
 		change.Blocked = "Void does not expose the package-provided runit sshd service; refusing to change SSH configuration without a safe service lifecycle"
 	case host.InitSystem == facts.InitSystemRunit && (!host.SSH.ServiceEnabled || !host.SSH.ServiceActive):
 		change.Blocked = "the Void runit sshd service is not enabled and active; refusing to change SSH configuration without a verified reload path"
+	case host.InitSystem == facts.InitSystemSysV && host.SSH.Service != "sysv:ssh":
+		change.Blocked = "Devuan does not expose the package-provided SysVinit ssh service; refusing to change SSH configuration without a safe service lifecycle"
+	case host.InitSystem == facts.InitSystemSysV && (!host.SSH.ServiceEnabled || !host.SSH.ServiceActive):
+		change.Blocked = "the Devuan SysVinit ssh service is not enabled and active; refusing to change SSH configuration without a verified reload path"
+	case host.InitSystem == facts.InitSystemDinit && host.SSH.Service != "dinit:sshd":
+		change.Blocked = "Artix does not expose the package-provided dinit sshd service; refusing to change SSH configuration without a safe service lifecycle"
+	case host.InitSystem == facts.InitSystemDinit && (!host.SSH.ServiceEnabled || !host.SSH.ServiceActive):
+		change.Blocked = "the Artix dinit sshd service is not enabled and active; refusing to change SSH configuration without a verified reload path"
 	default:
 		rootBlocked(&change, host.SudoAvailable)
 	}
@@ -68,6 +76,12 @@ func sshHardeningScript(service string) string {
 		reload = "\nrc-service sshd reload"
 	} else if service == "runit:sshd" {
 		reload = "\nsv restart sshd\nsv status sshd | grep -Eq '^run:'"
+	} else if service == "sysv:ssh" {
+		reload = "\nservice ssh reload\nservice ssh status >/dev/null 2>&1"
+	} else if service == "dinit:sshd" {
+		// dinitctl reload reloads a dinit service description, not sshd's
+		// configuration. Signal HUP is the packaged daemon lifecycle operation.
+		reload = "\ndinitctl -s signal HUP sshd\ndinitctl -s is-started sshd"
 	}
 	return `install -d -m 0755 /etc/ssh/sshd_config.d
 	candidate=/etc/ssh/sshd_config.d/00-bebop-validate-$$.conf

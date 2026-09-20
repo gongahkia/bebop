@@ -27,6 +27,12 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 	if host.OS.Family == "void" && host.PackageManager == "xbps" {
 		return planVoidTailscale(host)
 	}
+	if host.OS.Family == "devuan" && host.PackageManager == "apt" {
+		return planDevuanTailscale(host)
+	}
+	if host.OS.Family == "artix" && host.PackageManager == "pacman" {
+		return planArtixTailscale(host)
+	}
 	if (host.PackageManager == "dnf5" || (host.OS.Family == "enterprise-linux" && host.PackageManager == "dnf") || (host.OS.Family == "opensuse" && host.PackageManager == "zypper")) && host.Tailscale.RepositoryState == "unmanaged" {
 		platform := "Fedora"
 		resource := "fedora"
@@ -77,6 +83,191 @@ func (Tailscale) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, [
 		}
 		changes = append(changes, change)
 	}
+	if host.Tailscale.Installed && !host.Tailscale.Connected {
+		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
+	}
+	return changes, warnings, nil
+}
+
+const devuanTailscaleKeySHA256 = "3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39"
+
+const devuanTailscaleDistroCandidates = `for package in ca-certificates curl; do
+  candidate=$(LC_ALL=C apt-cache policy "$package" 2>/dev/null | awk '/^[[:space:]]*Candidate:/ { print $2; exit }')
+  test -n "$candidate" && test "$candidate" != '(none)' || exit 1
+  LC_ALL=C apt-cache madison "$package" 2>/dev/null | awk -v version="$candidate" '
+    $3 == version { seen=1; if ($5 != "http://deb.devuan.org/merged" || $6 !~ /^excalibur(-updates|-security)?\//) bad=1; else good=1 }
+    END { exit !(seen && good && !bad) }'
+done`
+
+const devuanTailscaleVendorCandidate = `candidate=$(LC_ALL=C apt-cache policy tailscale 2>/dev/null | awk '/^[[:space:]]*Candidate:/ { print $2; exit }')
+test -n "$candidate" && test "$candidate" != '(none)'
+LC_ALL=C apt-cache madison tailscale 2>/dev/null | awk -v version="$candidate" '
+  $3 == version { seen=1; if ($5 != "https://pkgs.tailscale.com/stable/debian" || $6 !~ /^trixie\//) bad=1; else good=1 }
+  END { exit !(seen && good && !bad) }'`
+
+const devuanTailscaleRepositorySafeScript = `if test -e /etc/apt/sources.list.d/tailscale.list; then
+  grep -Fqx 'deb https://pkgs.tailscale.com/stable/debian trixie main' /etc/apt/sources.list.d/tailscale.list
+  test "$(grep -Evc '^[[:space:]]*(#.*)?$|^deb https://pkgs\.tailscale\.com/stable/debian trixie main$' /etc/apt/sources.list.d/tailscale.list)" = 0
+fi
+if test -e /usr/share/keyrings/tailscale-archive-keyring.gpg; then
+  test "$(sha256sum /usr/share/keyrings/tailscale-archive-keyring.gpg | awk '{print $1}')" = ` + devuanTailscaleKeySHA256 + `
+fi`
+
+const devuanTailscaleInstallScript = `set -eu
+` + devuanTailscaleRepositorySafeScript + `
+` + devuanTailscaleDistroCandidates + `
+export DEBIAN_FRONTEND=noninteractive
+apt-get install -y ca-certificates curl
+install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+key_tmp=$(mktemp /usr/share/keyrings/.tailscale-key.XXXXXX)
+list_tmp=$(mktemp /etc/apt/sources.list.d/.tailscale.XXXXXX)
+trap 'rm -f "$key_tmp" "$list_tmp"' EXIT
+curl --fail --silent --show-error --location https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg --output "$key_tmp"
+test "$(sha256sum "$key_tmp" | awk '{print $1}')" = ` + devuanTailscaleKeySHA256 + `
+printf '%s\n' 'deb https://pkgs.tailscale.com/stable/debian trixie main' >"$list_tmp"
+chown root:root "$key_tmp" "$list_tmp"
+chmod 0644 "$key_tmp" "$list_tmp"
+if test -e /usr/share/keyrings/tailscale-archive-keyring.gpg; then
+  test "$(sha256sum /usr/share/keyrings/tailscale-archive-keyring.gpg | awk '{print $1}')" = ` + devuanTailscaleKeySHA256 + `
+else
+  mv -f "$key_tmp" /usr/share/keyrings/tailscale-archive-keyring.gpg
+fi
+if test -e /etc/apt/sources.list.d/tailscale.list; then
+  grep -Fqx 'deb https://pkgs.tailscale.com/stable/debian trixie main' /etc/apt/sources.list.d/tailscale.list
+  test "$(grep -Evc '^[[:space:]]*(#.*)?$|^deb https://pkgs\.tailscale\.com/stable/debian trixie main$' /etc/apt/sources.list.d/tailscale.list)" = 0
+else
+  mv -f "$list_tmp" /etc/apt/sources.list.d/tailscale.list
+fi
+trap - EXIT
+apt-get update
+` + devuanTailscaleVendorCandidate + `
+apt-get install -y tailscale`
+
+const devuanTailscaleSysVScript = `set -eu
+dpkg-query -S /usr/sbin/tailscaled | grep -Eq '^tailscale: /usr/sbin/tailscaled$'
+if test -e /etc/init.d/tailscaled; then
+  grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/init.d/tailscaled
+fi
+tmp=$(mktemp /etc/init.d/.tailscaled.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+#!/bin/sh
+# Managed by Bebop. Manual edits may be replaced.
+### BEGIN INIT INFO
+# Provides:          tailscaled
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Tailscale daemon
+### END INIT INFO
+
+DAEMON=/usr/sbin/tailscaled
+PIDFILE=/run/tailscale/tailscaled.pid
+STATE=/var/lib/tailscale/tailscaled.state
+SOCKET=/run/tailscale/tailscaled.sock
+
+case "$1" in
+  start)
+    install -d -o root -g root -m 0755 /run/tailscale
+    install -d -o root -g root -m 0700 /var/lib/tailscale
+    start-stop-daemon --start --quiet --oknodo --background --make-pidfile --pidfile "$PIDFILE" --exec "$DAEMON" -- --state="$STATE" --socket="$SOCKET"
+    ;;
+  stop)
+    start-stop-daemon --stop --quiet --oknodo --pidfile "$PIDFILE" --exec "$DAEMON"
+    rm -f "$PIDFILE"
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  status)
+    start-stop-daemon --status --pidfile "$PIDFILE" --exec "$DAEMON"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF
+chown root:root "$tmp"
+chmod 0755 "$tmp"
+sh -n "$tmp"
+mv -f "$tmp" /etc/init.d/tailscaled
+trap - EXIT
+` + "\n" + `update-rc.d tailscaled defaults
+service tailscaled start`
+
+func planDevuanTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, error) {
+	changes := []plan.Change{}
+	needPackage := !host.Tailscale.Installed || host.Tailscale.RepositoryState != "managed"
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		return []plan.Change{{ID: "tailscale.package", Module: "tailscale", Summary: "review Tailscale repository ownership", Reason: "an unmanaged Tailscale Debian Trixie repository/keyring exists", Risk: plan.Privileged, RequiresRoot: true, Current: "unmanaged vendor repository state", Desired: "reviewed Trixie vendor repository", Action: plan.Action{Kind: "tailscale.install", Resource: "devuan-trixie"}, Verification: "not applicable", Blocked: "Bebop will not replace an unmanaged Tailscale repository definition or signing key; review it manually before enabling Devuan Tailscale management"}}, nil, nil
+	}
+	if needPackage {
+		change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "the reviewed Tailscale package or Trixie vendor repository is absent", Risk: plan.Privileged, RequiresRoot: true, Current: "Tailscale or its reviewed Trixie vendor source is absent", Desired: "Tailscale installed from the reviewed Debian Trixie vendor repository", Preconditions: []plan.Precondition{{ID: "tailscale.devuan-repository-safe", Description: "the Tailscale repository/keyring is absent or exactly reviewed", Script: devuanTailscaleRepositorySafeScript}, {ID: "tailscale.devuan-distro-candidates", Description: "bootstrap dependencies resolve exclusively through Devuan Excalibur", Script: devuanTailscaleDistroCandidates}}, Action: plan.Action{Kind: "tailscale.install", Resource: "devuan-trixie", Script: devuanTailscaleInstallScript}, Verification: "tailscale is installed from the reviewed Debian Trixie vendor repository"}
+		if host.Tailscale.RepositoryState == "managed" && !host.Tailscale.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the reviewed Debian Trixie vendor repository does not advertise tailscale for this target; Bebop will not use another package source"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Tailscale.ServiceEnabled || !host.Tailscale.ServiceActive {
+		dependencies := []string(nil)
+		if needPackage {
+			dependencies = []string{"tailscale.package"}
+		}
+		change := plan.Change{ID: "tailscale.service", Module: "tailscale", Summary: "enable and start Tailscale", Reason: "the Bebop-owned fixed Tailscale SysVinit wrapper is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscaled SysVinit service not ready", Desired: "tailscaled enabled through SysVinit and active", Dependencies: dependencies, Action: plan.Action{Kind: "tailscale.enable-service", Resource: "devuan", Script: devuanTailscaleSysVScript}, Verification: "fixed Bebop-owned tailscaled SysVinit wrapper is enabled and active"}
+		if host.Tailscale.ServiceLinkState == "conflict" {
+			change.Action.Script, change.Blocked = "", "existing /etc/init.d/tailscaled is not Bebop-owned; Bebop will not replace an unmanaged service wrapper"
+		} else if needPackage && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script, change.Blocked = "", "Devuan Tailscale package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	warnings := []plan.Warning{}
+	if host.Tailscale.Installed && !host.Tailscale.Connected {
+		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
+	}
+	return changes, warnings, nil
+}
+
+const artixTailscalePackagesAvailableScript = `for package in tailscale tailscale-dinit; do
+  LC_ALL=C pacman -Si "world/$package" 2>/dev/null | awk -F ' *: *' '$1 == "Repository" { found=($2 == "world") } END { exit !found }' || exit 1
+done`
+
+func planArtixTailscale(host facts.HostFacts) ([]plan.Change, []plan.Warning, error) {
+	changes := []plan.Change{}
+	needPackage := !host.Tailscale.Installed || !host.Tailscale.ServiceDefinition
+	if needPackage {
+		change := plan.Change{ID: "tailscale.package", Module: "tailscale", Summary: "install Tailscale", Reason: "the reviewed Artix Tailscale package set is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscale or tailscale-dinit is not installed", Desired: "official Artix world Tailscale package and packaged dinit integration installed", Preconditions: []plan.Precondition{{ID: "tailscale.artix-packages-available", Description: "the existing Pacman sync database advertises reviewed Artix world packages", Script: artixTailscalePackagesAvailableScript}}, Action: plan.Action{Kind: "tailscale.install", Resource: "artix-world", Script: "pacman -S --needed --noconfirm world/tailscale world/tailscale-dinit"}, Verification: "reviewed Artix Tailscale package and dinit service are installed"}
+		if !host.Tailscale.PackageAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the current Pacman sync database does not advertise reviewed Artix world Tailscale packages; perform a reviewed full Artix upgrade manually and retry (Bebop never runs pacman -Sy)"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Tailscale.ServiceEnabled || !host.Tailscale.ServiceActive {
+		dependencies := []string(nil)
+		if needPackage {
+			dependencies = []string{"tailscale.package"}
+		}
+		change := plan.Change{ID: "tailscale.service", Module: "tailscale", Summary: "enable and start Tailscale", Reason: "the packaged Artix tailscaled dinit service is disabled or inactive", Risk: plan.Privileged, RequiresRoot: true, Current: "tailscaled dinit service not ready", Desired: "tailscaled persistently enabled through dinit and active", Dependencies: dependencies, Action: plan.Action{Kind: "tailscale.enable-service", Resource: "artix", Script: dinitEnableAndStartScript("tailscaled")}, Verification: "packaged tailscaled dinit service is enabled and active"}
+		if host.Tailscale.Installed && !host.Tailscale.ServiceDefinition {
+			change.Action.Script, change.Blocked = "", "the installed Artix Tailscale package does not provide the reviewed /etc/dinit.d/tailscaled service; Bebop will not create a replacement"
+		} else if needPackage && len(changes) > 0 && changes[0].Blocked != "" {
+			change.Action.Script, change.Blocked = "", "Artix Tailscale package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	warnings := []plan.Warning{}
 	if host.Tailscale.Installed && !host.Tailscale.Connected {
 		warnings = append(warnings, plan.Warning{ID: "tailscale.authentication", Module: "tailscale", Summary: "Tailscale is installed but this node is not authenticated", Resolution: "Run on the target: sudo tailscale up"})
 	}

@@ -120,9 +120,9 @@ elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>
   printf openrc
 elif command -v sv >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1 && test -d /etc/runit && test -L /var/service && test -d /var/service && test "$(readlink -f /var/service)" = /run/runit/runsvdir/current && pgrep -x runsvdir >/dev/null 2>&1; then
   printf runit
-elif test "$(readlink -f /proc/1/exe 2>/dev/null || true)" = /sbin/init && command -v service >/dev/null 2>&1 && command -v update-rc.d >/dev/null 2>&1 && dpkg-query -W -f='${db:Status-Status}' sysvinit-core 2>/dev/null | grep -qx installed; then
+elif test "$(basename "$(readlink -f /proc/1/exe 2>/dev/null || true)")" = init && command -v service >/dev/null 2>&1 && command -v update-rc.d >/dev/null 2>&1 && dpkg-query -W -f='${db:Status-Status}' sysvinit-core 2>/dev/null | grep -qx installed; then
   printf sysvinit
-elif test "$(readlink -f /proc/1/exe 2>/dev/null || true)" = /usr/bin/dinit && command -v dinitctl >/dev/null 2>&1 && test -S /run/dinitctl && dinitctl -s status boot >/dev/null 2>&1; then
+elif test "$(basename "$(readlink -f /proc/1/exe 2>/dev/null || true)")" = dinit && command -v dinitctl >/dev/null 2>&1 && dinitctl -s status boot >/dev/null 2>&1; then
   printf dinit
 else
   printf unknown
@@ -218,6 +218,12 @@ func inspectSSH(ctx context.Context, tr transport.Transport, init facts.InitSyst
 	if init == facts.InitSystemRunit {
 		return inspectRunitSSH(ctx, tr)
 	}
+	if init == facts.InitSystemSysV {
+		return inspectSysVSSH(ctx, tr)
+	}
+	if init == facts.InitSystemDinit {
+		return inspectDinitSSH(ctx, tr)
+	}
 	lines := probeLines(ctx, tr, `
 if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl cat ssh.service >/dev/null 2>&1; then printf 'service=ssh.service\n'; elif systemctl cat sshd.service >/dev/null 2>&1; then printf 'service=sshd.service\n'; else printf 'service=\n'; fi
@@ -232,6 +238,44 @@ if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null |
 home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
 if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi
 `)
+	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
+}
+
+func inspectSysVSSH(ctx context.Context, tr transport.Transport) facts.SSH {
+	lines := probeLines(ctx, tr, `
+if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -x /etc/init.d/ssh; then printf 'service=sysv:ssh\n'; else printf 'service=\n'; fi
+enabled=no
+for link in /etc/rc[2345].d/S??ssh; do
+  test -L "$link" && test "$(readlink -f "$link")" = /etc/init.d/ssh || continue
+  enabled=yes
+  break
+done
+printf 'enabled=%s\n' "$enabled"
+if test -x /etc/init.d/ssh && service ssh status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v sshd >/dev/null 2>&1 && sshd -t >/dev/null 2>&1; then printf 'valid=yes\n'; else printf 'valid=no\n'; fi
+if grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\\*\\.conf([[:space:]]|$)' /etc/ssh/sshd_config 2>/dev/null; then printf 'dropin=yes\n'; else printf 'dropin=no\n'; fi
+first=$(for candidate in /etc/ssh/sshd_config.d/*.conf; do test -f "$candidate" && basename "$candidate"; done | LC_ALL=C sort | head -n 1)
+printf 'first=%s\n' "$first"
+if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null | grep -Fqx 'passwordauthentication no'; then printf 'effective=yes\n'; else printf 'effective=no\n'; fi
+home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
+if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi`)
+	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
+}
+
+func inspectDinitSSH(ctx context.Context, tr transport.Transport) facts.SSH {
+	lines := probeLines(ctx, tr, `
+if command -v sshd >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -f /etc/dinit.d/sshd && test -d /etc/dinit.d/boot.d; then printf 'service=dinit:sshd\n'; else printf 'service=\n'; fi
+if test -L /etc/dinit.d/boot.d/sshd && test "$(readlink -f /etc/dinit.d/boot.d/sshd)" = /etc/dinit.d/sshd; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if dinitctl -s is-started sshd >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v sshd >/dev/null 2>&1 && sshd -t >/dev/null 2>&1; then printf 'valid=yes\n'; else printf 'valid=no\n'; fi
+if grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config.d/\\*\\.conf([[:space:]]|$)' /etc/ssh/sshd_config 2>/dev/null; then printf 'dropin=yes\n'; else printf 'dropin=no\n'; fi
+first=$(for candidate in /etc/ssh/sshd_config.d/*.conf; do test -f "$candidate" && basename "$candidate"; done | LC_ALL=C sort | head -n 1)
+printf 'first=%s\n' "$first"
+if sshd -T 2>/dev/null | grep -Fqx 'permitrootlogin no' && sshd -T 2>/dev/null | grep -Fqx 'passwordauthentication no'; then printf 'effective=yes\n'; else printf 'effective=no\n'; fi
+home=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)
+if test -n "$home" && test -s "$home/.ssh/authorized_keys"; then printf 'keys=yes\n'; else printf 'keys=no\n'; fi`)
 	return facts.SSH{Installed: lines["installed"] == "yes", Service: lines["service"], ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", ConfigValid: lines["valid"] == "yes", DropInSupported: lines["dropin"] == "yes", FirstDropIn: lines["first"], HardeningEffective: lines["effective"] == "yes", AuthorizedKeysPresent: lines["keys"] == "yes", BebopDropIn: mustProbe(ctx, tr, "if test -r /etc/ssh/sshd_config.d/00-bebop.conf; then cat /etc/ssh/sshd_config.d/00-bebop.conf; fi")}
 }
 
@@ -279,8 +323,14 @@ func inspectDocker(ctx context.Context, tr transport.Transport, init facts.InitS
 	if packageManager == "xbps" && os.Family == "void" {
 		return inspectVoidDocker(ctx, tr)
 	}
+	if packageManager == "apt" && os.Family == "devuan" {
+		return inspectDevuanDocker(ctx, tr)
+	}
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchDocker(ctx, tr, systemd)
+	}
+	if packageManager == "pacman" && os.Family == "artix" {
+		return inspectArtixDocker(ctx, tr)
 	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
@@ -317,6 +367,51 @@ if dnf5 repoquery --available docker-compose >/dev/null 2>&1; then printf 'compo
 	}
 	lines := probeLines(ctx, tr, script)
 	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", ConflictingPackages: lines["conflict"] == "yes", RepositoryState: lines["repository"], RepositoryPolicy: policy, ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: lines["compose_package"]}
+}
+
+// devuanDockerCandidateScript accepts only codename-pinned Devuan merged
+// candidates. A same-version candidate from another source is deliberately a
+// conflict rather than an authority Bebop silently adopts.
+const devuanDockerCandidateScript = `for package in docker.io docker-compose; do
+  candidate=$(LC_ALL=C apt-cache policy "$package" 2>/dev/null | awk '/^[[:space:]]*Candidate:/ { print $2; exit }')
+  test -n "$candidate" && test "$candidate" != '(none)' || exit 1
+  LC_ALL=C apt-cache madison "$package" 2>/dev/null | awk -v version="$candidate" '
+    $3 == version { seen=1; if ($5 != "http://deb.devuan.org/merged" || $6 !~ /^excalibur(-updates|-security)?\//) bad=1; else good=1 }
+    END { exit !(seen && good && !bad) }'
+done`
+
+func inspectDevuanDocker(ctx context.Context, tr transport.Transport) facts.Docker {
+	lines := probeLines(ctx, tr, `
+if dpkg-query -W -f='${db:Status-Status}' docker.io 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if dpkg-query -W -f='${db:Status-Status}' docker.io docker-compose 2>/dev/null | grep -qx installed; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if `+devuanDockerCandidateScript+`; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+enabled=no
+if test -x /etc/init.d/docker; then
+  for link in /etc/rc[2345].d/S??docker; do
+    test -L "$link" && test "$(readlink -f "$link")" = /etc/init.d/docker || continue
+    enabled=yes
+    break
+  done
+fi
+printf 'enabled=%s\n' "$enabled"
+if test -x /etc/init.d/docker && service docker status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi`)
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryPolicy: "devuan-excalibur", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-compose", ServiceDefinition: lines["installed"] == "yes"}
+}
+
+func inspectArtixDocker(ctx context.Context, tr transport.Transport) facts.Docker {
+	lines := probeLines(ctx, tr, `
+if pacman -Q docker >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if pacman -Q docker docker-compose docker-dinit >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if for package in docker docker-compose docker-dinit; do LC_ALL=C pacman -Si world/$package 2>/dev/null | awk -F ' *: *' '$1 == "Repository" { found=($2 == "world") } END { exit !found }' || exit 1; done; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test -f /etc/dinit.d/dockerd && test -d /etc/dinit.d/boot.d; then printf 'service_definition=yes\n'; else printf 'service_definition=no\n'; fi
+if test -L /etc/dinit.d/boot.d/dockerd && test "$(readlink -f /etc/dinit.d/boot.d/dockerd)" = /etc/dinit.d/dockerd; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if dinitctl -s is-started dockerd >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if test -r /sys/fs/cgroup/cgroup.controllers; then printf 'cgroups=yes\n'; else printf 'cgroups=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null 2>&1; }; then printf 'responsive=yes\n'; else printf 'responsive=no\n'; fi
+if { test "$(id -u)" -eq 0 && env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v sudo >/dev/null 2>&1 && sudo -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; } || { command -v doas >/dev/null 2>&1 && doas -n env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null 2>&1; }; then printf 'compose=yes\n'; else printf 'compose=no\n'; fi`)
+	return facts.Docker{Installed: lines["installed"] == "yes", PackageSetComplete: lines["package_set"] == "yes", PackageSetAvailable: lines["package_available"] == "yes", RepositoryPolicy: "artix-world", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Responsive: lines["responsive"] == "yes", ComposeAvailable: lines["compose"] == "yes", ComposePackageAvailable: "docker-compose", CgroupsAvailable: lines["cgroups"] == "yes", ServiceDefinition: lines["service_definition"] == "yes", ServiceLinkState: lines["enabled"]}
 }
 
 const alpineBebopRepositoriesPath = "/etc/apk/repositories.d/50-bebop.list"
@@ -682,6 +777,12 @@ func inspectTailscale(ctx context.Context, tr transport.Transport, init facts.In
 	if packageManager == "pacman" && os.Family == "arch" {
 		return inspectArchTailscale(ctx, tr, systemd)
 	}
+	if packageManager == "apt" && os.Family == "devuan" {
+		return inspectDevuanTailscale(ctx, tr)
+	}
+	if packageManager == "pacman" && os.Family == "artix" {
+		return inspectArtixTailscale(ctx, tr)
+	}
 	script := `
 if dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
 if systemctl is-enabled tailscaled.service >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
@@ -784,8 +885,48 @@ if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/nul
 	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: systemd && lines["enabled"] == "yes", ServiceActive: systemd && lines["active"] == "yes", Connected: backend == "Running", BackendState: backend}
 }
 
+func inspectDevuanTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
+	lines := probeLines(ctx, tr, `
+if dpkg-query -W -f='${db:Status-Status}' tailscale 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test ! -e /etc/apt/sources.list.d/tailscale.list; then
+  printf 'repository=absent\n'
+elif grep -Fqx 'deb https://pkgs.tailscale.com/stable/debian trixie main' /etc/apt/sources.list.d/tailscale.list 2>/dev/null && test "$(grep -Evc '^[[:space:]]*(#.*)?$|^deb https://pkgs\.tailscale\.com/stable/debian trixie main$' /etc/apt/sources.list.d/tailscale.list 2>/dev/null)" = 0 && test "$(sha256sum /usr/share/keyrings/tailscale-archive-keyring.gpg 2>/dev/null | awk '{print $1}')" = 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39; then
+  printf 'repository=managed\n'
+else
+  printf 'repository=unmanaged\n'
+fi
+candidate=$(LC_ALL=C apt-cache policy tailscale 2>/dev/null | awk '/^[[:space:]]*Candidate:/ {print $2; exit}')
+if test -n "$candidate" && test "$candidate" != '(none)' && LC_ALL=C apt-cache madison tailscale 2>/dev/null | awk -v version="$candidate" '$3 == version { seen=1; if ($5 != "https://pkgs.tailscale.com/stable/debian" || $6 !~ /^trixie\//) bad=1; else good=1 } END { exit !(seen && good && !bad) }'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test ! -e /etc/init.d/tailscaled; then printf 'service_link=absent\n'; elif grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/init.d/tailscaled 2>/dev/null; then printf 'service_link=managed\n'; else printf 'service_link=conflict\n'; fi
+enabled=no
+for link in /etc/rc[2345].d/S??tailscaled; do
+  test -L "$link" && test "$(readlink -f "$link")" = /etc/init.d/tailscaled || continue
+  enabled=yes
+  break
+done
+printf 'enabled=%s\n' "$enabled"
+if test -x /etc/init.d/tailscaled && service tailscaled status >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\\([^"]*\\)".*/backend=\\1/p' | head -n 1; fi`)
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: lines["repository"], ServiceDefinition: lines["service_link"] == "managed", ServiceLinkState: lines["service_link"]}
+}
+
+func inspectArtixTailscale(ctx context.Context, tr transport.Transport) facts.Tailscale {
+	lines := probeLines(ctx, tr, `
+if pacman -Q tailscale >/dev/null 2>&1; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if pacman -Q tailscale tailscale-dinit >/dev/null 2>&1; then printf 'package_set=yes\n'; else printf 'package_set=no\n'; fi
+if for package in tailscale tailscale-dinit; do LC_ALL=C pacman -Si "world/$package" 2>/dev/null | awk -F ' *: *' '$1 == "Repository" { found=($2 == "world") } END { exit !found }' || exit 1; done; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi
+if test -f /etc/dinit.d/tailscaled && test -d /etc/dinit.d/boot.d; then printf 'service_definition=yes\n'; else printf 'service_definition=no\n'; fi
+if test -L /etc/dinit.d/boot.d/tailscaled && test "$(readlink -f /etc/dinit.d/boot.d/tailscaled)" = /etc/dinit.d/tailscaled; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if dinitctl -s is-started tailscaled >/dev/null 2>&1; then printf 'active=yes\n'; else printf 'active=no\n'; fi
+if command -v tailscale >/dev/null 2>&1; then tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState":"\\([^"]*\\)".*/backend=\\1/p' | head -n 1; fi`)
+	return facts.Tailscale{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceEnabled: lines["enabled"] == "yes", ServiceActive: lines["active"] == "yes", Connected: lines["backend"] == "Running", BackendState: lines["backend"], RepositoryState: "artix-world", ServiceDefinition: lines["service_definition"] == "yes"}
+}
+
 func inspectUpdates(ctx context.Context, tr transport.Transport, init facts.InitSystem, packageManager string, os facts.OS) facts.AutomaticUpdates {
 	if packageManager == "pacman" && os.Family == "arch" {
+		return facts.AutomaticUpdates{ConfigState: "unsupported"}
+	}
+	if packageManager == "pacman" && os.Family == "artix" {
 		return facts.AutomaticUpdates{ConfigState: "unsupported"}
 	}
 	if packageManager == "xbps" && os.Family == "void" {
@@ -814,6 +955,27 @@ elif test "$(cat `+transport.ShellQuote(alpineBebopRepositoriesPath)+`)" = "$(pr
 fi
 printf 'config=%s\n' "$config"
 if apk policy apk-cron 2>/dev/null | grep -Fq 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main'; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi`)
+		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceExists: lines["service_exists"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
+	}
+	if packageManager == "apt" && os.Family == "devuan" {
+		lines := probeLines(ctx, tr, `
+if dpkg-query -W -f='${db:Status-Status}' unattended-upgrades cron 2>/dev/null | grep -qx installed; then printf 'installed=yes\n'; else printf 'installed=no\n'; fi
+if test -x /etc/init.d/cron && test -x /etc/cron.daily/apt-compat; then printf 'service_exists=yes\n'; else printf 'service_exists=no\n'; fi
+enabled=no
+for link in /etc/rc[2345].d/S??cron; do
+  test -L "$link" && test "$(readlink -f "$link")" = /etc/init.d/cron || continue
+  enabled=yes
+  break
+done
+if test "$enabled" = yes && service cron status >/dev/null 2>&1; then printf 'enabled=yes\n'; else printf 'enabled=no\n'; fi
+if test ! -e /etc/apt/apt.conf.d/52-bebop-auto-upgrades; then
+  printf 'config=absent\n'
+elif grep -Fqx '// Managed by Bebop. Manual edits may be replaced.' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null && grep -Fqx 'APT::Periodic::Update-Package-Lists "1";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null && grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null && grep -Fqx '"o=Devuan,n=excalibur";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null && grep -Fqx '"o=Devuan,n=excalibur-updates";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null && grep -Fqx '"o=Devuan,n=excalibur-security";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades 2>/dev/null; then
+  printf 'config=managed\n'
+else
+  printf 'config=unmanaged\n'
+fi
+if for package in unattended-upgrades cron; do candidate=$(LC_ALL=C apt-cache policy "$package" 2>/dev/null | awk '/^[[:space:]]*Candidate:/ {print $2; exit}'); test -n "$candidate" && test "$candidate" != '(none)' && LC_ALL=C apt-cache madison "$package" 2>/dev/null | awk -v version="$candidate" '$3 == version { seen=1; if ($5 != "http://deb.devuan.org/merged" || $6 !~ /^excalibur(-updates|-security)?\//) bad=1; else good=1 } END { exit !(seen && good && !bad) }' || exit 1; done; then printf 'package_available=yes\n'; else printf 'package_available=no\n'; fi`)
 		return facts.AutomaticUpdates{Installed: lines["installed"] == "yes", PackageAvailable: lines["package_available"] == "yes", ServiceExists: lines["service_exists"] == "yes", Enabled: lines["enabled"] == "yes", ConfigState: lines["config"]}
 	}
 	script := `

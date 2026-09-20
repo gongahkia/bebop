@@ -35,6 +35,12 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 	if host.OS.Family == "void" && host.PackageManager == "xbps" {
 		return planVoidDocker(host, cfg)
 	}
+	if host.OS.Family == "devuan" && host.PackageManager == "apt" {
+		return planDevuanDocker(host, cfg)
+	}
+	if host.OS.Family == "artix" && host.PackageManager == "pacman" {
+		return planArtixDocker(host, cfg)
+	}
 	if host.PackageManager == "dnf5" {
 		return planFedoraDocker(host, cfg)
 	}
@@ -70,6 +76,81 @@ func (Docker) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []pl
 			change.Blocked = "the target apt repositories do not advertise a reviewed Docker Compose v2 package"
 		} else {
 			change.Action.Script = "export DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y " + host.Docker.ComposePackageAvailable
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+const devuanDockerPackagesAvailableScript = `for package in docker.io docker-compose; do
+  candidate=$(LC_ALL=C apt-cache policy "$package" 2>/dev/null | awk '/^[[:space:]]*Candidate:/ { print $2; exit }')
+  test -n "$candidate" && test "$candidate" != '(none)' || exit 1
+  LC_ALL=C apt-cache madison "$package" 2>/dev/null | awk -v version="$candidate" '
+    $3 == version { seen=1; if ($5 != "http://deb.devuan.org/merged" || $6 !~ /^excalibur(-updates|-security)?\//) bad=1; else good=1 }
+    END { exit !(seen && good && !bad) }'
+done`
+
+func planDevuanDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	changes := []plan.Change{}
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Devuan Docker package set is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "docker.io or docker-compose is not installed", Desired: "Devuan Excalibur docker.io and Docker Compose v2 packages installed", Preconditions: []plan.Precondition{{ID: "docker.devuan-packages-available", Description: "the current APT candidate versions are exclusively from Devuan Excalibur merged repositories", Script: devuanDockerPackagesAvailableScript}}, Action: plan.Action{Kind: "docker.install-engine", Resource: "devuan-excalibur", Script: "export DEBIAN_FRONTEND=noninteractive\napt-get install -y docker.io docker-compose"}, Verification: "reviewed Devuan Docker packages are installed"}
+		if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the current APT candidates are not exclusively from reviewed Devuan Excalibur merged repositories; Bebop will not use a shadowing repository"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = []string{"docker.engine"}
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "the package-provided Docker SysVinit service is disabled, inactive, or unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "Docker SysVinit service not ready", Desired: "Docker enabled in SysV multi-user runlevels and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "devuan", Script: sysvEnableAndStartScript("docker")}, Verification: "package-provided Docker SysVinit service is enabled and docker info succeeds as root"}
+		if needEngine && changes[0].Blocked != "" {
+			change.Action.Script, change.Blocked = "", "Devuan Docker package installation is blocked"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil, nil
+}
+
+const artixDockerPackagesAvailableScript = `for package in docker docker-compose docker-dinit; do
+  LC_ALL=C pacman -Si "world/$package" 2>/dev/null | awk -F ' *: *' '$1 == "Repository" { found=($2 == "world") } END { exit !found }' || exit 1
+done`
+
+func planArtixDocker(host facts.HostFacts, cfg config.Config) ([]plan.Change, []plan.Warning, error) {
+	if !host.Docker.CgroupsAvailable {
+		return []plan.Change{{ID: "docker.cgroups", Module: "docker", Summary: "review Artix cgroup support", Reason: "Docker requires a usable cgroup hierarchy", Risk: plan.Privileged, RequiresRoot: true, Current: "cgroup hierarchy unavailable", Desired: "usable Linux cgroup hierarchy", Action: plan.Action{Kind: "docker.cgroups-blocked", Resource: "artix"}, Verification: "not applicable", Blocked: "Artix Docker support requires a usable cgroup hierarchy; Bebop will not rewrite kernel or cgroup configuration"}}, nil, nil
+	}
+	needEngine := !host.Docker.Installed || !host.Docker.PackageSetComplete
+	changes := []plan.Change{}
+	if needEngine {
+		change := plan.Change{ID: "docker.engine", Module: "docker", Summary: "install Docker Engine", Reason: "the reviewed Artix Docker package set is incomplete", Risk: plan.Privileged, RequiresRoot: true, Current: "docker, docker-compose, or docker-dinit is not installed", Desired: "official Artix world Docker packages and dinit integration installed", Preconditions: []plan.Precondition{{ID: "docker.artix-packages-available", Description: "the existing Pacman sync database advertises reviewed Artix world packages", Script: artixDockerPackagesAvailableScript}}, Action: plan.Action{Kind: "docker.install-engine", Resource: "artix-world", Script: "pacman -S --needed --noconfirm world/docker world/docker-compose world/docker-dinit"}, Verification: "reviewed Artix Docker packages and packaged dinit service are installed"}
+		if !host.Docker.PackageSetAvailable {
+			change.Action.Script = ""
+			change.Blocked = "the current Pacman sync database does not advertise reviewed Artix world Docker packages; perform a reviewed full Artix upgrade manually and retry (Bebop never runs pacman -Sy)"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		changes = append(changes, change)
+	}
+	if !host.Docker.ServiceEnabled || !host.Docker.ServiceActive || !host.Docker.Responsive {
+		dependencies := []string(nil)
+		if needEngine {
+			dependencies = []string{"docker.engine"}
+		}
+		change := plan.Change{ID: "docker.service", Module: "docker", Summary: "enable and start Docker", Reason: "the packaged Artix dockerd dinit service is disabled, inactive, or unresponsive", Risk: plan.Privileged, RequiresRoot: true, Current: "dockerd dinit service not ready", Desired: "dockerd persistently enabled through dinit and responsive", Dependencies: dependencies, Action: plan.Action{Kind: "docker.enable-service", Resource: "artix", Script: dinitEnableAndStartScript("dockerd")}, Verification: "packaged dockerd dinit service is enabled and docker info succeeds as root"}
+		if host.Docker.Installed && !host.Docker.ServiceDefinition {
+			change.Action.Script, change.Blocked = "", "the installed Artix Docker package set does not provide the reviewed /etc/dinit.d/dockerd service; Bebop will not create a replacement"
+		} else if needEngine && changes[0].Blocked != "" {
+			change.Action.Script, change.Blocked = "", "Artix Docker package installation is blocked"
+		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
 		changes = append(changes, change)

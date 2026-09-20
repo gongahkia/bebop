@@ -24,6 +24,49 @@ chmod 0644 "$tmp"
 mv -f "$tmp" /etc/apt/apt.conf.d/52-bebop-auto-upgrades
 trap - EXIT`
 
+const devuanAutomaticCandidatesScript = `for package in unattended-upgrades cron; do
+  candidate=$(LC_ALL=C apt-cache policy "$package" 2>/dev/null | awk '/^[[:space:]]*Candidate:/ { print $2; exit }')
+  test -n "$candidate" && test "$candidate" != '(none)' || exit 1
+  LC_ALL=C apt-cache madison "$package" 2>/dev/null | awk -v version="$candidate" '
+    $3 == version { seen=1; if ($5 != "http://deb.devuan.org/merged" || $6 !~ /^excalibur(-updates|-security)?\//) bad=1; else good=1 }
+    END { exit !(seen && good && !bad) }'
+done`
+
+const devuanUpdatesConfigSafeScript = `if test -e /etc/apt/apt.conf.d/52-bebop-auto-upgrades; then
+  grep -Fqx '// Managed by Bebop. Manual edits may be replaced.' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+  grep -Fqx 'APT::Periodic::Update-Package-Lists "1";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+  grep -Fqx 'APT::Periodic::Unattended-Upgrade "1";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+  grep -Fqx '"o=Devuan,n=excalibur";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+  grep -Fqx '"o=Devuan,n=excalibur-updates";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+  grep -Fqx '"o=Devuan,n=excalibur-security";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+fi`
+
+const devuanUpdatesScript = `set -eu
+` + devuanUpdatesConfigSafeScript + `
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+` + devuanAutomaticCandidatesScript + `
+apt-get install -y unattended-upgrades cron
+test -x /etc/cron.daily/apt-compat
+tmp=$(mktemp /etc/apt/apt.conf.d/.52-bebop-auto-upgrades.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp" <<'EOF'
+// Managed by Bebop. Manual edits may be replaced.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Origins-Pattern {
+  "o=Devuan,n=excalibur";
+  "o=Devuan,n=excalibur-updates";
+  "o=Devuan,n=excalibur-security";
+};
+EOF
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+trap - EXIT
+` + "\n" + `update-rc.d cron defaults
+service cron start`
+
 const fedoraUpdatesScript = `if test -e /etc/dnf/automatic.conf; then
   grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/dnf/automatic.conf
 fi
@@ -173,6 +216,9 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 	if host.OS.Family == "arch" && host.PackageManager == "pacman" {
 		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Arch rolling system upgrades", Reason: "automatic Arch system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Arch upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "arch"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Arch rolling system upgrades; perform a reviewed full pacman -Syu manually and retry without automatic_updates"}}, nil, nil
 	}
+	if host.OS.Family == "artix" && host.PackageManager == "pacman" {
+		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Artix rolling system upgrades", Reason: "automatic Artix system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Artix upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "artix"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Artix rolling system upgrades; perform a reviewed full pacman -Syu manually and retry without automatic_updates"}}, nil, nil
+	}
 	if host.OS.Family == "void" && host.PackageManager == "xbps" {
 		return []plan.Change{{ID: "updates.unattended", Module: "updates", Summary: "review Void rolling system upgrades", Reason: "automatic Void system upgrades are deliberately unsupported", Risk: plan.Privileged, RequiresRoot: true, Current: "automatic updates requested", Desired: "operator-reviewed full Void upgrades", Action: plan.Action{Kind: "updates.automatic-unsupported", Resource: "void"}, Verification: "not applicable", Blocked: "Bebop deliberately does not automate Void rolling system upgrades; perform reviewed xbps-install -Su updates manually (and rerun if XBPS itself changes), then retry without automatic_updates"}}, nil, nil
 	}
@@ -187,6 +233,19 @@ func (Updates) Plan(host facts.HostFacts, cfg config.Config) ([]plan.Change, []p
 		} else if !host.AutomaticUpdates.PackageAvailable {
 			change.Action.Script = ""
 			change.Blocked = "the official Alpine v3.24 main repository does not advertise apk-cron"
+		} else {
+			rootBlocked(&change, host.SudoAvailable)
+		}
+		return []plan.Change{change}, nil, nil
+	}
+	if host.OS.Family == "devuan" && host.PackageManager == "apt" {
+		change := plan.Change{ID: "updates.unattended", Module: "updates", Summary: "enable automatic security updates", Reason: "unattended-upgrades, Devuan Excalibur policy, or SysVinit cron is not ready", Risk: plan.Privileged, RequiresRoot: true, Current: "Devuan automatic updates disabled or unmanaged", Desired: "Devuan unattended-upgrades runs through the package-provided apt periodic cron path without release migration or reboot", Preconditions: []plan.Precondition{{ID: "updates.devuan-config-safe", Description: "Bebop's Devuan automatic-update policy is absent or exact", Script: devuanUpdatesConfigSafeScript}, {ID: "updates.devuan-candidates", Description: "automatic-update packages resolve exclusively through Devuan Excalibur merged repositories", Script: devuanAutomaticCandidatesScript}}, Action: plan.Action{Kind: "updates.enable-unattended", Resource: "devuan", Script: devuanUpdatesScript}, Verification: "Devuan Excalibur origin policy is installed and package-provided cron/apt periodic execution is enabled"}
+		if host.AutomaticUpdates.ConfigState == "unmanaged" {
+			change.Action.Script, change.Blocked = "", "existing /etc/apt/apt.conf.d/52-bebop-auto-upgrades is not Bebop-managed; review it manually before Bebop can take ownership"
+		} else if !host.AutomaticUpdates.ServiceExists {
+			change.Action.Script, change.Blocked = "", "Devuan automatic updates require the package-provided SysVinit cron service and apt periodic compatibility script; Bebop will not create an arbitrary scheduler"
+		} else if !host.AutomaticUpdates.PackageAvailable {
+			change.Action.Script, change.Blocked = "", "the current APT candidates for unattended-upgrades or cron are not exclusively from reviewed Devuan Excalibur merged repositories"
 		} else {
 			rootBlocked(&change, host.SudoAvailable)
 		}
@@ -287,6 +346,15 @@ test -f /etc/periodic/daily/apk
 ! apk audit --details /etc/periodic/daily 2>/dev/null | grep -Fxq 'U etc/periodic/daily/apk'
 rc-update show default | grep -Eq '^[[:space:]]*crond([[:space:]]|$)'
 rc-service crond status >/dev/null`+"\n"+alpineAutomaticRepositoriesSafeScript)
+	}
+	if change.Action.Resource == "devuan" || change.Action.Script == devuanUpdatesScript {
+		return verify(ctx, tr, `dpkg-query -W -f='${db:Status-Status}' unattended-upgrades cron | grep -qx installed
+test -x /etc/cron.daily/apt-compat
+grep -Fqx '// Managed by Bebop. Manual edits may be replaced.' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+grep -Fqx '"o=Devuan,n=excalibur";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+grep -Fqx '"o=Devuan,n=excalibur-updates";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+grep -Fqx '"o=Devuan,n=excalibur-security";' /etc/apt/apt.conf.d/52-bebop-auto-upgrades
+`+sysvServiceReadyScript("cron"))
 	}
 	if change.Action.Resource == "enterprise-linux" || change.Action.Script == enterpriseUpdatesScript {
 		return verify(ctx, tr, `rpm -q dnf-automatic >/dev/null
