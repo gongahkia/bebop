@@ -23,6 +23,8 @@ mkdir -p "$root/dist"
 temporary="$(mktemp -d "$root/dist/.release-${version#v}-XXXXXX")"
 cleanup() { rm -rf -- "$temporary"; }
 trap cleanup EXIT
+artifacts="$temporary/artifacts"
+mkdir -p "$artifacts"
 
 make -C "$root" check
 
@@ -55,7 +57,7 @@ for target in "${targets[@]}"; do
   fi
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go -C "$root" build -trimpath -ldflags "-X github.com/bebop-home/bebop/internal/buildinfo.Version=$version" -o "$stage/$binary" ./cmd/bebop
   cp "$root/README.md" "$stage/README.md"
-  archive="$temporary/bebop_${version#v}_${os}_${arch}.$extension"
+  archive="$artifacts/bebop_${version#v}_${os}_${arch}.$extension"
   if [[ "$extension" == zip ]]; then
     (cd "$stage" && zip -X -q "$archive" "$binary" README.md)
   else
@@ -64,9 +66,9 @@ for target in "${targets[@]}"; do
 done
 
 (
-  cd "$temporary"
+  cd "$artifacts"
   find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum > SHA256SUMS
 )
-mv "$temporary" "$output"
+mv "$artifacts" "$output"
 trap - EXIT
 printf 'release dry-run artifacts: %s\n' "$output"
