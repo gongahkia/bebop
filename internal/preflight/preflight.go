@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/bebop-home/bebop/internal/bebop"
 	"github.com/bebop-home/bebop/internal/config"
@@ -44,6 +45,9 @@ type Result struct {
 	SudoAvailable  bool                  `json:"sudo_available"`
 	SupportedOS    bool                  `json:"supported_os"`
 	Architecture   bool                  `json:"architecture_supported"`
+	Platform       string                `json:"platform,omitempty"`
+	DetectedArch   string                `json:"architecture,omitempty"`
+	Libc           string                `json:"libc,omitempty"`
 	PackageManager string                `json:"package_manager,omitempty"`
 	InitSystem     facts.InitSystem      `json:"init_system,omitempty"`
 	Systemd        bool                  `json:"systemd"`
@@ -65,7 +69,9 @@ func Run(ctx context.Context, service *bebop.Service, current target.Target, cfg
 	if err != nil {
 		return unavailable(result, transport.ClassifyFailure(err), failureMessage(transport.ClassifyFailure(err), err))
 	}
-	result = FromFacts(current, host)
+	result = fromFacts(current, host)
+	appendOperationalChecks(&result, host, cfg)
+	appendConfiguredCapabilityChecks(&result, cfg, host)
 	appendBackupChecks(&result, cfg)
 	appendStorageChecks(&result, cfg, host)
 	appendRecipeChecks(&result, cfg, host.Architecture)
@@ -91,6 +97,13 @@ func appendStorageChecks(result *Result, cfg config.Config, host facts.HostFacts
 // FromFacts is deterministic and exists both for focused tests and callers
 // that have already completed the single shared inspection step.
 func FromFacts(current target.Target, host facts.HostFacts) Result {
+	result := fromFacts(current, host)
+	appendOperationalChecks(&result, host, config.Defaults())
+	result.Ready = !hasFailure(result.Checks)
+	return result
+}
+
+func fromFacts(current target.Target, host facts.HostFacts) Result {
 	result := Result{Target: current.String()}
 	result.Reachable = true
 	result.Authenticated = true
@@ -100,14 +113,24 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	if current.Kind == target.SSH {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "ssh.authenticated", Message: "SSH authentication succeeded using the controller's OpenSSH configuration"})
 	}
+	result.DetectedArch = host.Architecture
+	result.Libc = host.Libc
+	platform, policyKnown := facts.PlatformPolicyFor(host.OS)
+	if policyKnown {
+		result.Platform = platform.Key
+	}
 	result.SupportedOS = host.OS.IsSupported()
 	if result.SupportedOS {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "os.supported", Message: "supported OS: " + host.OS.Display()})
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "os.supported", Message: "supported platform: " + platform.DisplayName + " (" + string(platform.ReleaseModel) + ")"})
 	} else {
-		result.Checks = append(result.Checks, Check{Status: Fail, Code: "os.unsupported", Message: "unsupported target OS: " + host.OS.Display()})
+		message := "unsupported target OS: " + host.OS.Display() + " is not in Bebop's reviewed support matrix"
+		if reviewed := facts.ReviewedPlatformNamesForID(host.OS.ID); len(reviewed) > 0 {
+			message += "; reviewed " + host.OS.ID + " platforms: " + strings.Join(reviewed, ", ")
+		}
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "os.unsupported", Message: message})
 	}
 	result.Architecture = host.ArchitectureKnown && host.OS.SupportsArchitecture(host.Architecture)
-	if host.OS.Family == "void" && !facts.VoidLibcSupported(host.OS, host.Libc) {
+	if policyKnown && len(platform.Libcs) > 0 && !facts.LibcSupported(host.OS, host.Libc) {
 		result.Architecture = false
 	}
 	if host.ArchitectureKnown {
@@ -118,6 +141,13 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 		}
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "architecture.unsupported", Message: "unsupported or unknown target architecture: " + host.Architecture})
+	}
+	if policyKnown && len(platform.Libcs) > 0 {
+		if facts.LibcSupported(host.OS, host.Libc) {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: "libc.supported", Message: "reviewed target libc: " + host.Libc})
+		} else {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "libc.unsupported", Message: "unsupported target libc: " + host.Libc})
+		}
 	}
 	result.PackageManager = host.PackageManager
 	if facts.PackageToolsAvailable(host.OS, host.PackageManager, host.PackageDatabase) {
@@ -142,6 +172,8 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	result.Systemd = host.Systemd
 	if facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "init." + string(host.OS.RequiredInitSystem()), Message: string(host.OS.RequiredInitSystem()) + " available"})
+	} else if !policyKnown && host.InitSystem != facts.InitSystemUnknown {
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "init.detected", Message: "detected target init: " + string(host.InitSystem) + " (no reviewed platform policy)"})
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "init.unsupported", Message: "required " + string(host.OS.RequiredInitSystem()) + " init system unavailable"})
 	}
@@ -150,21 +182,15 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	}
 	result.SudoAvailable = host.SudoAvailable
 	if host.SudoAvailable {
-		result.Checks = append(result.Checks, Check{Status: Pass, Code: "privilege.noninteractive", Message: "non-interactive root access available"})
+		mode := host.PrivilegeMode
+		if mode == "" {
+			mode = "noninteractive"
+		}
+		result.Checks = append(result.Checks, Check{Status: Pass, Code: "privilege.noninteractive", Message: "non-interactive root access available via " + mode})
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "privilege.unavailable", Message: "non-interactive root, sudo, or doas access unavailable; Bebop cannot apply privileged changes"})
 	}
-	if host.OS.Family == "alpine" || host.OS.Family == "void" || host.OS.Family == "devuan" || host.OS.Family == "artix" {
-		remediation := "install flock findmnt lsblk manually with apk"
-		if host.OS.Family == "void" {
-			remediation = "install util-linux manually with xbps-install -S"
-		}
-		if host.OS.Family == "devuan" {
-			remediation = "install flock and util-linux manually with apt-get"
-		}
-		if host.OS.Family == "artix" {
-			remediation = "install util-linux manually with pacman -S"
-		}
+	if requiresTools, remediation := facts.MutationToolPolicy(host.OS); requiresTools {
 		for _, tool := range []struct {
 			name      string
 			available bool
@@ -173,12 +199,10 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 			if available {
 				result.Checks = append(result.Checks, Check{Status: Pass, Code: "target.tool." + name, Message: name + " available"})
 			} else {
-				result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.tool." + name, Message: host.OS.Display() + " requires " + name + " before mutation; " + remediation})
+				result.Checks = append(result.Checks, Check{Status: Fail, Code: "target.tool." + name, Message: host.OS.Display() + " requires " + name + " before mutation; install it manually with " + remediation})
 			}
 		}
 	}
-	appendOperationalChecks(&result, host)
-	result.Ready = !hasFailure(result.Checks)
 	return result
 }
 
@@ -189,17 +213,18 @@ func unavailable(result Result, kind transport.FailureKind, message string) Resu
 	return result
 }
 
-func appendOperationalChecks(result *Result, host facts.HostFacts) {
-	if host.SSH.Installed && !host.SSH.ConfigValid {
+func appendOperationalChecks(result *Result, host facts.HostFacts, cfg config.Config) {
+	if cfg.Features.SSHHardening && host.SSH.Installed && !host.SSH.ConfigValid {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "ssh.config_invalid", Message: "current SSH configuration does not validate; SSH hardening will be blocked"})
-	} else if host.SSH.Installed {
+	} else if cfg.Features.SSHHardening && host.SSH.Installed {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "ssh.config_valid", Message: "SSH configuration validates"})
-	} else {
+	} else if cfg.Features.SSHHardening {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "ssh.server_absent", Message: "no SSH server found; SSH hardening has no effect"})
 	}
-	if host.Docker.Responsive {
+	needsDocker := cfg.Features.Docker || len(cfg.Services) > 0
+	if needsDocker && host.Docker.Responsive {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "docker.healthy", Message: "Docker healthy"})
-	} else {
+	} else if needsDocker {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "docker.unhealthy", Message: "Docker is not healthy or not installed"})
 	}
 	if len(host.Services) > 0 {
@@ -220,11 +245,11 @@ func appendOperationalChecks(result *Result, host facts.HostFacts) {
 			}
 		}
 	}
-	if host.Tailscale.Connected {
+	if cfg.Features.Tailscale && host.Tailscale.Connected {
 		result.Checks = append(result.Checks, Check{Status: Pass, Code: "tailscale.connected", Message: "Tailscale connected"})
-	} else if host.Tailscale.Installed {
+	} else if cfg.Features.Tailscale && host.Tailscale.Installed {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "tailscale.authentication", Message: "Tailscale installed but not authenticated"})
-	} else {
+	} else if cfg.Features.Tailscale {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "tailscale.absent", Message: "Tailscale not installed"})
 	}
 	if host.DataRoot.Exists && host.DataRoot.Mode == "750" && host.DataRoot.UID == 0 && host.DataRoot.GID == 0 {
@@ -239,6 +264,85 @@ func appendOperationalChecks(result *Result, host facts.HostFacts) {
 	}
 	for _, device := range host.UnconfiguredStorage {
 		result.Checks = append(result.Checks, Check{Status: Warn, Code: "storage.unconfigured", Message: "unconfigured storage detected: " + device.Name + "; Bebop will not modify disk layouts"})
+	}
+}
+
+// appendConfiguredCapabilityChecks is intentionally read-only. It turns facts
+// already collected by inspection into feature-specific readiness guidance;
+// it never asks a package manager to refresh metadata or resolve a transaction.
+func appendConfiguredCapabilityChecks(result *Result, cfg config.Config, host facts.HostFacts) {
+	platform, supported := facts.PlatformPolicyFor(host.OS)
+	if !supported {
+		return
+	}
+	if cfg.Features.AutomaticUpdates {
+		if platform.AutomaticUpdates == facts.AutomaticUpdatesUnsupported {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "automatic_updates.unsupported", Message: platform.DisplayName + " intentionally has no Bebop unattended-update path; set automatic_updates = false and perform normal reviewed rolling updates manually"})
+		} else if host.AutomaticUpdates.ConfigState == "unmanaged" || host.AutomaticUpdates.ConflictingTimers {
+			result.Checks = append(result.Checks, Check{Status: Fail, Code: "automatic_updates.policy", Message: "automatic-update package or policy state is unmanaged; Bebop will not overwrite administrator update configuration"})
+		} else if host.AutomaticUpdates.Enabled {
+			result.Checks = append(result.Checks, Check{Status: Pass, Code: "automatic_updates.ready", Message: "reviewed automatic-update mechanism is enabled"})
+		} else {
+			result.Checks = append(result.Checks, Check{Status: Warn, Code: "automatic_updates.pending", Message: "reviewed automatic updates are not enabled yet; a plan can configure the platform mechanism"})
+		}
+	}
+	if cfg.Features.Docker || len(cfg.Services) > 0 {
+		appendDockerReadiness(result, host)
+	}
+	if cfg.Features.Tailscale {
+		appendTailscaleReadiness(result, host)
+	}
+	if cfg.Maintenance != nil {
+		for _, job := range cfg.Maintenance.Jobs {
+			if job.Enabled && job.Type == "update-check" {
+				if host.MaintenanceUpdateCheckAvailable {
+					result.Checks = append(result.Checks, Check{Status: Pass, Code: "maintenance.update_check", Message: "reviewed maintenance update-check backend available"})
+				} else {
+					result.Checks = append(result.Checks, Check{Status: Fail, Code: "maintenance.update_check", Message: "maintenance update-check prerequisite unavailable; install the reviewed package-manager helper manually before running the job"})
+				}
+				break
+			}
+		}
+	}
+}
+
+func appendDockerReadiness(result *Result, host facts.HostFacts) {
+	if host.Docker.ConflictingPackages {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.package_conflict", Message: "conflicting Docker packages are installed; Bebop will not replace them automatically"})
+		return
+	}
+	if host.Docker.PackageHeld || host.Docker.PackageRepolocked {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.package_policy", Message: "Docker package hold or repository lock blocks reviewed convergence; resolve it manually"})
+		return
+	}
+	if host.Docker.RepositoryState == "unmanaged" {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.repository_policy", Message: "Docker candidate repository is unmanaged or unreviewed; Bebop will not use it"})
+		return
+	}
+	if !host.Docker.Installed && !host.Docker.PackageSetAvailable {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "docker.package_unavailable", Message: "reviewed Docker packages are unavailable from the target's current package policy"})
+		return
+	}
+	if !host.Docker.Installed {
+		result.Checks = append(result.Checks, Check{Status: Warn, Code: "docker.package_pending", Message: "reviewed Docker packages are available and can be installed by a plan"})
+	}
+}
+
+func appendTailscaleReadiness(result *Result, host facts.HostFacts) {
+	if host.Tailscale.PackageHeld || host.Tailscale.PackageRepolocked {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "tailscale.package_policy", Message: "Tailscale package hold or repository lock blocks reviewed convergence; resolve it manually"})
+		return
+	}
+	if host.Tailscale.RepositoryState == "unmanaged" {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "tailscale.repository_policy", Message: "Tailscale repository state is unmanaged or unreviewed; Bebop will not use it"})
+		return
+	}
+	if !host.Tailscale.Installed && !host.Tailscale.PackageAvailable {
+		result.Checks = append(result.Checks, Check{Status: Fail, Code: "tailscale.package_unavailable", Message: "reviewed Tailscale package is unavailable from the target's current package policy"})
+		return
+	}
+	if !host.Tailscale.Installed {
+		result.Checks = append(result.Checks, Check{Status: Warn, Code: "tailscale.package_pending", Message: "reviewed Tailscale package is available and can be installed by a plan"})
 	}
 }
 

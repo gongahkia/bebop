@@ -9,37 +9,38 @@ import (
 )
 
 type HostFacts struct {
-	Target              string           `json:"target"`
-	Hostname            string           `json:"hostname"`
-	MachineID           string           `json:"machine_id,omitempty"`
-	OS                  OS               `json:"os"`
-	Architecture        string           `json:"architecture"`
-	ArchitectureKnown   bool             `json:"architecture_known"`
-	Libc                string           `json:"libc,omitempty"`
-	Kernel              string           `json:"kernel"`
-	PackageManager      string           `json:"package_manager"`
-	PackageDatabase     string           `json:"package_database,omitempty"`
-	InitSystem          InitSystem       `json:"init_system"`
-	Systemd             bool             `json:"systemd"`
-	EffectiveUser       string           `json:"effective_user"`
-	SudoAvailable       bool             `json:"sudo_available"`
-	PrivilegeMode       string           `json:"privilege_mode,omitempty"`
-	RequiredTools       RequiredTools    `json:"required_tools,omitempty"`
-	RootMode            string           `json:"root_mode,omitempty"`
-	SSH                 SSH              `json:"ssh"`
-	Docker              Docker           `json:"docker"`
-	Services            []Service        `json:"services,omitempty"`
-	Tailscale           Tailscale        `json:"tailscale"`
-	AutomaticUpdates    AutomaticUpdates `json:"automatic_updates"`
-	SELinux             SELinux          `json:"selinux"`
-	Firewall            Firewall         `json:"firewall"`
-	MemoryKiB           int64            `json:"memory_kib"`
-	RootFilesystem      Filesystem       `json:"root_filesystem"`
-	MutationBlocked     bool             `json:"mutation_blocked,omitempty"`
-	MutationBlockReason string           `json:"mutation_block_reason,omitempty"`
-	UnconfiguredStorage []StorageDevice  `json:"unconfigured_storage,omitempty"`
-	Storage             Storage          `json:"storage"`
-	DataRoot            Directory        `json:"data_root"`
+	Target                          string           `json:"target"`
+	Hostname                        string           `json:"hostname"`
+	MachineID                       string           `json:"machine_id,omitempty"`
+	OS                              OS               `json:"os"`
+	Architecture                    string           `json:"architecture"`
+	ArchitectureKnown               bool             `json:"architecture_known"`
+	Libc                            string           `json:"libc,omitempty"`
+	Kernel                          string           `json:"kernel"`
+	PackageManager                  string           `json:"package_manager"`
+	PackageDatabase                 string           `json:"package_database,omitempty"`
+	InitSystem                      InitSystem       `json:"init_system"`
+	Systemd                         bool             `json:"systemd"`
+	EffectiveUser                   string           `json:"effective_user"`
+	SudoAvailable                   bool             `json:"sudo_available"`
+	PrivilegeMode                   string           `json:"privilege_mode,omitempty"`
+	RequiredTools                   RequiredTools    `json:"required_tools,omitempty"`
+	RootMode                        string           `json:"root_mode,omitempty"`
+	SSH                             SSH              `json:"ssh"`
+	Docker                          Docker           `json:"docker"`
+	Services                        []Service        `json:"services,omitempty"`
+	Tailscale                       Tailscale        `json:"tailscale"`
+	AutomaticUpdates                AutomaticUpdates `json:"automatic_updates"`
+	MaintenanceUpdateCheckAvailable bool             `json:"maintenance_update_check_available,omitempty"`
+	SELinux                         SELinux          `json:"selinux"`
+	Firewall                        Firewall         `json:"firewall"`
+	MemoryKiB                       int64            `json:"memory_kib"`
+	RootFilesystem                  Filesystem       `json:"root_filesystem"`
+	MutationBlocked                 bool             `json:"mutation_blocked,omitempty"`
+	MutationBlockReason             string           `json:"mutation_block_reason,omitempty"`
+	UnconfiguredStorage             []StorageDevice  `json:"unconfigured_storage,omitempty"`
+	Storage                         Storage          `json:"storage"`
+	DataRoot                        Directory        `json:"data_root"`
 }
 
 // InitSystem is the intentionally small target service-management capability.
@@ -85,85 +86,39 @@ func (o OS) Display() string {
 	return o.Name + " " + o.VersionID
 }
 
-// IsSupported repeats release gates at fact-consumption boundaries so
-// hand-constructed or deserialized facts cannot accidentally broaden support.
+// IsSupported repeats the reviewed platform matrix gate at fact-consumption
+// boundaries so hand-constructed or deserialized facts cannot broaden support.
 func (o OS) IsSupported() bool {
 	if !o.Supported {
 		return false
 	}
-	switch o.ID {
-	case "fedora":
-		return o.VersionID == "43" || o.VersionID == "44"
-	case "rocky", "almalinux":
-		return o.VersionID == "9.8" || o.VersionID == "10.2"
-	case "centos":
-		return (o.VersionID == "9" && o.PlatformID == "platform:el9" && o.Name == "CentOS Stream") || (o.VersionID == "10" && o.PlatformID == "platform:el10" && o.Name == "CentOS Stream")
-	case "opensuse-leap":
-		return o.VersionID == "16.0"
-	case "opensuse-tumbleweed":
-		return true
-	case "arch":
-		return o.BuildID == "rolling"
-	case "alpine":
-		return isAlpine324(o.VersionID)
-	case "void":
-		return true
-	case "devuan":
-		return o.VersionID == "6" && o.VersionCodename == "excalibur"
-	case "artix":
-		return o.BuildID == "rolling"
-	default:
-		return true
-	}
+	_, ok := PlatformPolicyFor(o)
+	return ok
 }
 
-// SupportsArchitecture adds the few reviewed architecture restrictions that
-// are part of an operating-system support policy. Most Bebop capabilities are
-// architecture-neutral; official Arch Linux support is deliberately x86_64
-// only.
+// SupportsArchitecture is deliberately policy-backed: accepted architectures
+// are reviewed per platform rather than inherited from an OS family default.
 func (o OS) SupportsArchitecture(architecture string) bool {
-	if !o.IsSupported() {
-		return false
-	}
-	switch o.ID {
-	case "arch":
-		return architecture == "amd64"
-	case "alpine":
-		return architecture == "amd64" || architecture == "arm64"
-	case "void":
-		return architecture == "amd64" || architecture == "arm64"
-	case "devuan":
-		return architecture == "amd64" || architecture == "arm64"
-	case "artix":
-		return architecture == "amd64"
-	default:
-		return true
-	}
+	policy, ok := PlatformPolicyFor(o)
+	return ok && o.IsSupported() && policy.SupportsArchitecture(architecture)
 }
 
-// RequiredInitSystem keeps OS policy independent of the generic inspection
-// mechanism. Bebop supports the three concrete target init systems below.
+// RequiredInitSystem keeps target-init policy independent of package-manager
+// selection. Unknown or unreviewed platforms fail closed.
 func (o OS) RequiredInitSystem() InitSystem {
-	if o.Family == "alpine" || o.ID == "alpine" {
-		return InitSystemOpenRC
+	policy, ok := PlatformPolicyFor(o)
+	if !ok {
+		return InitSystemUnknown
 	}
-	if o.Family == "void" || o.ID == "void" {
-		return InitSystemRunit
-	}
-	if o.Family == "devuan" || o.ID == "devuan" {
-		return InitSystemSysV
-	}
-	if o.Family == "artix" || o.ID == "artix" {
-		return InitSystemDinit
-	}
-	return InitSystemSystemd
+	return policy.InitSystem
 }
 
 func InitSystemAvailable(os OS, init InitSystem, legacySystemd bool) bool {
 	if init == "" && legacySystemd {
 		init = InitSystemSystemd
 	}
-	return init == os.RequiredInitSystem()
+	required := os.RequiredInitSystem()
+	return required != InitSystemUnknown && init == required
 }
 
 type SSH struct {
@@ -344,7 +299,7 @@ type Identity struct {
 
 func (host HostFacts) Identity() Identity {
 	version := host.OS.VersionID
-	if host.OS.ID == "arch" || host.OS.ID == "artix" || host.OS.ID == "void" {
+	if policy, ok := PlatformPolicyFor(host.OS); ok && policy.ReleaseModel == ReleaseRolling {
 		version = ""
 	}
 	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: version}
@@ -434,10 +389,10 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	mountConfigs := append([]StorageMountConfig(nil), host.Storage.MountConfigs...)
 	sort.Slice(mountConfigs, func(i, j int) bool { return mountConfigs[i].Name < mountConfigs[j].Name })
 	os := host.OS
-	// Tumbleweed snapshot dates and Arch's absent/non-release VERSION_ID are
-	// not release gates or machine identity. Package/repository facts still
-	// stale a plan when their state changes.
-	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" || os.ID == "artix" || os.ID == "void" {
+	// Rolling snapshot dates and absent/non-release VERSION_ID values are not
+	// release gates or machine identity. Package/repository facts still stale a
+	// plan when their state changes.
+	if platform, ok := PlatformPolicyFor(os); ok && platform.ReleaseModel == ReleaseRolling {
 		os.VersionID = ""
 	}
 	return ConvergenceSnapshot{

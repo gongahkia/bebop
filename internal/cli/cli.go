@@ -234,7 +234,7 @@ func (r *Runner) init(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if !host.OS.IsSupported() || !host.OS.SupportsArchitecture(host.Architecture) || !facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) || (host.OS.Family == "void" && !facts.VoidLibcSupported(host.OS, host.Libc)) {
+	if !host.OS.IsSupported() || !host.OS.SupportsArchitecture(host.Architecture) || !facts.InitSystemAvailable(host.OS, host.InitSystem, host.Systemd) || !facts.LibcSupported(host.OS, host.Libc) {
 		return errs.New(errs.UnsupportedOS, "target is not a supported host with its required init system", nil)
 	}
 	if !*force {

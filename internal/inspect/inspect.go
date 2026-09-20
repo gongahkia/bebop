@@ -68,24 +68,20 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 	f.Services = inspectServices(ctx, tr, dataRoot, deployments, f.Docker.Responsive)
 	f.Tailscale = inspectTailscale(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
 	f.AutomaticUpdates = inspectUpdates(ctx, tr, f.InitSystem, f.PackageManager, f.OS)
+	f.MaintenanceUpdateCheckAvailable = inspectMaintenanceUpdateCheck(ctx, tr, f.PackageManager)
 	f.Firewall = inspectFirewall(ctx, tr)
 	f.MemoryKiB = parseMemory(mustProbe(ctx, tr, "awk '/^MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true"))
 	f.RootFilesystem = inspectRootFilesystem(ctx, tr)
 	f.MutationBlocked, f.MutationBlockReason = inspectMutationSafety(ctx, tr, f.RootFilesystem)
 	f.RootMode = "persistent"
-	if f.OS.Family == "alpine" {
+	platform, platformSupported := facts.PlatformPolicyFor(f.OS)
+	if platformSupported && platform.RootPersistence == facts.RootPersistencePersistent && f.OS.ID == "alpine" {
 		f.RootMode = inspectAlpineRootMode(ctx, tr, f.RootFilesystem)
 		if f.RootMode != "persistent" {
 			f.MutationBlocked, f.MutationBlockReason = true, "Alpine "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
 		}
 	}
-	if f.OS.Family == "void" {
-		f.RootMode = inspectVoidRootMode(f.RootFilesystem)
-		if f.RootMode != "persistent" {
-			f.MutationBlocked, f.MutationBlockReason = true, "Void "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
-		}
-	}
-	if f.OS.Family == "devuan" || f.OS.Family == "artix" {
+	if platformSupported && platform.RootPersistence == facts.RootPersistencePersistent && f.OS.ID != "alpine" {
 		f.RootMode = inspectVoidRootMode(f.RootFilesystem)
 		if f.RootMode != "persistent" {
 			f.MutationBlocked, f.MutationBlockReason = true, f.OS.Display()+" "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
@@ -143,7 +139,7 @@ fi`)) {
 }
 
 func inspectRequiredTools(ctx context.Context, tr transport.Transport, os facts.OS) facts.RequiredTools {
-	if os.Family != "alpine" && os.Family != "void" && os.Family != "devuan" && os.Family != "artix" {
+	if required, _ := facts.MutationToolPolicy(os); !required {
 		return facts.RequiredTools{}
 	}
 	lines := probeLines(ctx, tr, `
@@ -151,6 +147,15 @@ if command -v flock >/dev/null 2>&1; then printf 'flock=yes\n'; else printf 'flo
 if command -v lsblk >/dev/null 2>&1; then printf 'lsblk=yes\n'; else printf 'lsblk=no\n'; fi
 if command -v findmnt >/dev/null 2>&1; then printf 'findmnt=yes\n'; else printf 'findmnt=no\n'; fi`)
 	return facts.RequiredTools{Flock: lines["flock"] == "yes", LSBLK: lines["lsblk"] == "yes", Findmnt: lines["findmnt"] == "yes"}
+}
+
+func inspectMaintenanceUpdateCheck(ctx context.Context, tr transport.Transport, packageManager string) bool {
+	if packageManager == "pacman" {
+		return firstLine(mustProbe(ctx, tr, "if command -v checkupdates >/dev/null 2>&1; then printf yes; fi")) == "yes"
+	}
+	// Every other reviewed package-manager backend performs update awareness
+	// with a tool already required by its package capability.
+	return packageManager != "" && packageManager != "unknown"
 }
 
 func inspectPackageTools(ctx context.Context, tr transport.Transport, os facts.OS) (string, string) {

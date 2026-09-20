@@ -29,73 +29,23 @@ func ParseOSRelease(contents string) (OS, error) {
 		return OS{}, err
 	}
 	id := strings.ToLower(values["ID"])
-	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], BuildID: strings.ToLower(values["BUILD_ID"]), VersionCodename: strings.ToLower(values["VERSION_CODENAME"]), PlatformID: strings.ToLower(values["PLATFORM_ID"])}
-	switch id {
-	case "debian":
-		os.Family, os.Supported = "debian", true
-	case "ubuntu":
-		os.Family, os.Supported = "ubuntu", true
-	case "raspbian":
-		os.Family, os.Supported = "raspberry-pi-os", true
+	os := OS{ID: id, Name: values["NAME"], VersionID: values["VERSION_ID"], BuildID: strings.ToLower(values["BUILD_ID"]), VersionCodename: strings.ToLower(values["VERSION_CODENAME"]), PlatformID: strings.ToLower(values["PLATFORM_ID"]), Family: platformFamily(id)}
+	if id == "raspbian" {
 		os.Name = "Raspberry Pi OS"
-	case "fedora":
-		os.Family = "fedora"
-		// Fedora is deliberately version-gated. A new Fedora release is not
-		// supported until its package/runtime contract has been reviewed.
-		os.Supported = os.VersionID == "43" || os.VersionID == "44"
-	case "rocky":
-		os.Family = "enterprise-linux"
-		os.Supported = os.VersionID == "9.8" || os.VersionID == "10.2"
-	case "almalinux":
-		os.Family = "enterprise-linux"
-		os.Supported = os.VersionID == "9.8" || os.VersionID == "10.2"
-	case "centos":
-		os.Family = "enterprise-linux"
-		// CentOS Linux also used ID=centos. Require both the Stream name and
-		// the matching machine-readable EL platform identity.
-		os.Supported = (os.VersionID == "9" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el9") || (os.VersionID == "10" && os.Name == "CentOS Stream" && os.PlatformID == "platform:el10")
-	case "opensuse-leap":
-		os.Family = "opensuse"
-		os.Supported = os.VersionID == "16.0"
-	case "opensuse-tumbleweed":
-		// Tumbleweed is rolling. Its snapshot date is useful display metadata,
-		// not a release gate; exact ID remains the support boundary.
-		os.Family, os.Supported = "opensuse", true
-	case "arch":
-		// Arch is rolling, but only the official rolling distribution is
-		// reviewed. ID_LIKE and image-version metadata are deliberately not
-		// support signals.
-		os.Family = "arch"
-		os.Supported = os.BuildID == "rolling"
-	case "alpine":
-		// Alpine 3.24 is a reviewed stable branch. Patch releases are normal
-		// maintenance, while a new minor branch requires fresh review.
-		os.Family = "alpine"
-		os.Supported = isAlpine324(os.VersionID)
-	case "void":
-		// Void is rolling. Exact official ID, the native XBPS architecture and
-		// runit are checked independently; image dates and package versions are
-		// deliberately not release gates.
-		os.Family, os.Supported = "void", true
-	case "devuan":
-		// Devuan's point releases retain the Excalibur release contract. The
-		// codename is deliberately required so a future stable alias cannot
-		// silently broaden support.
-		os.Family = "devuan"
-		os.Supported = os.VersionID == "6" && os.VersionCodename == "excalibur"
-	case "artix":
-		// Artix is rolling; exact official identity and BUILD_ID are the gate.
-		os.Family = "artix"
-		os.Supported = os.BuildID == "rolling"
-	default:
-		os.Family = "unsupported"
 	}
+	// PlatformPolicyFor is the sole release/identity allow-list. It uses only
+	// exact os-release fields and intentionally ignores ID_LIKE.
+	_, os.Supported = PlatformPolicyFor(os)
 	return os, nil
 }
 
 func isAlpine324(version string) bool {
+	return strings.HasPrefix(version, "3.24.") && numericVersionTriplet(version)
+}
+
+func numericVersionTriplet(version string) bool {
 	parts := strings.Split(version, ".")
-	if len(parts) != 3 || parts[0] != "3" || parts[1] != "24" {
+	if len(parts) != 3 {
 		return false
 	}
 	for _, part := range parts {
@@ -116,31 +66,17 @@ func isAlpine324(version string) bool {
 // installed-package database tool; Pacman itself provides Arch's reviewed
 // package-query capability and therefore has an empty database value.
 func RequiredPackageTools(os OS) (manager, database string, ok bool) {
-	family := os.Family
-	if family == "" {
-		switch os.ID {
-		case "debian":
-			family = "debian"
-		case "ubuntu":
-			family = "ubuntu"
-		case "raspbian":
-			family = "raspberry-pi-os"
-		case "fedora":
-			family = "fedora"
-		case "rocky", "almalinux", "centos":
-			family = "enterprise-linux"
-		case "arch":
-			family = "arch"
-		case "alpine":
-			family = "alpine"
-		case "void":
-			family = "void"
-		case "devuan":
-			family = "devuan"
-		case "artix":
-			family = "artix"
-		}
+	if policy, supported := PlatformPolicyFor(os); supported {
+		return policy.PackageManager, policy.PackageDatabase, true
 	}
+	family := os.Family
+	if family == "" || family == "unsupported" {
+		family = platformFamily(os.ID)
+	}
+	return packageToolsForFamily(family, os)
+}
+
+func packageToolsForFamily(family string, os OS) (manager, database string, ok bool) {
 	switch family {
 	case "debian", "ubuntu", "raspberry-pi-os", "devuan":
 		return "apt", "dpkg", true
@@ -301,5 +237,5 @@ func VoidRepository(architecture, libc string) (string, bool) {
 }
 
 func VoidLibcSupported(os OS, libc string) bool {
-	return os.IsSupported() && os.Family == "void" && (libc == "glibc" || libc == "musl")
+	return os.ID == "void" && LibcSupported(os, libc)
 }

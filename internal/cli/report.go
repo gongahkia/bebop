@@ -13,13 +13,18 @@ import (
 
 type Check = preflight.Check
 type DoctorReport struct {
-	Target string  `json:"target"`
-	Ready  bool    `json:"ready"`
-	Checks []Check `json:"checks"`
+	Target         string           `json:"target"`
+	Ready          bool             `json:"ready"`
+	Platform       string           `json:"platform,omitempty"`
+	Architecture   string           `json:"architecture,omitempty"`
+	Libc           string           `json:"libc,omitempty"`
+	PackageManager string           `json:"package_manager,omitempty"`
+	InitSystem     facts.InitSystem `json:"init_system,omitempty"`
+	Checks         []Check          `json:"checks"`
 }
 
 func doctorReport(result preflight.Result) DoctorReport {
-	return DoctorReport{Target: result.Target, Ready: result.Ready, Checks: result.Checks}
+	return DoctorReport{Target: result.Target, Ready: result.Ready, Platform: result.Platform, Architecture: result.DetectedArch, Libc: result.Libc, PackageManager: result.PackageManager, InitSystem: result.InitSystem, Checks: result.Checks}
 }
 
 type StatusReport struct {
