@@ -14,12 +14,13 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * Rocky Linux 9.8/10.2
     * AlmaLinux 9.8/10.2
     * CentOS Stream 9/10
-    * openSUSE Leap 16.0 and Tumbleweed
-    * Arch Linux x86_64
-    * Alpine Linux 3.24.x on x86_64/aarch64
-    * Void Linux on x86_64/aarch64 with glibc or musl
-    * Devuan 6 Excalibur on amd64/arm64 with SysVinit
-    * Artix Linux x86_64 with dinit
+    * [openSUSE Leap](https://get.opensuse.org/leap/16.0/) 16.0
+    * [openSUSE Tumbleweed](https://get.opensuse.org/tumbleweed/)
+    * [Arch Linux](https://archlinux.org/) x86_64
+    * [Alpine Linux](https://alpinelinux.org/) 3.24.x on x86_64/aarch64
+    * [Void Linux](https://voidlinux.org/) on x86_64/aarch64 with glibc or musl
+    * [Devuan 6 Excalibur](https://www.devuan.org/os/announce/excalibur-release-announce-2025-11-02) on amd64/arm64 with SysVinit
+    * [Artix Linux](https://artixlinux.org/) x86_64 with dinit
 
 ## Quick start
 
