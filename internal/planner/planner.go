@@ -50,7 +50,7 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 		}
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, "supported "+host.OS.Family+" target does not expose the required "+required+" package tools", nil)
 	}
-	if (host.OS.Family == "alpine" || host.OS.Family == "void") && (!host.RequiredTools.Flock || !host.RequiredTools.LSBLK || !host.RequiredTools.Findmnt) {
+	if (host.OS.Family == "alpine" || host.OS.Family == "void" || host.OS.Family == "devuan" || host.OS.Family == "artix") && (!host.RequiredTools.Flock || !host.RequiredTools.LSBLK || !host.RequiredTools.Findmnt) {
 		missing := make([]string, 0, 3)
 		if !host.RequiredTools.Flock {
 			missing = append(missing, "flock")
@@ -64,6 +64,12 @@ func (p *Planner) Build(host facts.HostFacts, cfg config.Config) (plan.Plan, err
 		remediation := "apk add flock findmnt lsblk"
 		if host.OS.Family == "void" {
 			remediation = "xbps-install -S util-linux"
+		}
+		if host.OS.Family == "devuan" {
+			remediation = "apt-get install flock util-linux"
+		}
+		if host.OS.Family == "artix" {
+			remediation = "pacman -S util-linux"
 		}
 		return plan.Plan{}, errs.New(errs.UnsupportedOS, host.OS.Display()+" target is missing required mutation/storage tools: "+strings.Join(missing, ", ")+"; install them manually with "+remediation+" before Bebop apply", nil)
 	}

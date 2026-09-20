@@ -51,6 +51,8 @@ const (
 	InitSystemSystemd InitSystem = "systemd"
 	InitSystemOpenRC  InitSystem = "openrc"
 	InitSystemRunit   InitSystem = "runit"
+	InitSystemSysV    InitSystem = "sysvinit"
+	InitSystemDinit   InitSystem = "dinit"
 )
 
 // RequiredTools records Alpine's low-level mutation prerequisites. They stay
@@ -106,6 +108,10 @@ func (o OS) IsSupported() bool {
 		return isAlpine324(o.VersionID)
 	case "void":
 		return true
+	case "devuan":
+		return o.VersionID == "6" && o.VersionCodename == "excalibur"
+	case "artix":
+		return o.BuildID == "rolling"
 	default:
 		return true
 	}
@@ -126,6 +132,10 @@ func (o OS) SupportsArchitecture(architecture string) bool {
 		return architecture == "amd64" || architecture == "arm64"
 	case "void":
 		return architecture == "amd64" || architecture == "arm64"
+	case "devuan":
+		return architecture == "amd64" || architecture == "arm64"
+	case "artix":
+		return architecture == "amd64"
 	default:
 		return true
 	}
@@ -139,6 +149,12 @@ func (o OS) RequiredInitSystem() InitSystem {
 	}
 	if o.Family == "void" || o.ID == "void" {
 		return InitSystemRunit
+	}
+	if o.Family == "devuan" || o.ID == "devuan" {
+		return InitSystemSysV
+	}
+	if o.Family == "artix" || o.ID == "artix" {
+		return InitSystemDinit
 	}
 	return InitSystemSystemd
 }

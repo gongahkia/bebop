@@ -154,10 +154,16 @@ func FromFacts(current target.Target, host facts.HostFacts) Result {
 	} else {
 		result.Checks = append(result.Checks, Check{Status: Fail, Code: "privilege.unavailable", Message: "non-interactive root, sudo, or doas access unavailable; Bebop cannot apply privileged changes"})
 	}
-	if host.OS.Family == "alpine" || host.OS.Family == "void" {
+	if host.OS.Family == "alpine" || host.OS.Family == "void" || host.OS.Family == "devuan" || host.OS.Family == "artix" {
 		remediation := "install flock findmnt lsblk manually with apk"
 		if host.OS.Family == "void" {
 			remediation = "install util-linux manually with xbps-install -S"
+		}
+		if host.OS.Family == "devuan" {
+			remediation = "install flock and util-linux manually with apt-get"
+		}
+		if host.OS.Family == "artix" {
+			remediation = "install util-linux manually with pacman -S"
 		}
 		for _, tool := range []struct {
 			name      string

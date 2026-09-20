@@ -77,6 +77,16 @@ func ParseOSRelease(contents string) (OS, error) {
 		// runit are checked independently; image dates and package versions are
 		// deliberately not release gates.
 		os.Family, os.Supported = "void", true
+	case "devuan":
+		// Devuan's point releases retain the Excalibur release contract. The
+		// codename is deliberately required so a future stable alias cannot
+		// silently broaden support.
+		os.Family = "devuan"
+		os.Supported = os.VersionID == "6" && os.VersionCodename == "excalibur"
+	case "artix":
+		// Artix is rolling; exact official identity and BUILD_ID are the gate.
+		os.Family = "artix"
+		os.Supported = os.BuildID == "rolling"
 	default:
 		os.Family = "unsupported"
 	}
@@ -125,10 +135,14 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 			family = "alpine"
 		case "void":
 			family = "void"
+		case "devuan":
+			family = "devuan"
+		case "artix":
+			family = "artix"
 		}
 	}
 	switch family {
-	case "debian", "ubuntu", "raspberry-pi-os":
+	case "debian", "ubuntu", "raspberry-pi-os", "devuan":
 		return "apt", "dpkg", true
 	case "fedora":
 		return "dnf5", "rpm", true
@@ -136,7 +150,7 @@ func RequiredPackageTools(os OS) (manager, database string, ok bool) {
 		return "dnf", "rpm", true
 	case "opensuse":
 		return "zypper", "rpm", true
-	case "arch":
+	case "arch", "artix":
 		return "pacman", "", true
 	case "alpine":
 		return "apk", "", true

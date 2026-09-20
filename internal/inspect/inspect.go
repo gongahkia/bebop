@@ -85,6 +85,12 @@ func (Inspector) Inspect(ctx context.Context, tr transport.Transport, target tar
 			f.MutationBlocked, f.MutationBlockReason = true, "Void "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
 		}
 	}
+	if f.OS.Family == "devuan" || f.OS.Family == "artix" {
+		f.RootMode = inspectVoidRootMode(f.RootFilesystem)
+		if f.RootMode != "persistent" {
+			f.MutationBlocked, f.MutationBlockReason = true, f.OS.Display()+" "+f.RootMode+" root cannot preserve Bebop mutations across reboot"
+		}
+	}
 	f.UnconfiguredStorage = inspectUnconfiguredStorage(ctx, tr)
 	f.Storage = inspectStorage(ctx, tr)
 	f.Storage.MountConfigs = inspectManagedMountConfigs(ctx, tr, cfg.Storage.Resources)
@@ -114,6 +120,10 @@ elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>
   printf openrc
 elif command -v sv >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1 && test -d /etc/runit && test -L /var/service && test -d /var/service && test "$(readlink -f /var/service)" = /run/runit/runsvdir/current && pgrep -x runsvdir >/dev/null 2>&1; then
   printf runit
+elif test "$(readlink -f /proc/1/exe 2>/dev/null || true)" = /sbin/init && command -v service >/dev/null 2>&1 && command -v update-rc.d >/dev/null 2>&1 && dpkg-query -W -f='${db:Status-Status}' sysvinit-core 2>/dev/null | grep -qx installed; then
+  printf sysvinit
+elif test "$(readlink -f /proc/1/exe 2>/dev/null || true)" = /usr/bin/dinit && command -v dinitctl >/dev/null 2>&1 && test -S /run/dinitctl && dinitctl -s status boot >/dev/null 2>&1; then
+  printf dinit
 else
   printf unknown
 fi`)) {
@@ -123,13 +133,17 @@ fi`)) {
 		return facts.InitSystemOpenRC
 	case string(facts.InitSystemRunit):
 		return facts.InitSystemRunit
+	case string(facts.InitSystemSysV):
+		return facts.InitSystemSysV
+	case string(facts.InitSystemDinit):
+		return facts.InitSystemDinit
 	default:
 		return facts.InitSystemUnknown
 	}
 }
 
 func inspectRequiredTools(ctx context.Context, tr transport.Transport, os facts.OS) facts.RequiredTools {
-	if os.Family != "alpine" && os.Family != "void" {
+	if os.Family != "alpine" && os.Family != "void" && os.Family != "devuan" && os.Family != "artix" {
 		return facts.RequiredTools{}
 	}
 	lines := probeLines(ctx, tr, `
