@@ -9,7 +9,7 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
 * Currently supports the below distros
     * Debian 12/13
     * Ubuntu 22.04/24.04
-    * Raspberry Pi OS
+    * Raspberry Pi OS 12/13
     * Fedora Linux 43/44
     * Rocky Linux 9.8/10.2
     * AlmaLinux 9.8/10.2
@@ -20,6 +20,9 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * Void Linux on x86_64/aarch64 with glibc or musl
     * Devuan 6 Excalibur on amd64/arm64 with SysVinit
     * Artix Linux x86_64 with dinit
+
+The reviewed platform/capability matrix and restrictions are in
+[docs/SUPPORT.md](docs/SUPPORT.md).
 
 ## Quick start
 

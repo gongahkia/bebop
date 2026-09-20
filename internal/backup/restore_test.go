@@ -308,7 +308,7 @@ func readyStorage(name string, available int64) facts.Storage {
 }
 
 func restoreHost(deployment services.Deployment) facts.HostFacts {
-	return facts.HostFacts{Target: "local", MachineID: "destination", OS: facts.OS{ID: "debian", Supported: true}, Architecture: "amd64", Docker: facts.Docker{Responsive: true, ComposeAvailable: true}, Services: []facts.Service{{Name: deployment.Name, Project: deployment.Project, DesiredState: "running", Runtime: "missing"}}}
+	return facts.HostFacts{Target: "local", MachineID: "destination", OS: facts.OS{ID: "debian", VersionID: "12", Family: "debian", Supported: true}, Architecture: "amd64", Docker: facts.Docker{Responsive: true, ComposeAvailable: true}, Services: []facts.Service{{Name: deployment.Name, Project: deployment.Project, DesiredState: "running", Runtime: "missing"}}}
 }
 
 func simpleArchive(t *testing.T, name, contents string) io.Reader {

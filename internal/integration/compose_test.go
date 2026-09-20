@@ -427,7 +427,7 @@ func loadComposeFixture(t *testing.T, root string) config.Config {
 }
 
 func dindHost(cfg config.Config, service facts.Service) facts.HostFacts {
-	return facts.HostFacts{Target: "dind", OS: facts.OS{ID: "debian", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: cfg.Storage.DataRoot, Exists: true, Mode: "750", UID: 0, GID: 0}, Docker: facts.Docker{Installed: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}, Services: []facts.Service{service}}
+	return facts.HostFacts{Target: "dind", OS: facts.OS{ID: "debian", VersionID: "12", Family: "debian", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", Systemd: true, SudoAvailable: true, DataRoot: facts.Directory{Path: cfg.Storage.DataRoot, Exists: true, Mode: "750", UID: 0, GID: 0}, Docker: facts.Docker{Installed: true, ServiceEnabled: true, ServiceActive: true, Responsive: true, ComposeAvailable: true}, Services: []facts.Service{service}}
 }
 
 func buildPlan(t *testing.T, builder *planner.Planner, host facts.HostFacts, cfg config.Config) plan.Plan {

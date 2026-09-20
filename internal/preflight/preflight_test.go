@@ -135,6 +135,87 @@ func TestFromFactsReportsAlpineOpenRCAPKAndLockToolsAccurately(t *testing.T) {
 	}
 }
 
+func TestDoctorMatrixRepresentativesAreReadyWithTheirReviewedBackends(t *testing.T) {
+	tests := []struct {
+		name string
+		host facts.HostFacts
+	}{
+		{"debian", doctorHost(facts.OS{ID: "debian", VersionID: "12", Family: "debian", Supported: true}, "amd64", "", "apt", "dpkg", facts.InitSystemSystemd)},
+		{"fedora", doctorHost(facts.OS{ID: "fedora", VersionID: "44", Family: "fedora", Supported: true}, "amd64", "", "dnf5", "rpm", facts.InitSystemSystemd)},
+		{"opensuse", doctorHost(facts.OS{ID: "opensuse-leap", VersionID: "16.0", Family: "opensuse", Supported: true}, "amd64", "", "zypper", "rpm", facts.InitSystemSystemd)},
+		{"arch", doctorHost(facts.OS{ID: "arch", BuildID: "rolling", Family: "arch", Supported: true}, "amd64", "", "pacman", "", facts.InitSystemSystemd)},
+		{"alpine", doctorHost(facts.OS{ID: "alpine", VersionID: "3.24.2", Family: "alpine", Supported: true}, "arm64", "", "apk", "", facts.InitSystemOpenRC)},
+		{"void", doctorHost(facts.OS{ID: "void", Family: "void", Supported: true}, "arm64", "musl", "xbps", "", facts.InitSystemRunit)},
+		{"devuan", doctorHost(facts.OS{ID: "devuan", VersionID: "6", VersionCodename: "excalibur", Family: "devuan", Supported: true}, "arm64", "", "apt", "dpkg", facts.InitSystemSysV)},
+		{"artix", doctorHost(facts.OS{ID: "artix", BuildID: "rolling", Family: "artix", Supported: true}, "amd64", "", "pacman", "", facts.InitSystemDinit)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := FromFacts(target.Target{Kind: target.Local}, test.host)
+			if !result.Ready || result.Platform == "" || result.PackageManager != test.host.PackageManager || result.InitSystem != test.host.InitSystem {
+				t.Fatalf("doctor did not render reviewed platform facts: %#v", result)
+			}
+		})
+	}
+}
+
+func TestDoctorReportsActionablePlatformAndCapabilityBlockers(t *testing.T) {
+	fedora := doctorHost(facts.OS{ID: "fedora", VersionID: "45", Family: "fedora", Supported: false}, "amd64", "", "dnf5", "rpm", facts.InitSystemSystemd)
+	result := FromFacts(target.Target{Kind: target.Local}, fedora)
+	if result.Ready || !hasCheck(result.Checks, "os.unsupported", Fail) || !hasCheck(result.Checks, "package_manager.dnf5", Pass) || !hasCheck(result.Checks, "init.detected", Pass) {
+		t.Fatalf("unsupported Fedora did not retain useful detected facts: %#v", result.Checks)
+	}
+	artix := doctorHost(facts.OS{ID: "artix", BuildID: "rolling", Family: "artix", Supported: true}, "amd64", "", "pacman", "", facts.InitSystemRunit)
+	if result := FromFacts(target.Target{Kind: target.Local}, artix); result.Ready || !hasCheck(result.Checks, "init.unsupported", Fail) {
+		t.Fatalf("Artix with wrong active init was ready: %#v", result.Checks)
+	}
+	alpine := doctorHost(facts.OS{ID: "alpine", VersionID: "3.24.2", Family: "alpine", Supported: true}, "amd64", "", "apk", "", facts.InitSystemOpenRC)
+	alpine.RequiredTools.Flock = false
+	if result := FromFacts(target.Target{Kind: target.Local}, alpine); result.Ready || !hasCheck(result.Checks, "target.tool.flock", Fail) {
+		t.Fatalf("Alpine missing flock was ready: %#v", result.Checks)
+	}
+
+	devuan := doctorHost(facts.OS{ID: "devuan", VersionID: "6", VersionCodename: "excalibur", Family: "devuan", Supported: true}, "amd64", "", "apt", "dpkg", facts.InitSystemSysV)
+	devuan.Tailscale.RepositoryState = "unmanaged"
+	cfg := config.Defaults()
+	cfg.Features.Docker, cfg.Features.AutomaticUpdates = false, false
+	result = fromFacts(target.Target{Kind: target.Local}, devuan)
+	appendConfiguredCapabilityChecks(&result, cfg, devuan)
+	if !hasCheck(result.Checks, "tailscale.repository_policy", Fail) {
+		t.Fatalf("Devuan repository blocker missing: %#v", result.Checks)
+	}
+
+	void := doctorHost(facts.OS{ID: "void", Family: "void", Supported: true}, "amd64", "glibc", "xbps", "", facts.InitSystemRunit)
+	void.Docker.PackageHeld = true
+	cfg.Features.Docker, cfg.Features.Tailscale = true, false
+	result = fromFacts(target.Target{Kind: target.Local}, void)
+	appendConfiguredCapabilityChecks(&result, cfg, void)
+	if !hasCheck(result.Checks, "docker.package_policy", Fail) {
+		t.Fatalf("Void package hold blocker missing: %#v", result.Checks)
+	}
+
+	arch := doctorHost(facts.OS{ID: "arch", BuildID: "rolling", Family: "arch", Supported: true}, "amd64", "", "pacman", "", facts.InitSystemSystemd)
+	cfg.Features.Docker, cfg.Features.Tailscale, cfg.Features.AutomaticUpdates = false, false, true
+	result = fromFacts(target.Target{Kind: target.Local}, arch)
+	appendConfiguredCapabilityChecks(&result, cfg, arch)
+	if !hasCheck(result.Checks, "automatic_updates.unsupported", Fail) {
+		t.Fatalf("Arch automatic-update blocker missing: %#v", result.Checks)
+	}
+}
+
+func doctorHost(os facts.OS, architecture, libc, manager, database string, init facts.InitSystem) facts.HostFacts {
+	return facts.HostFacts{OS: os, Architecture: architecture, ArchitectureKnown: true, Libc: libc, PackageManager: manager, PackageDatabase: database, InitSystem: init, Systemd: init == facts.InitSystemSystemd, SudoAvailable: true, PrivilegeMode: "sudo", RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent", DataRoot: facts.Directory{Path: "/srv/bebop"}}
+}
+
+func hasCheck(checks []Check, code string, status Status) bool {
+	for _, check := range checks {
+		if check.Code == code && check.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBackupChecksDescribeControllerRepositoryWithoutMutatingIt(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.WithSourceDirectory(config.Defaults(), root)
