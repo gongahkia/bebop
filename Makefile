@@ -1,6 +1,6 @@
 BINARY := bin/bebop
 
-.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration test-schedulers test-launchd recipe-validate format check run cross release-dry-run
+.PHONY: build test test-race test-integration test-ssh-integration test-compose-integration test-backup-integration test-migration-integration test-recipe-integration test-storage test-storage-integration test-maintenance test-maintenance-integration test-notifications test-notification-integration test-schedulers test-launchd test-vm-smoke recipe-validate format check run cross release-dry-run
 
 build:
 	@mkdir -p bin
@@ -77,6 +77,11 @@ test-launchd:
 		echo "Launchd integration requires macOS plus BEBOP_LAUNCHD_INTEGRATION=1 and BEBOP_LAUNCHD_BINARY=/absolute/stable/bebop; skipping."; \
 	fi
 
+# This is intentionally opt-in. It downloads only reviewed, checksum-pinned
+# images and boots a real SSH target; make check never invokes it.
+test-vm-smoke:
+	go run ./tools/vmtest -manifest testdata/vm/images.json
+
 test-notifications:
 	go test ./internal/notification ./internal/lease ./internal/config ./internal/maintenance ./internal/cli
 
@@ -87,10 +92,10 @@ recipe-validate:
 	go run ./cmd/bebop recipe validate
 
 format:
-	gofmt -w cmd internal
+	gofmt -w cmd internal tools
 
 check:
-	@test -z "$$(gofmt -l $$(find cmd internal -name '*.go' -print))"
+	@test -z "$$(gofmt -l $$(find cmd internal tools -name '*.go' -print))"
 	go vet ./...
 	go test ./...
 

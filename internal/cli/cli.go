@@ -30,7 +30,7 @@ import (
 	"github.com/bebop-home/bebop/internal/savedplan"
 )
 
-const Version = buildinfo.Version
+var Version = buildinfo.Version
 
 type Runner struct {
 	Service *bebop.Service

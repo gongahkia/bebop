@@ -85,7 +85,7 @@ func TestRestoreBlocksNonEmptyDestinationAndWrongHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "destination persistent state changed") {
+	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "already contains data") {
 		t.Fatalf("non-empty destination was not blocked: %v", err)
 	}
 	wrong := request
@@ -113,7 +113,7 @@ func TestRestoreRechecksDestinationAfterAcquiringLock(t *testing.T) {
 	// lock is held. ApplyRestore must re-observe the destination under lock and
 	// must not begin archive extraction.
 	fake.onAcquireLock = func() { fake.exists, fake.empty = true, false }
-	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "already contains data") {
+	if _, err := ApplyRestore(context.Background(), repository, reviewed, request); err == nil || !strings.Contains(err.Error(), "destination persistent state changed") {
 		t.Fatalf("restore accepted destination data introduced after review: %v", err)
 	}
 	if fake.streamed {

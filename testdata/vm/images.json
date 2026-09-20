@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "images": [
+    {
+      "id": "debian-13",
+      "platform": "debian-13",
+      "source_url": "https://cloud.debian.org/images/cloud/trixie/20260914-2601/debian-13-generic-amd64-20260914-2601.qcow2",
+      "checksum": "a733e7d49442a03e70d03e4eb5aaf3967f3efc69ef70952f9bb10fc1ee2c4876eb95956b5ad2d31350e5fada768feb651352535fb8cd1233f61998a5a7d2e93c",
+      "checksum_algorithm": "sha512",
+      "verification": "official Debian SHA512SUMS reviewed and pinned",
+      "format": "qcow2",
+      "provisioner": "cloud-init",
+      "user": "bebop",
+      "sudo_group": "sudo",
+      "expected_init": "systemd"
+    },
+    {
+      "id": "fedora-44",
+      "platform": "fedora-44",
+      "source_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
+      "checksum": "28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f",
+      "checksum_algorithm": "sha256",
+      "verification": "official Fedora signed CHECKSUM reviewed and pinned",
+      "format": "qcow2",
+      "provisioner": "cloud-init",
+      "user": "bebop",
+      "sudo_group": "wheel",
+      "expected_init": "systemd"
+    },
+    {
+      "id": "arch",
+      "platform": "arch",
+      "source_url": "https://geo.mirror.pkgbuild.com/images/v20260915.594445/Arch-Linux-x86_64-cloudimg-20260915.594445.qcow2",
+      "checksum": "d7cc7c86a21b32d6678c001464714f71f4ef7e0d7bbbfca65e99123ac5afc25b",
+      "checksum_algorithm": "sha256",
+      "verification": "official Arch image SHA256 reviewed and pinned",
+      "format": "qcow2",
+      "provisioner": "cloud-init",
+      "user": "bebop",
+      "sudo_group": "wheel",
+      "expected_init": "systemd"
+    }
+  ]
+}
