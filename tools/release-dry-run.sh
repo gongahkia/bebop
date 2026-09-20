@@ -70,5 +70,6 @@ done
   find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | LC_ALL=C sort | xargs -r sha256sum > SHA256SUMS
 )
 mv "$artifacts" "$output"
+cleanup
 trap - EXIT
 printf 'release dry-run artifacts: %s\n' "$output"
