@@ -150,7 +150,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	}
 	details := Details{}
 	if host.PackageManager == "pacman" {
-		if checkErr := requireArchCheckupdates(ctx, tr); checkErr != nil {
+		if checkErr := requirePacmanCheckupdates(ctx, tr, host.OS.Family); checkErr != nil {
 			return Outcome{Result: Failure, Details: details}, checkErr
 		}
 	}
@@ -174,7 +174,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		} else if host.PackageManager == "zypper" {
 			refreshScript, packageManager = zypperRefreshScript, "Zypper"
 		} else if host.PackageManager == "pacman" {
-			refreshScript, packageManager = archCheckupdatesRefreshScript(host.DataRoot.Path), "Arch checkupdates"
+			refreshScript, packageManager = archCheckupdatesRefreshScript(host.DataRoot.Path), "Pacman checkupdates"
 		} else if host.PackageManager == "apk" {
 			refreshScript, packageManager = apkRefreshScript, "APK"
 		}
@@ -266,7 +266,7 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 		_, checkErr := tr.Run(ctx, transport.Request{Script: archCheckupdatesScript(host.DataRoot.Path)})
 		available, operationalErr := archUpdatesAvailable(checkErr)
 		if operationalErr != nil {
-			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available Arch package updates with checkupdates: %w", operationalErr)
+			return Outcome{Result: Failure, Details: details}, fmt.Errorf("inspect available %s package updates with checkupdates: %w", host.OS.Family, operationalErr)
 		}
 		if available {
 			// checkupdates uses a separate database and its success output is
@@ -316,11 +316,17 @@ func (executor BebopExecutor) updateCheck(ctx context.Context, job config.Mainte
 	return Outcome{Result: Success, Details: details}, nil
 }
 
-func requireArchCheckupdates(ctx context.Context, tr transport.Transport) error {
+func requirePacmanCheckupdates(ctx context.Context, tr transport.Transport, family string) error {
 	if _, err := tr.Run(ctx, transport.Request{Script: "command -v checkupdates >/dev/null 2>&1"}); err != nil {
-		return errs.New(errs.UnsupportedOS, "Arch update awareness requires checkupdates from pacman-contrib; install it during a reviewed full pacman -Syu and retry", err)
+		return errs.New(errs.UnsupportedOS, family+" update awareness requires checkupdates from pacman-contrib; install it during a reviewed full pacman -Syu and retry", err)
 	}
 	return nil
+}
+
+// requireArchCheckupdates remains a focused compatibility seam for the Arch
+// unit tests; Pacman update awareness is shared with Artix at the call site.
+func requireArchCheckupdates(ctx context.Context, tr transport.Transport) error {
+	return requirePacmanCheckupdates(ctx, tr, "Arch")
 }
 
 const aptRefreshScript = "env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root DEBIAN_FRONTEND=noninteractive apt-get update"

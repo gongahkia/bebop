@@ -125,7 +125,7 @@ func TestArchIdentityAndArchitectureAreExplicitlyGated(t *testing.T) {
 			}
 		})
 	}
-	for _, id := range []string{"garuda", "artix"} {
+	for _, id := range []string{"garuda"} {
 		actual, err := ParseOSRelease("ID=" + id + "\nID_LIKE=arch\nBUILD_ID=rolling\n")
 		if err != nil || actual.Supported || actual.IsSupported() {
 			t.Fatalf("Arch derivative %q was accepted: %#v, %v", id, actual, err)
@@ -134,6 +134,45 @@ func TestArchIdentityAndArchitectureAreExplicitlyGated(t *testing.T) {
 	arch, err := ParseOSRelease("ID=arch\nBUILD_ID=rolling\n")
 	if err != nil || !arch.IsSupported() || !arch.SupportsArchitecture("amd64") || arch.SupportsArchitecture("arm64") {
 		t.Fatalf("Arch identity/architecture gate was not strict: %#v, %v", arch, err)
+	}
+}
+
+func TestDevuanAndArtixIdentityArchitectureInitAndPackageToolsAreExplicitlyGated(t *testing.T) {
+	devuan, err := ParseOSRelease("ID=devuan\nVERSION_ID=6\nVERSION_CODENAME=excalibur\n")
+	if err != nil || !devuan.IsSupported() || !devuan.SupportsArchitecture("amd64") || !devuan.SupportsArchitecture("arm64") || devuan.SupportsArchitecture("armhf") || devuan.RequiredInitSystem() != InitSystemSysV {
+		t.Fatalf("Devuan identity/init/architecture gate was not strict: %#v, %v", devuan, err)
+	}
+	if manager, database, ok := RequiredPackageTools(devuan); !ok || manager != "apt" || database != "dpkg" || !PackageToolsAvailable(devuan, "apt", "dpkg") || PackageToolsAvailable(devuan, "pacman", "") {
+		t.Fatalf("Devuan package tools were not strictly normalized: %q/%q %t", manager, database, ok)
+	}
+	for _, release := range []string{
+		"ID=devuan\nVERSION_ID=5\nVERSION_CODENAME=daedalus\n",
+		"ID=devuan\nVERSION_ID=7\nVERSION_CODENAME=freia\n",
+		"ID=devuan\nVERSION_ID=6\nVERSION_CODENAME=ceres\n",
+		"ID=debian\nVERSION_ID=6\nVERSION_CODENAME=excalibur\nID_LIKE=debian\n",
+	} {
+		parsed, parseErr := ParseOSRelease(release)
+		if parseErr != nil || (parsed.ID == "devuan" && parsed.IsSupported()) {
+			t.Fatalf("unsupported Devuan-like target accepted: %#v, %v", parsed, parseErr)
+		}
+	}
+
+	artix, err := ParseOSRelease("ID=artix\nBUILD_ID=rolling\nIMAGE_VERSION=2026.09.20\n")
+	if err != nil || !artix.IsSupported() || !artix.SupportsArchitecture("amd64") || artix.SupportsArchitecture("arm64") || artix.RequiredInitSystem() != InitSystemDinit {
+		t.Fatalf("Artix identity/init/architecture gate was not strict: %#v, %v", artix, err)
+	}
+	if manager, database, ok := RequiredPackageTools(artix); !ok || manager != "pacman" || database != "" || !PackageToolsAvailable(artix, "pacman", "") || PackageToolsAvailable(artix, "apt", "dpkg") {
+		t.Fatalf("Artix package tools were not strictly normalized: %q/%q %t", manager, database, ok)
+	}
+	for _, release := range []string{
+		"ID=artix\nBUILD_ID=not-rolling\n",
+		"ID=endeavouros\nBUILD_ID=rolling\nID_LIKE=arch\n",
+		"ID=manjaro\nBUILD_ID=rolling\nID_LIKE=arch\n",
+	} {
+		parsed, parseErr := ParseOSRelease(release)
+		if parseErr != nil || parsed.IsSupported() {
+			t.Fatalf("unsupported Artix-like target accepted: %#v, %v", parsed, parseErr)
+		}
 	}
 }
 

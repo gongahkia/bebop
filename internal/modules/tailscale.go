@@ -567,6 +567,12 @@ func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Co
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q tailscale >/dev/null")
 		}
+		if change.Action.Resource == "artix-world" {
+			return verify(ctx, tr, "pacman -Q tailscale tailscale-dinit >/dev/null")
+		}
+		if change.Action.Resource == "devuan-trixie" {
+			return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' tailscale | grep -qx installed\n"+devuanTailscaleVendorCandidate)
+		}
 		if change.Action.Resource == "fedora" {
 			return verify(ctx, tr, "rpm -q tailscale >/dev/null")
 		}
@@ -583,6 +589,12 @@ func (Tailscale) Verify(ctx context.Context, tr transport.Transport, _ config.Co
 	}
 	if change.Action.Resource == "void" {
 		return verify(ctx, tr, runitServiceReadyScript("tailscaled"))
+	}
+	if change.Action.Resource == "devuan" {
+		return verify(ctx, tr, "grep -Fqx '# Managed by Bebop. Manual edits may be replaced.' /etc/init.d/tailscaled\n"+sysvServiceReadyScript("tailscaled"))
+	}
+	if change.Action.Resource == "artix" {
+		return verify(ctx, tr, dinitServiceReadyScript("tailscaled"))
 	}
 	return verify(ctx, tr, "systemctl is-enabled tailscaled.service >/dev/null\nsystemctl is-active tailscaled.service >/dev/null")
 }

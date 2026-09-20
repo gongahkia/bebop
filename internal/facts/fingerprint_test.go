@@ -203,6 +203,27 @@ func TestVoidRollingIdentityExcludesImageMetadataButIncludesLibcAndRunitState(t 
 	}
 }
 
+func TestArtixRollingIdentityExcludesImageMetadataButIncludesDinitState(t *testing.T) {
+	host := HostFacts{MachineID: "artix-machine", OS: OS{ID: "artix", Family: "artix", BuildID: "rolling", VersionID: "20260920", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", InitSystem: InitSystemDinit, RequiredTools: RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, Docker: Docker{PackageSetAvailable: true, RepositoryPolicy: "artix-world"}}
+	first, err := host.ConvergenceFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.OS.VersionID = "20260921"
+	second, err := host.ConvergenceFingerprint()
+	if err != nil || first != second {
+		t.Fatalf("display-only Artix rolling metadata changed convergence: %v", err)
+	}
+	if host.Identity().OSVersion != "" {
+		t.Fatal("Artix machine identity unexpectedly depends on rolling metadata")
+	}
+	host.InitSystem = InitSystemSystemd
+	third, err := host.ConvergenceFingerprint()
+	if err != nil || second == third {
+		t.Fatalf("Artix dinit state did not participate in convergence: %v", err)
+	}
+}
+
 func TestAlpineInitToolsAndPersistenceParticipateInConvergence(t *testing.T) {
 	host := HostFacts{OS: OS{ID: "alpine", Family: "alpine", VersionID: "3.24.2", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apk", InitSystem: InitSystemOpenRC, RequiredTools: RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
 	first, err := host.ConvergenceFingerprint()

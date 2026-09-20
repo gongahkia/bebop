@@ -640,6 +640,12 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 		if change.Action.Resource == "arch" {
 			return verify(ctx, tr, "pacman -Q docker docker-compose >/dev/null")
 		}
+		if change.Action.Resource == "artix-world" {
+			return verify(ctx, tr, "pacman -Q docker docker-compose docker-dinit >/dev/null")
+		}
+		if change.Action.Resource == "devuan-excalibur" {
+			return verify(ctx, tr, "dpkg-query -W -f='${db:Status-Status}' docker.io docker-compose | grep -qx installed\n"+devuanDockerPackagesAvailableScript)
+		}
 		if change.Action.Resource == "opensuse" {
 			return verify(ctx, tr, "rpm -q docker docker-compose >/dev/null")
 		}
@@ -656,6 +662,12 @@ func (Docker) Verify(ctx context.Context, tr transport.Transport, _ config.Confi
 	}
 	if change.Action.Resource == "void" {
 		return verify(ctx, tr, runitServiceReadyScript("docker")+"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null")
+	}
+	if change.Action.Resource == "devuan" {
+		return verify(ctx, tr, sysvServiceReadyScript("docker")+"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null")
+	}
+	if change.Action.Resource == "artix" {
+		return verify(ctx, tr, dinitServiceReadyScript("dockerd")+"\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker info >/dev/null\nenv -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root docker compose version >/dev/null")
 	}
 	if change.Action.Kind == "docker.enable-cgroups" {
 		return verify(ctx, tr, "test -r /sys/fs/cgroup/cgroup.controllers\nrc-update show default | grep -Eq '^[[:space:]]*cgroups([[:space:]]|$)'\nrc-service cgroups status >/dev/null")

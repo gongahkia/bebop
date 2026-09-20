@@ -158,6 +158,34 @@ func TestVoidRootModeFailsClosedForEphemeralInstallations(t *testing.T) {
 	}
 }
 
+func TestInitInspectionRecognizesOnlyExplicitSysVinitAndDinitSignals(t *testing.T) {
+	for _, test := range []struct {
+		output string
+		want   facts.InitSystem
+	}{{"sysvinit", facts.InitSystemSysV}, {"dinit", facts.InitSystemDinit}, {"systemd", facts.InitSystemSystemd}, {"unknown", facts.InitSystemUnknown}} {
+		tr := initProbeTransport{output: test.output}
+		if got := inspectInitSystem(context.Background(), &tr); got != test.want {
+			t.Fatalf("init output %q = %q, want %q", test.output, got, test.want)
+		}
+		if !strings.Contains(tr.script, "sysvinit-core") || !strings.Contains(tr.script, "update-rc.d") || !strings.Contains(tr.script, "dinitctl -s status boot") || !strings.Contains(tr.script, "basename") {
+			t.Fatalf("init probe dropped required active-init validation: %s", tr.script)
+		}
+	}
+}
+
+type initProbeTransport struct {
+	output string
+	script string
+}
+
+func (tr *initProbeTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {
+	tr.script = request.Script
+	return transport.Result{Stdout: tr.output}, nil
+}
+func (initProbeTransport) ReadFile(context.Context, string) (string, error) { return "", nil }
+func (initProbeTransport) FileExists(context.Context, string) (bool, error) { return false, nil }
+func (initProbeTransport) Description() string                              { return "init-probe" }
+
 type alpineLBUTransport struct{}
 
 func (alpineLBUTransport) Run(_ context.Context, request transport.Request) (transport.Result, error) {

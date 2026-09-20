@@ -224,6 +224,35 @@ func TestVoidPlansAreDeterministicAcrossReviewedArchitectureLibcPairs(t *testing
 	}
 }
 
+func TestDevuanAndArtixKeepPackageManagerAndInitSystemOrthogonal(t *testing.T) {
+	planner := planner.New()
+	for _, test := range []struct {
+		name string
+		host facts.HostFacts
+	}{
+		{"devuan", facts.HostFacts{Target: "local", OS: facts.OS{ID: "devuan", Family: "devuan", VersionID: "6", VersionCodename: "excalibur", Supported: true}, Architecture: "arm64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", InitSystem: facts.InitSystemSysV, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}},
+		{"artix", facts.HostFacts{Target: "local", OS: facts.OS{ID: "artix", Family: "artix", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", InitSystem: facts.InitSystemDinit, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := planner.Build(test.host, config.Defaults()); err != nil {
+				t.Fatalf("reviewed %s package/init pairing was rejected: %v", test.name, err)
+			}
+		})
+	}
+	devuan := facts.HostFacts{Target: "local", OS: facts.OS{ID: "devuan", Family: "devuan", VersionID: "6", VersionCodename: "excalibur", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "apt", PackageDatabase: "dpkg", InitSystem: facts.InitSystemSystemd, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	if _, err := planner.Build(devuan, config.Defaults()); err == nil {
+		t.Fatal("Devuan was accepted with systemd instead of SysVinit")
+	}
+	artix := facts.HostFacts{Target: "local", OS: facts.OS{ID: "artix", Family: "artix", BuildID: "rolling", Supported: true}, Architecture: "amd64", ArchitectureKnown: true, PackageManager: "pacman", InitSystem: facts.InitSystemRunit, SudoAvailable: true, RequiredTools: facts.RequiredTools{Flock: true, LSBLK: true, Findmnt: true}, RootMode: "persistent"}
+	if _, err := planner.Build(artix, config.Defaults()); err == nil {
+		t.Fatal("Artix was accepted with runit instead of dinit")
+	}
+	artix.InitSystem, artix.RequiredTools.Flock = facts.InitSystemDinit, false
+	if _, err := planner.Build(artix, config.Defaults()); err == nil || !strings.Contains(err.Error(), "flock") {
+		t.Fatalf("Artix was accepted without flock before the target lock: %v", err)
+	}
+}
+
 func TestApplyUsesPlanAndSecondApplyDoesNothing(t *testing.T) {
 	p := planner.New(modules.Default()...)
 	cfg := config.Defaults()

@@ -344,7 +344,7 @@ type Identity struct {
 
 func (host HostFacts) Identity() Identity {
 	version := host.OS.VersionID
-	if host.OS.ID == "arch" || host.OS.ID == "void" {
+	if host.OS.ID == "arch" || host.OS.ID == "artix" || host.OS.ID == "void" {
 		version = ""
 	}
 	return Identity{MachineID: host.MachineID, Hostname: host.Hostname, OSID: host.OS.ID, OSVersion: version}
@@ -437,7 +437,7 @@ func (host HostFacts) ConvergenceSnapshot() ConvergenceSnapshot {
 	// Tumbleweed snapshot dates and Arch's absent/non-release VERSION_ID are
 	// not release gates or machine identity. Package/repository facts still
 	// stale a plan when their state changes.
-	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" || os.ID == "void" {
+	if os.ID == "opensuse-tumbleweed" || os.ID == "arch" || os.ID == "artix" || os.ID == "void" {
 		os.VersionID = ""
 	}
 	return ConvergenceSnapshot{
