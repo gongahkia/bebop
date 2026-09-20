@@ -96,7 +96,8 @@
 - Debian, Ubuntu, Raspberry Pi OS, Fedora 43/44, Rocky Linux 9.8/10.2,
   AlmaLinux 9.8/10.2, CentOS Stream 9/10, openSUSE Leap 16.0, and openSUSE
   Tumbleweed, official x86_64 Arch Linux, Alpine Linux 3.24.x on x86_64/
-  aarch64, and official Void Linux x86_64/aarch64 glibc/musl target recognition.
+  aarch64, official Void Linux x86_64/aarch64 glibc/musl, Devuan 6 Excalibur
+  SysVinit amd64/arm64, and Artix dinit x86_64 target recognition.
 - Base filesystem, automatic updates, Docker, Tailscale package/service, and
   conservative SSH hardening.
 - Read-only diagnostics/status, JSON, CI, and opt-in disposable Debian inspect.

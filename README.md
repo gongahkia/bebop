@@ -18,6 +18,8 @@ Deterministic, agent-less [home server](https://www.reddit.com/r/HomeServer/) co
     * Arch Linux x86_64
     * Alpine Linux 3.24.x on x86_64/aarch64
     * Void Linux on x86_64/aarch64 with glibc or musl
+    * Devuan 6 Excalibur on amd64/arm64 with SysVinit
+    * Artix Linux x86_64 with dinit
 
 ## Quick start
 
@@ -252,6 +254,16 @@ linking them under `/var/service`. Bebop-managed transactions ignore arbitrary
 operator repository configuration; Void derivatives, non-runit roots, and
 ephemeral/container roots are unsupported.
 
+On Devuan 6 Excalibur, Bebop supports only the SysVinit amd64/arm64 pairing.
+It uses `apt`/`dpkg`, accepts normal Docker packages only from Devuan's pinned
+Excalibur merged repository, and uses the reviewed Tailscale Debian Trixie
+vendor source. Devuan OpenRC and runit targets are unsupported.
+
+On official rolling x86_64 Artix Linux, Bebop supports only dinit and reviewed
+Artix `world` Pacman packages. It does not use Arch repositories or the AUR;
+targeted package installation never runs `pacman -Sy` or silently runs
+`pacman -Syu`.
+
 For Tailscale, Bebop writes a fixed HTTPS stable repository definition for
 `stable/opensuse/leap/16.0/$basearch` or
 `stable/opensuse/tumbleweed/$basearch`, verifies the reviewed signing key, and
@@ -465,6 +477,12 @@ Void intentionally has no Bebop unattended-upgrade path: set
 the rolling `xbps-install -Su` workflow. Void maintenance update awareness uses
 an XBPS dry-run (with optional in-memory metadata synchronization) and never
 installs or upgrades packages.
+
+Devuan automatic updates use its packaged `unattended-upgrades` and APT
+periodic cron path, restricted to Devuan Excalibur origins. Artix intentionally
+has no Bebop unattended-upgrade path: `automatic_updates = true` blocks before
+mutation, while maintenance update awareness uses `pacman-contrib`
+`checkupdates` with an isolated database.
 
 `network.firewall` accepts only `"disabled"` in this milestone. Bebop reports
 UFW/nftables/firewalld state but never changes firewall rules.

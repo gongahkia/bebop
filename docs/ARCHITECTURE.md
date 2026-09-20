@@ -125,9 +125,9 @@ reports classified DNS, timeout, refused, host-key, authentication, client,
 sudo, and command failures. Inspector facts now include an optional machine ID
 and the supported target's detected package-management capability (apt/dpkg,
 dnf5/rpm for Fedora, dnf/rpm for Enterprise Linux, zypper/rpm for openSUSE,
-pacman for official Arch Linux, apk for Alpine 3.24, or XBPS for official Void
-Linux). Target init is a separate capability: systemd, Alpine OpenRC, or Void
-runit;
+pacman for official Arch Linux/Artix, apk for Alpine 3.24, or XBPS for official
+Void Linux). Target init is a separate capability: systemd, OpenRC, runit,
+SysVinit, or dinit;
 the controller-only maintenance scheduler remains systemd-user on Linux.
 
 `internal/artifact` defines a versioned JSON plan-file contract. Its ordered

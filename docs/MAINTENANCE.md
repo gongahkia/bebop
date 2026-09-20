@@ -216,7 +216,7 @@ apt availability with `apt-get -s upgrade`, Fedora availability with
 `dnf -y check-update`. Leap uses `zypper --non-interactive patch-check`, where
 100 and 101 mean updates/security updates are available; Tumbleweed uses the
 non-mutating XML `zypper --non-interactive --xmlout dup --dry-run` solver
-result. Official Arch Linux uses `pacman-contrib`'s `checkupdates`: exit 0
+result. Official Arch Linux and Artix use `pacman-contrib`'s `checkupdates`: exit 0
 means updates and exit 2 means none. It uses a Bebop-owned isolated database,
 never the live Pacman sync database. Available updates are information, not
 failure and never cause installation.
@@ -229,7 +229,7 @@ repository index, installs a package, or upgrades the system. Repository or
 signing-key errors are failures, never an up-to-date result.
 
 `refresh_metadata = true` is explicit. It performs `apt-get update` on
-Debian-family targets, `dnf5 -y makecache` on Fedora, or `dnf -y makecache` on
+Debian-family targets (including Devuan), `dnf5 -y makecache` on Fedora, or `dnf -y makecache` on
 supported Enterprise Linux, or `zypper --non-interactive refresh` on
 openSUSE, under the existing target mutation lock, before the check. On Arch it
 refreshes only the isolated `checkupdates` database under that lock. It never

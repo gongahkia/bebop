@@ -151,6 +151,20 @@ enables the package-provided `/etc/sv/docker` service through a validated
 `/var/service/docker` symlink. It does not add Docker CE, a third-party XBPS
 repository, static binaries, or a replacement runit service definition.
 
+On Devuan 6 Excalibur, Bebop supports only the amd64/arm64 SysVinit pairing.
+Normal Docker packages are accepted only when their APT candidates are from
+the codename-pinned Devuan merged repositories; Docker uses the package-owned
+`/etc/init.d/docker` service. Tailscale uses the reviewed Debian Trixie vendor
+repository. Its current vendor package has no SysV script, so Bebop installs
+only a fixed, owned, syntax-checked `tailscaled` wrapper and never replaces an
+unmanaged file at that path. Devuan OpenRC and runit targets are unsupported.
+
+On official x86_64 Artix Linux, Bebop supports only dinit. Docker uses
+`docker`, `docker-compose`, and `docker-dinit`; Tailscale uses `tailscale` and
+`tailscale-dinit`, all from reviewed Artix `world` package targets. Bebop uses
+their packaged `/etc/dinit.d` definitions and `dinitctl -s enable`; it neither
+uses Arch repositories/AUR nor creates replacement service descriptions.
+
 On any SELinux-enforcing supported target, every declared persistent bind resource
 must use Compose's shared `z` label option. For short syntax, use for example
 `/srv/app:/data:rw,z`; for long syntax use `bind.selinux: z`. Private `Z` and

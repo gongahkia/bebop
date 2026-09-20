@@ -45,6 +45,48 @@ func TestDebianInspect(t *testing.T) {
 	}
 }
 
+// TestDevuanInspect is read-only identity and APT/dpkg capability coverage.
+// The container is not a booted SysVinit host and its overlay root must never
+// be treated as proof of production-host mutation or service behavior.
+func TestDevuanInspect(t *testing.T) {
+	if os.Getenv("BEBOP_INTEGRATION_DOCKER") != "1" {
+		t.Skip("set BEBOP_INTEGRATION_DOCKER=1 to run against Docker")
+	}
+	root := filepath.Clean(filepath.Join("..", ".."))
+	binary := filepath.Join(t.TempDir(), "bebop")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/bebop")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Linux controller: %v\n%s", err, output)
+	}
+	const image = "devuan/devuan:excalibur"
+	if !ensureIntegrationImage(t, image) {
+		return
+	}
+	command := exec.Command("docker", "run", "--rm", "--mount", "type=bind,src="+binary+",dst=/usr/local/bin/bebop,readonly", image, "/usr/local/bin/bebop", "inspect", "--target", "local", "--json")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run disposable Devuan inspect: %v\n%s", err, output)
+	}
+	var result struct {
+		OS struct {
+			ID              string `json:"id"`
+			VersionID       string `json:"version_id"`
+			VersionCodename string `json:"version_codename"`
+			Supported       bool   `json:"supported"`
+		} `json:"os"`
+		PackageManager  string `json:"package_manager"`
+		PackageDatabase string `json:"package_database"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode inspect JSON: %v\n%s", err, output)
+	}
+	if result.OS.ID != "devuan" || result.OS.VersionID != "6" || result.OS.VersionCodename != "excalibur" || !result.OS.Supported || result.PackageManager != "apt" || result.PackageDatabase != "dpkg" {
+		t.Fatalf("unexpected Devuan inspection: %#v", result)
+	}
+}
+
 // TestFedoraInspect is deliberately read-only: a normal Fedora container does
 // not model systemd-host behavior, but it does exercise real os-release and
 // dnf5/rpm capability inspection against the supported images.
